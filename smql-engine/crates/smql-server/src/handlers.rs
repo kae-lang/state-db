@@ -1,17 +1,23 @@
-use axum::extract::{Path, State};
+use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use smql_ast::command::{Command, Statement};
-use smql_ast::query::Query;
+use smql_ast::query;
 use smql_ast::value::Value;
 use smql_engine_core::query::QueryResult;
+use smql_hooks::EventBus;
 use smql_storage::Instance;
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Instant;
 
+use crate::metrics::SmqlMetrics;
 use crate::server::AppState;
+use crate::websocket::{self, SubscribeParams};
 
 /// Build the full API router.
 pub fn build_router(state: AppState) -> Router {
@@ -21,6 +27,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/machines", get(list_machines))
         .route("/machines/{name}", get(get_machine))
         .route("/instances/{id}", get(get_instance))
+        .route("/metrics", get(metrics_endpoint))
+        .route("/subscribe", get(ws_subscribe))
         .with_state(state)
 }
 
@@ -28,6 +36,29 @@ pub fn build_router(state: AppState) -> Router {
 
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
+}
+
+// --- Prometheus metrics endpoint ---
+
+async fn metrics_endpoint(State(state): State<AppState>) -> impl IntoResponse {
+    let body = state.metrics.encode();
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
+}
+
+// --- WebSocket subscribe endpoint ---
+
+async fn ws_subscribe(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+    Query(params): Query<SubscribeParams>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| {
+        websocket::handle_ws(socket, state.event_bus, params)
+    })
 }
 
 // --- Execute raw SMQL ---
@@ -123,64 +154,163 @@ async fn execute_command(
             }
         }
 
-        Command::Spawn(spawn_cmd) => match state.engine.spawn(&spawn_cmd).await {
-            Ok(result) => (
-                StatusCode::CREATED,
-                Json(ExecuteResponse {
-                    success: true,
-                    result: Some(instance_to_json(&result.instance)),
-                    error: None,
-                    warnings: None,
-                }),
-            ),
-            Err(e) => error_response(e),
-        },
+        Command::Spawn(spawn_cmd) => {
+            let machine_name = spawn_cmd.machine.clone();
+            let start = Instant::now();
+            match state.engine.spawn(&spawn_cmd).await {
+                Ok(result) => {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    // Record metrics
+                    state
+                        .metrics
+                        .spawns_total
+                        .with_label_values(&[&machine_name])
+                        .inc();
+                    state
+                        .metrics
+                        .instances_total
+                        .with_label_values(&[&result.instance.machine, &result.instance.state])
+                        .inc();
+                    state
+                        .metrics
+                        .transition_duration_seconds
+                        .with_label_values(&[&machine_name])
+                        .observe(elapsed);
 
-        Command::Transition(t_cmd) => match state.engine.transition(&t_cmd).await {
-            Ok(result) => (
-                StatusCode::OK,
-                Json(ExecuteResponse {
-                    success: true,
-                    result: Some(serde_json::json!({
-                        "from_state": result.from_state,
-                        "to_state": result.to_state,
-                        "instance": instance_to_json(&result.instance),
-                    })),
-                    error: None,
-                    warnings: None,
-                }),
-            ),
-            Err(e) => error_response(e),
-        },
+                    (
+                        StatusCode::CREATED,
+                        Json(ExecuteResponse {
+                            success: true,
+                            result: Some(instance_to_json(&result.instance)),
+                            error: None,
+                            warnings: None,
+                        }),
+                    )
+                }
+                Err(e) => error_response(e),
+            }
+        }
 
-        Command::TryTransition(t_cmd) => match state.engine.try_transition(&t_cmd).await {
-            Ok(Some(result)) => (
-                StatusCode::OK,
-                Json(ExecuteResponse {
-                    success: true,
-                    result: Some(serde_json::json!({
-                        "transitioned": true,
-                        "from_state": result.from_state,
-                        "to_state": result.to_state,
-                        "instance": instance_to_json(&result.instance),
-                    })),
-                    error: None,
-                    warnings: None,
-                }),
-            ),
-            Ok(None) => (
-                StatusCode::OK,
-                Json(ExecuteResponse {
-                    success: true,
-                    result: Some(serde_json::json!({
-                        "transitioned": false,
-                    })),
-                    error: None,
-                    warnings: None,
-                }),
-            ),
-            Err(e) => error_response(e),
-        },
+        Command::Transition(t_cmd) => {
+            let machine_name = t_cmd.machine.clone().unwrap_or_default();
+            let start = Instant::now();
+            match state.engine.transition(&t_cmd).await {
+                Ok(result) => {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let machine = &result.instance.machine;
+                    // Record metrics
+                    state
+                        .metrics
+                        .transitions_total
+                        .with_label_values(&[machine, &result.from_state, &result.to_state])
+                        .inc();
+                    state
+                        .metrics
+                        .transition_duration_seconds
+                        .with_label_values(&[machine])
+                        .observe(elapsed);
+                    // Update instance gauge: decrement old state, increment new
+                    state
+                        .metrics
+                        .instances_total
+                        .with_label_values(&[machine, &result.from_state])
+                        .dec();
+                    state
+                        .metrics
+                        .instances_total
+                        .with_label_values(&[machine, &result.to_state])
+                        .inc();
+
+                    (
+                        StatusCode::OK,
+                        Json(ExecuteResponse {
+                            success: true,
+                            result: Some(serde_json::json!({
+                                "from_state": result.from_state,
+                                "to_state": result.to_state,
+                                "instance": instance_to_json(&result.instance),
+                            })),
+                            error: None,
+                            warnings: None,
+                        }),
+                    )
+                }
+                Err(ref e) if matches!(e, smql_ast::SmqlError::TransitionDenied(_)) => {
+                    state
+                        .metrics
+                        .guard_failures_total
+                        .with_label_values(&[&machine_name])
+                        .inc();
+                    error_response(e.clone())
+                }
+                Err(e) => error_response(e),
+            }
+        }
+
+        Command::TryTransition(t_cmd) => {
+            let machine_name = t_cmd.machine.clone().unwrap_or_default();
+            let start = Instant::now();
+            match state.engine.try_transition(&t_cmd).await {
+                Ok(Some(result)) => {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let machine = &result.instance.machine;
+                    state
+                        .metrics
+                        .transitions_total
+                        .with_label_values(&[machine, &result.from_state, &result.to_state])
+                        .inc();
+                    state
+                        .metrics
+                        .transition_duration_seconds
+                        .with_label_values(&[machine])
+                        .observe(elapsed);
+                    state
+                        .metrics
+                        .instances_total
+                        .with_label_values(&[machine, &result.from_state])
+                        .dec();
+                    state
+                        .metrics
+                        .instances_total
+                        .with_label_values(&[machine, &result.to_state])
+                        .inc();
+
+                    (
+                        StatusCode::OK,
+                        Json(ExecuteResponse {
+                            success: true,
+                            result: Some(serde_json::json!({
+                                "transitioned": true,
+                                "from_state": result.from_state,
+                                "to_state": result.to_state,
+                                "instance": instance_to_json(&result.instance),
+                            })),
+                            error: None,
+                            warnings: None,
+                        }),
+                    )
+                }
+                Ok(None) => {
+                    state
+                        .metrics
+                        .guard_failures_total
+                        .with_label_values(&[&machine_name])
+                        .inc();
+                    (
+                        StatusCode::OK,
+                        Json(ExecuteResponse {
+                            success: true,
+                            result: Some(serde_json::json!({
+                                "transitioned": false,
+                            })),
+                            error: None,
+                            warnings: None,
+                        }),
+                    )
+                }
+                Err(e) => error_response(e),
+            }
+        }
 
         Command::BatchTransition(_) => (
             StatusCode::NOT_IMPLEMENTED,
@@ -206,9 +336,29 @@ async fn execute_command(
 
 async fn execute_query(
     state: &AppState,
-    query: Query,
+    query: query::Query,
 ) -> (StatusCode, Json<ExecuteResponse>) {
-    match state.engine.execute_query(&query).await {
+    let query_type = match &query {
+        query::Query::Get(_) => "GET",
+        query::Query::Find(_) => "FIND",
+        query::Query::Trail(_) => "TRAIL",
+        query::Query::Aggregate(_) => "AGGREGATE",
+        query::Query::Paths(_) => "PATHS",
+        query::Query::Funnel(_) => "FUNNEL",
+        query::Query::ComparePaths(_) => "COMPARE_PATHS",
+    };
+
+    let start = Instant::now();
+    let result = state.engine.execute_query(&query).await;
+    let elapsed = start.elapsed().as_secs_f64();
+
+    state
+        .metrics
+        .query_duration_seconds
+        .with_label_values(&[query_type])
+        .observe(elapsed);
+
+    match result {
         Ok(result) => (
             StatusCode::OK,
             Json(ExecuteResponse {
@@ -300,7 +450,7 @@ fn instance_to_json(inst: &Instance) -> serde_json::Value {
     })
 }
 
-fn value_to_json(val: &Value) -> serde_json::Value {
+pub fn value_to_json(val: &Value) -> serde_json::Value {
     match val {
         Value::Text(s) => serde_json::Value::String(s.clone()),
         Value::Int(v) => serde_json::json!(v),
@@ -439,4 +589,29 @@ fn error_response(e: smql_ast::SmqlError) -> (StatusCode, Json<ExecuteResponse>)
             warnings: None,
         }),
     )
+}
+
+/// Start a background task that subscribes to EventBus and updates timeout metrics.
+/// Timeout transitions are identified by actor = "System" in transition events.
+pub fn start_event_metrics_listener(event_bus: Arc<EventBus>, metrics: Arc<SmqlMetrics>) {
+    let mut receiver = event_bus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    // Track timeout fires: events with name "TIMEOUT" are emitted by system
+                    if event.name == "TIMEOUT" {
+                        metrics
+                            .timeout_fires_total
+                            .with_label_values(&[&event.machine, ""])
+                            .inc();
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "Metrics EventBus subscriber lagged");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }

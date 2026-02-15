@@ -1,7 +1,7 @@
 # SMQL Engine — Build Checklist
 
 > Last updated: 2026-02-15
-> Current phase: Phase 9
+> Current phase: Phase 12
 > Current agent focus: Engine-Dev
 
 ---
@@ -191,9 +191,33 @@
 - [x] 11.3 File execution (smql run file.smql)
 - [x] 11.4 Pretty-print query results in terminal
 
-## Phase 12: Observability [STATUS: NOT STARTED]
+## Phase 12: Observability [STATUS: COMPLETE]
 
-- [ ] 12.1-12.4 Observability and checkpoint
+- [x] 12.1 Structured tracing spans on engine operations — 2026-02-15
+  - [x] 12.1.1 `tracing` dep added to smql-engine-core
+  - [x] 12.1.2 `#[tracing::instrument]` on spawn, transition_inner, timeout_transition, execute_query
+  - [x] 12.1.3 `tracing::info!` on spawn success, transition complete, timeout fire
+  - [x] 12.1.4 `tracing::warn!` on guard failures
+- [x] 12.2 Prometheus metrics — 2026-02-15
+  - [x] 12.2.1 SmqlMetrics struct with Registry (smql-server/src/metrics.rs)
+  - [x] 12.2.2 smql_instances_total (IntGaugeVec: machine, state)
+  - [x] 12.2.3 smql_transitions_total (IntCounterVec: machine, from, to)
+  - [x] 12.2.4 smql_transition_duration_seconds (HistogramVec: machine)
+  - [x] 12.2.5 smql_guard_failures_total (IntCounterVec: machine)
+  - [x] 12.2.6 smql_timeout_fires_total (IntCounterVec: machine, state)
+  - [x] 12.2.7 smql_query_duration_seconds (HistogramVec: query_type)
+  - [x] 12.2.8 smql_spawns_total (IntCounterVec: machine)
+  - [x] 12.2.9 GET /metrics endpoint (Prometheus text format)
+  - [x] 12.2.10 Handler instrumentation (spawn, transition, query timing)
+- [x] 12.3 WebSocket event streaming — 2026-02-15
+  - [x] 12.3.1 GET /subscribe WebSocket endpoint (axum ws feature)
+  - [x] 12.3.2 EventBus subscription with machine/event filtering
+  - [x] 12.3.3 JSON event forwarding to WS clients
+- [x] 12.4 JSON tracing output — 2026-02-15
+  - [x] 12.4.1 tracing-subscriber JSON format with env filter in CLI serve
+- [x] 12.5 Timeout metrics via EventBus listener — 2026-02-15
+- [x] 12.6 Tests — 11 server tests (3 metrics unit + 5 metrics endpoint + 2 WebSocket + 1 health)
+- [x] 12.7 CHECKPOINT: All 373 tests pass (362 existing + 11 new) — 2026-02-15
 
 ## Phase 13: Schema Evolution [STATUS: NOT STARTED]
 

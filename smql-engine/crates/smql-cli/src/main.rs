@@ -40,7 +40,14 @@ async fn main() {
 
     match cli.command {
         Some(Commands::Serve { bind }) => {
-            tracing_subscriber::fmt::init();
+            tracing_subscriber::fmt()
+                .json()
+                .with_target(true)
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .init();
             let server = smql_server::SmqlServer::new();
             if let Err(e) = server.serve(&bind).await {
                 eprintln!("Server error: {}", e);

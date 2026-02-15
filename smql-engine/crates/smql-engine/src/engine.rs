@@ -82,6 +82,7 @@ impl Engine {
     }
 
     /// Spawn a new machine instance.
+    #[tracing::instrument(skip(self, cmd), fields(machine = %cmd.machine))]
     pub async fn spawn(&self, cmd: &SpawnCommand) -> SmqlResult<SpawnResult> {
         let machine_def = self.catalog.get(&cmd.machine)?;
 
@@ -186,6 +187,7 @@ impl Engine {
             });
         }
 
+        tracing::info!(id = %instance.id, state = %instance.state, "instance spawned");
         Ok(SpawnResult { instance })
     }
 
@@ -304,6 +306,7 @@ impl Engine {
         Box::pin(self.transition_inner(cmd))
     }
 
+    #[tracing::instrument(skip(self, cmd), fields(instance_id = %cmd.instance_id, to_state = %cmd.to_state))]
     async fn transition_inner(&self, cmd: &TransitionCommand) -> SmqlResult<TransitionResult> {
         // Handle THROUGH (multi-hop)
         if !cmd.through.is_empty() {
@@ -424,6 +427,7 @@ impl Engine {
         }
 
         if !guard_failures.is_empty() {
+            tracing::warn!(failures = guard_failures.len(), "guard evaluation failed");
             if cmd.or_stay {
                 // OR STAY: apply data mutations but don't transition
                 let mut mutations = Vec::new();
@@ -621,6 +625,7 @@ impl Engine {
             .await?
             .ok_or_else(|| SmqlError::not_found("Instance", &cmd.instance_id))?;
 
+        tracing::info!(from = %instance.state, to = %cmd.to_state, "transition complete");
         Ok(TransitionResult {
             from_state: instance.state,
             to_state: cmd.to_state.clone(),
@@ -754,6 +759,7 @@ impl Engine {
     ///
     /// This bypasses normal guard evaluation since the timeout IS the condition.
     /// If the instance has already left the expected state, this is a no-op.
+    #[tracing::instrument(skip(self), fields(instance_id = %instance_id, target_state = %target_state))]
     pub async fn timeout_transition(
         &self,
         instance_id: &str,
@@ -902,6 +908,7 @@ impl Engine {
             .await?
             .ok_or_else(|| SmqlError::not_found("Instance", instance_id))?;
 
+        tracing::info!("timeout transition fired");
         Ok(Some(TransitionResult {
             from_state: instance.state,
             to_state: target_state.to_string(),

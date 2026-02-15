@@ -8,6 +8,18 @@ use std::collections::{BTreeMap, HashMap};
 use crate::engine::Engine;
 use crate::eval::{eval_guard, EvalContext};
 
+fn query_type_label(query: &Query) -> &'static str {
+    match query {
+        Query::Get(_) => "GET",
+        Query::Find(_) => "FIND",
+        Query::Aggregate(_) => "AGGREGATE",
+        Query::Trail(_) => "TRAIL",
+        Query::Paths(_) => "PATHS",
+        Query::Funnel(_) => "FUNNEL",
+        Query::ComparePaths(_) => "COMPARE_PATHS",
+    }
+}
+
 /// Query results in various formats.
 #[derive(Debug, Clone)]
 pub enum QueryResult {
@@ -55,6 +67,7 @@ pub struct FunnelStage {
 
 impl Engine {
     /// Execute a query against the engine.
+    #[tracing::instrument(skip(self, query), fields(query_type = %query_type_label(query)))]
     pub async fn execute_query(&self, query: &Query) -> SmqlResult<QueryResult> {
         match query {
             Query::Get(q) => self.execute_get(q).await,
