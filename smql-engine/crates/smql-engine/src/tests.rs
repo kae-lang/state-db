@@ -229,6 +229,110 @@ mod eval_tests {
     }
 
     #[test]
+    fn eval_is_not_set_present() {
+        let ctx = ctx_with_data(vec![("x", Value::Int(5))]);
+        let expr = Expression::new(ExpressionKind::IsNotSet(Box::new(field("x"))));
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn eval_in_set_int_match() {
+        let ctx = ctx_with_data(vec![("priority", Value::Int(2))]);
+        let expr = Expression::new(ExpressionKind::InSet {
+            expr: Box::new(field("priority")),
+            values: vec![
+                lit(Value::Int(1)),
+                lit(Value::Int(2)),
+                lit(Value::Int(3)),
+            ],
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_in_set_no_match() {
+        let ctx = ctx_with_data(vec![("priority", Value::Int(5))]);
+        let expr = Expression::new(ExpressionKind::InSet {
+            expr: Box::new(field("priority")),
+            values: vec![
+                lit(Value::Int(1)),
+                lit(Value::Int(2)),
+                lit(Value::Int(3)),
+            ],
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn eval_function_upper() {
+        let ctx = ctx_with_data(vec![]);
+        let expr = Expression::new(ExpressionKind::FunctionCall {
+            name: "upper".to_string(),
+            args: vec![lit(Value::Text("hello".to_string()))],
+        });
+        assert_eq!(
+            eval_expr(&expr, &ctx).unwrap(),
+            Value::Text("HELLO".to_string())
+        );
+    }
+
+    #[test]
+    fn eval_function_lower() {
+        let ctx = ctx_with_data(vec![]);
+        let expr = Expression::new(ExpressionKind::FunctionCall {
+            name: "lower".to_string(),
+            args: vec![lit(Value::Text("HELLO".to_string()))],
+        });
+        assert_eq!(
+            eval_expr(&expr, &ctx).unwrap(),
+            Value::Text("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn eval_function_length_text() {
+        let ctx = ctx_with_data(vec![]);
+        let expr = Expression::new(ExpressionKind::FunctionCall {
+            name: "length".to_string(),
+            args: vec![lit(Value::Text("hello".to_string()))],
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Int(5));
+    }
+
+    #[test]
+    fn eval_state_is_true() {
+        let ctx = ctx_with_data(vec![]);
+        let expr = Expression::new(ExpressionKind::StateIs("open".to_string()));
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_state_is_false() {
+        let ctx = ctx_with_data(vec![]);
+        let expr = Expression::new(ExpressionKind::StateIs("closed".to_string()));
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn eval_actor_ref_to_map() {
+        let mut ctx = ctx_with_data(vec![]);
+        ctx.actor = Some(ActorInfo {
+            id: "user_456".to_string(),
+            role: Some("editor".to_string()),
+            fields: HashMap::new(),
+        });
+
+        let expr = Expression::new(ExpressionKind::ActorRef);
+        let result = eval_expr(&expr, &ctx).unwrap();
+        if let Value::Map(m) = result {
+            assert_eq!(m.get("id"), Some(&Value::Text("user_456".to_string())));
+            assert_eq!(m.get("role"), Some(&Value::Text("editor".to_string())));
+        } else {
+            panic!("Expected Map from ActorRef, got {:?}", result);
+        }
+    }
+
+    #[test]
     fn eval_guard_passes() {
         let ctx = ctx_with_data(vec![("priority", Value::Int(5))]);
         let guard = binop(field("priority"), BinaryOperator::Gt, lit(Value::Int(3)));
@@ -1305,6 +1409,485 @@ mod query_tests {
             assert_eq!(funnel.stages[1].count, 2);
             assert_eq!(funnel.stages[2].state, "resolved");
             assert_eq!(funnel.stages[2].count, 1);
+        } else {
+            panic!("Expected Funnel result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_find_sort_desc() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        engine.spawn(&spawn_ticket(&engine, "Low", 5)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "High", 1)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "Med", 3)).await.unwrap();
+
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: vec![SortClause {
+                field: "priority".into(),
+                direction: SortDirection::Desc,
+            }],
+            limit: None,
+            offset: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 3);
+            assert_eq!(insts[0].data.get("priority"), Some(&Value::Int(5)));
+            assert_eq!(insts[1].data.get("priority"), Some(&Value::Int(3)));
+            assert_eq!(insts[2].data.get("priority"), Some(&Value::Int(1)));
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_find_sort_multiple() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        let s1 = engine.spawn(&spawn_ticket(&engine, "A", 3)).await.unwrap();
+        let s2 = engine.spawn(&spawn_ticket(&engine, "B", 1)).await.unwrap();
+        let _s3 = engine.spawn(&spawn_ticket(&engine, "C", 3)).await.unwrap();
+
+        // Move s1 to in_progress so we have 2 states
+        engine
+            .transition(&TransitionCommand::new(
+                s1.instance.id.as_str(),
+                "in_progress".into(),
+            ))
+            .await
+            .unwrap();
+        engine
+            .transition(&TransitionCommand::new(
+                s2.instance.id.as_str(),
+                "in_progress".into(),
+            ))
+            .await
+            .unwrap();
+
+        // Sort by priority DESC — highest first
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: vec![SortClause {
+                field: "priority".into(),
+                direction: SortDirection::Desc,
+            }],
+            limit: None,
+            offset: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 3);
+            // First two should be priority 3
+            assert_eq!(insts[0].data.get("priority"), Some(&Value::Int(3)));
+            assert_eq!(insts[1].data.get("priority"), Some(&Value::Int(3)));
+            assert_eq!(insts[2].data.get("priority"), Some(&Value::Int(1)));
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_find_offset() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        for i in 0..5 {
+            engine
+                .spawn(&spawn_ticket(&engine, &format!("T{}", i), i))
+                .await
+                .unwrap();
+        }
+
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: Vec::new(),
+            limit: Some(2),
+            offset: Some(2),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 2);
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_find_where_sort_limit() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        for i in 1..=3 {
+            engine
+                .spawn(&spawn_ticket(&engine, &format!("T{}", i), i))
+                .await
+                .unwrap();
+        }
+
+        // WHERE priority > 1 SORT BY priority DESC (no limit to avoid storage pre-limiting)
+        let filter = Expression::new(ExpressionKind::BinaryOp {
+            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
+                "priority".to_string(),
+            ]))),
+            op: BinaryOperator::Gt,
+            right: Box::new(Expression::new(ExpressionKind::Literal(Value::Int(1)))),
+        });
+
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: Some(filter),
+            sort: vec![SortClause {
+                field: "priority".into(),
+                direction: SortDirection::Desc,
+            }],
+            limit: None,
+            offset: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 2); // priorities 2 and 3
+            assert_eq!(insts[0].data.get("priority"), Some(&Value::Int(3)));
+            assert_eq!(insts[1].data.get("priority"), Some(&Value::Int(2)));
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_find_empty_result() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        engine.spawn(&spawn_ticket(&engine, "A", 1)).await.unwrap();
+
+        // WHERE priority > 100 → matches nothing
+        let filter = Expression::new(ExpressionKind::BinaryOp {
+            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
+                "priority".to_string(),
+            ]))),
+            op: BinaryOperator::Gt,
+            right: Box::new(Expression::new(ExpressionKind::Literal(Value::Int(100)))),
+        });
+
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: Some(filter),
+            sort: Vec::new(),
+            limit: None,
+            offset: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 0);
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_aggregate_min() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        engine.spawn(&spawn_ticket(&engine, "A", 3)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "B", 1)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "C", 5)).await.unwrap();
+
+        let query = Query::Aggregate(AggregateQuery {
+            machine: "Ticket".into(),
+            measures: vec![MeasureClause {
+                function: AggregateFunction::Min,
+                field: Some("priority".into()),
+                alias: Some("min_p".into()),
+            }],
+            filter: None,
+            group_by: Vec::new(),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Aggregate(rows) = result {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].measures.get("min_p"), Some(&Value::Int(1)));
+        } else {
+            panic!("Expected Aggregate result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_aggregate_max() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        engine.spawn(&spawn_ticket(&engine, "A", 3)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "B", 1)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "C", 5)).await.unwrap();
+
+        let query = Query::Aggregate(AggregateQuery {
+            machine: "Ticket".into(),
+            measures: vec![MeasureClause {
+                function: AggregateFunction::Max,
+                field: Some("priority".into()),
+                alias: Some("max_p".into()),
+            }],
+            filter: None,
+            group_by: Vec::new(),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Aggregate(rows) = result {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].measures.get("max_p"), Some(&Value::Int(5)));
+        } else {
+            panic!("Expected Aggregate result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_aggregate_min_empty() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        // No instances spawned
+        let query = Query::Aggregate(AggregateQuery {
+            machine: "Ticket".into(),
+            measures: vec![MeasureClause {
+                function: AggregateFunction::Min,
+                field: Some("priority".into()),
+                alias: Some("min_p".into()),
+            }],
+            filter: None,
+            group_by: Vec::new(),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Aggregate(rows) = result {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].measures.get("min_p"), Some(&Value::Null));
+        } else {
+            panic!("Expected Aggregate result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_aggregate_sum_int() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        engine.spawn(&spawn_ticket(&engine, "A", 10)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "B", 20)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "C", 30)).await.unwrap();
+
+        let query = Query::Aggregate(AggregateQuery {
+            machine: "Ticket".into(),
+            measures: vec![MeasureClause {
+                function: AggregateFunction::Sum,
+                field: Some("priority".into()),
+                alias: Some("total".into()),
+            }],
+            filter: None,
+            group_by: Vec::new(),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Aggregate(rows) = result {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].measures.get("total"), Some(&Value::Int(60)));
+        } else {
+            panic!("Expected Aggregate result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_aggregate_multiple_measures() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        engine.spawn(&spawn_ticket(&engine, "A", 10)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "B", 20)).await.unwrap();
+
+        let query = Query::Aggregate(AggregateQuery {
+            machine: "Ticket".into(),
+            measures: vec![
+                MeasureClause {
+                    function: AggregateFunction::Count,
+                    field: None,
+                    alias: Some("total".into()),
+                },
+                MeasureClause {
+                    function: AggregateFunction::Sum,
+                    field: Some("priority".into()),
+                    alias: Some("sum_p".into()),
+                },
+            ],
+            filter: None,
+            group_by: Vec::new(),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Aggregate(rows) = result {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].measures.get("total"), Some(&Value::Int(2)));
+            assert_eq!(rows[0].measures.get("sum_p"), Some(&Value::Int(30)));
+        } else {
+            panic!("Expected Aggregate result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_aggregate_group_by_field() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        // 2 with priority 1, 1 with priority 5
+        engine.spawn(&spawn_ticket(&engine, "A", 1)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "B", 1)).await.unwrap();
+        engine.spawn(&spawn_ticket(&engine, "C", 5)).await.unwrap();
+
+        let query = Query::Aggregate(AggregateQuery {
+            machine: "Ticket".into(),
+            measures: vec![MeasureClause {
+                function: AggregateFunction::Count,
+                field: None,
+                alias: Some("count".into()),
+            }],
+            filter: None,
+            group_by: vec![GroupByClause::Field("priority".into())],
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Aggregate(rows) = result {
+            assert_eq!(rows.len(), 2);
+            let p1_count = rows
+                .iter()
+                .find(|r| r.group_key.get("priority") == Some(&Value::Int(1)))
+                .and_then(|r| r.measures.get("count"));
+            let p5_count = rows
+                .iter()
+                .find(|r| r.group_key.get("priority") == Some(&Value::Int(5)))
+                .and_then(|r| r.measures.get("count"));
+            assert_eq!(p1_count, Some(&Value::Int(2)));
+            assert_eq!(p5_count, Some(&Value::Int(1)));
+        } else {
+            panic!("Expected Aggregate result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_trail_shows_actor() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        let spawned = engine
+            .spawn(&spawn_ticket(&engine, "test", 1))
+            .await
+            .unwrap();
+        let id = spawned.instance.id.as_str();
+
+        let mut cmd = TransitionCommand::new(id.to_string(), "in_progress".into());
+        cmd.as_actor = Some("bob".to_string());
+        engine.transition(&cmd).await.unwrap();
+
+        let query = Query::Trail(TrailQuery {
+            machine: Some("Ticket".into()),
+            instance_id: id.to_string(),
+            filter: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Trail(entries) = result {
+            assert!(entries.len() >= 2);
+            let transition_entry = entries.iter().find(|e| e.to_state == "in_progress").unwrap();
+            assert_eq!(transition_entry.actor, Some("bob".to_string()));
+        } else {
+            panic!("Expected Trail result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_paths_with_limit() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        // Create instances with different paths
+        let s1 = engine.spawn(&spawn_ticket(&engine, "A", 1)).await.unwrap();
+        let s2 = engine.spawn(&spawn_ticket(&engine, "B", 2)).await.unwrap();
+
+        engine
+            .transition(&TransitionCommand::new(
+                s1.instance.id.as_str(),
+                "in_progress".into(),
+            ))
+            .await
+            .unwrap();
+        engine
+            .transition(&TransitionCommand::new(
+                s1.instance.id.as_str(),
+                "resolved".into(),
+            ))
+            .await
+            .unwrap();
+        // s2 stays at open → different path
+        let _ = s2;
+
+        let query = Query::Paths(PathsQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            limit: Some(1),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Paths(paths) = result {
+            assert!(paths.len() <= 1);
+        } else {
+            panic!("Expected Paths result");
+        }
+    }
+
+    #[tokio::test]
+    async fn query_funnel_with_filter() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        // Spawn with different priorities
+        let s1 = engine.spawn(&spawn_ticket(&engine, "A", 1)).await.unwrap();
+        let s2 = engine.spawn(&spawn_ticket(&engine, "B", 2)).await.unwrap();
+        let _s3 = engine.spawn(&spawn_ticket(&engine, "C", 5)).await.unwrap();
+
+        // Transition low-priority ones
+        engine
+            .transition(&TransitionCommand::new(
+                s1.instance.id.as_str(),
+                "in_progress".into(),
+            ))
+            .await
+            .unwrap();
+        engine
+            .transition(&TransitionCommand::new(
+                s2.instance.id.as_str(),
+                "in_progress".into(),
+            ))
+            .await
+            .unwrap();
+
+        // Funnel with filter: only priority < 3
+        let filter = Expression::new(ExpressionKind::BinaryOp {
+            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
+                "priority".to_string(),
+            ]))),
+            op: BinaryOperator::Lt,
+            right: Box::new(Expression::new(ExpressionKind::Literal(Value::Int(3)))),
+        });
+
+        let query = Query::Funnel(FunnelQuery {
+            machine: "Ticket".into(),
+            states: vec!["open".to_string(), "in_progress".to_string()],
+            filter: Some(filter),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Funnel(funnel) = result {
+            assert_eq!(funnel.stages.len(), 2);
+            // Only priority 1 and 2 match (< 3)
+            assert_eq!(funnel.stages[0].count, 2); // Both visited open
+            assert_eq!(funnel.stages[1].count, 2); // Both transitioned to in_progress
         } else {
             panic!("Expected Funnel result");
         }

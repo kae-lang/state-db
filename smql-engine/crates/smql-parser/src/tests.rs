@@ -543,6 +543,60 @@ mod command_tests {
             _ => panic!("Expected TryTransition"),
         }
     }
+
+    #[test]
+    fn parse_transition_string_id() {
+        let input = r#"TRANSITION "01ABC" TO resolved"#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.instance_id, "01ABC");
+                assert_eq!(t.to_state, "resolved");
+            }
+            _ => panic!("Expected Transition"),
+        }
+    }
+
+    #[test]
+    fn parse_transition_with_as_actor() {
+        let input = r#"TRANSITION tk TO resolved AS "alice""#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.instance_id, "tk");
+                assert_eq!(t.to_state, "resolved");
+                assert_eq!(t.as_actor, Some("alice".to_string()));
+            }
+            _ => panic!("Expected Transition"),
+        }
+    }
+
+    #[test]
+    fn parse_try_transition_string_id() {
+        let input = r#"TRY TRANSITION "01XYZ" TO done"#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(Command::TryTransition(t)) => {
+                assert_eq!(t.instance_id, "01XYZ");
+                assert_eq!(t.to_state, "done");
+            }
+            _ => panic!("Expected TryTransition"),
+        }
+    }
+
+    #[test]
+    fn parse_transition_cascade() {
+        let input = "TRANSITION tk TO cancelled CASCADE";
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.instance_id, "tk");
+                assert_eq!(t.to_state, "cancelled");
+                assert!(t.cascade);
+            }
+            _ => panic!("Expected Transition"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -654,6 +708,62 @@ mod query_tests {
                 assert_eq!(c.segment_by, "priority");
             }
             _ => panic!("Expected ComparePaths"),
+        }
+    }
+
+    #[test]
+    fn parse_get_string_id() {
+        let input = r#"GET Machine "01ABC""#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Get(g)) => {
+                assert_eq!(g.machine, "Machine");
+                assert_eq!(g.instance_id, "01ABC");
+            }
+            _ => panic!("Expected Get"),
+        }
+    }
+
+    #[test]
+    fn parse_trail_string_id() {
+        let input = r#"TRAIL OF "01ABC""#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Trail(t)) => {
+                assert_eq!(t.instance_id, "01ABC");
+            }
+            _ => panic!("Expected Trail"),
+        }
+    }
+
+    #[test]
+    fn parse_find_with_sort_desc_and_offset() {
+        let input = "FIND M WHERE x > 1 SORT BY x DESC LIMIT 10 OFFSET 5";
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Find(f)) => {
+                assert_eq!(f.machine, "M");
+                assert!(f.filter.is_some());
+                assert_eq!(f.sort.len(), 1);
+                assert_eq!(f.sort[0].field, "x");
+                assert_eq!(f.sort[0].direction, smql_ast::types::SortDirection::Desc);
+                assert_eq!(f.limit, Some(10));
+                assert_eq!(f.offset, Some(5));
+            }
+            _ => panic!("Expected Find"),
+        }
+    }
+
+    #[test]
+    fn parse_aggregate_multiple_measures() {
+        let input = "AGGREGATE M MEASURE COUNT(), SUM(x), AVG(y)";
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Aggregate(a)) => {
+                assert_eq!(a.machine, "M");
+                assert_eq!(a.measures.len(), 3);
+            }
+            _ => panic!("Expected Aggregate"),
         }
     }
 }

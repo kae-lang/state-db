@@ -653,4 +653,160 @@ mod memory_storage_tests {
 
         assert_eq!(storage.find_children(&parent_id, None).await.unwrap().len(), 0);
     }
+
+    #[tokio::test]
+    async fn filter_eq() {
+        let storage = MemoryStorage::new();
+        let mut inst1 = make_instance("Order", "open");
+        inst1.data.insert("priority".to_string(), Value::Int(3));
+        let mut inst2 = make_instance("Order", "open");
+        inst2.data.insert("priority".to_string(), Value::Int(5));
+
+        storage.store_instance(&inst1).await.unwrap();
+        storage.store_instance(&inst2).await.unwrap();
+
+        let filter = Filter {
+            predicate: Some(FilterPredicate::Eq("priority".to_string(), Value::Int(3))),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].data.get("priority"), Some(&Value::Int(3)));
+    }
+
+    #[tokio::test]
+    async fn filter_ne() {
+        let storage = MemoryStorage::new();
+        let mut inst1 = make_instance("Order", "open");
+        inst1.data.insert("priority".to_string(), Value::Int(3));
+        let mut inst2 = make_instance("Order", "open");
+        inst2.data.insert("priority".to_string(), Value::Int(5));
+
+        storage.store_instance(&inst1).await.unwrap();
+        storage.store_instance(&inst2).await.unwrap();
+
+        let filter = Filter {
+            predicate: Some(FilterPredicate::Ne("priority".to_string(), Value::Int(3))),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].data.get("priority"), Some(&Value::Int(5)));
+    }
+
+    #[tokio::test]
+    async fn filter_gte() {
+        let storage = MemoryStorage::new();
+        for p in [1, 3, 5] {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("priority".to_string(), Value::Int(p));
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        let filter = Filter {
+            predicate: Some(FilterPredicate::Gte("priority".to_string(), Value::Int(3))),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 2); // 3 and 5
+    }
+
+    #[tokio::test]
+    async fn filter_lte() {
+        let storage = MemoryStorage::new();
+        for p in [1, 3, 5] {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("priority".to_string(), Value::Int(p));
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        let filter = Filter {
+            predicate: Some(FilterPredicate::Lte("priority".to_string(), Value::Int(3))),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 2); // 1 and 3
+    }
+
+    #[tokio::test]
+    async fn filter_lt() {
+        let storage = MemoryStorage::new();
+        for p in [1, 3, 5] {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("priority".to_string(), Value::Int(p));
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        let filter = Filter {
+            predicate: Some(FilterPredicate::Lt("priority".to_string(), Value::Int(3))),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1); // only 1
+        assert_eq!(results[0].data.get("priority"), Some(&Value::Int(1)));
+    }
+
+    #[tokio::test]
+    async fn filter_is_not_null() {
+        let storage = MemoryStorage::new();
+        let mut inst1 = make_instance("Order", "open");
+        inst1.data.insert("assignee".to_string(), Value::Text("alice".to_string()));
+        let mut inst2 = make_instance("Order", "open");
+        inst2.data.insert("assignee".to_string(), Value::Null);
+        let inst3 = make_instance("Order", "open"); // no assignee field at all
+
+        storage.store_instance(&inst1).await.unwrap();
+        storage.store_instance(&inst2).await.unwrap();
+        storage.store_instance(&inst3).await.unwrap();
+
+        let filter = Filter {
+            predicate: Some(FilterPredicate::IsNotNull("assignee".to_string())),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].data.get("assignee"),
+            Some(&Value::Text("alice".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_and_composite() {
+        let storage = MemoryStorage::new();
+        for p in [1, 3, 5, 7, 9] {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("priority".to_string(), Value::Int(p));
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        // Range filter: priority > 2 AND priority < 8
+        let filter = Filter {
+            predicate: Some(FilterPredicate::And(
+                Box::new(FilterPredicate::Gt("priority".to_string(), Value::Int(2))),
+                Box::new(FilterPredicate::Lt("priority".to_string(), Value::Int(8))),
+            )),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 3); // 3, 5, 7
+    }
+
+    #[tokio::test]
+    async fn find_with_limit_and_offset_paging() {
+        let storage = MemoryStorage::new();
+        for i in 0..5 {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("index".to_string(), Value::Int(i));
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        let filter = Filter {
+            limit: Some(2),
+            offset: Some(2),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
 }
