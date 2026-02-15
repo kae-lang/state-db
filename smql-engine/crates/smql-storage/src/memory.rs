@@ -405,4 +405,64 @@ impl Storage for MemoryStorage {
             None => Ok(None),
         }
     }
+
+    async fn migrate_instances_state(
+        &self,
+        machine: &str,
+        from_state: &str,
+        to_state: &str,
+    ) -> SmqlResult<u64> {
+        let key = Self::state_index_key(machine, from_state);
+        let ids: Vec<String> = self
+            .state_index
+            .get(&key)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let mut count = 0u64;
+        for id in &ids {
+            if let Some(mut entry) = self.instances.get_mut(id) {
+                if entry.machine == machine && entry.state == from_state {
+                    entry.state = to_state.to_string();
+                    entry.state_entered_at = Utc::now();
+                    entry.updated_at = Utc::now();
+                    entry.version += 1;
+                    count += 1;
+                }
+            }
+        }
+
+        // Update state indices
+        for id in &ids {
+            self.remove_from_state_index(machine, from_state, id);
+            self.add_to_state_index(machine, to_state, id);
+        }
+
+        Ok(count)
+    }
+
+    async fn bulk_update_instances(
+        &self,
+        machine: &str,
+        mutations: &[Mutation],
+    ) -> SmqlResult<u64> {
+        let ids: Vec<String> = self
+            .machine_index
+            .get(machine)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let mut count = 0u64;
+        for id in &ids {
+            if let Some(mut entry) = self.instances.get_mut(id) {
+                if entry.machine == machine {
+                    Self::apply_mutations(&mut entry, mutations);
+                    entry.version += 1;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
 }

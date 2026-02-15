@@ -7,6 +7,9 @@ edition.workspace = true
 name = "smql"
 path = "src/main.rs"
 
+[features]
+rocksdb = ["smql-storage/rocksdb", "smql-server/rocksdb"]
+
 [dependencies]
 smql-ast = { path = "../smql-ast" }
 smql-catalog = { path = "../smql-catalog" }

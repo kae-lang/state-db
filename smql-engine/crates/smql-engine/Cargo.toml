@@ -16,3 +16,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 ulid = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+smql-parser = { path = "../smql-parser" }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }

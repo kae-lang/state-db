@@ -1,4 +1,6 @@
 use clap::{Parser, Subcommand};
+use smql_storage::Storage;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "smql")]
@@ -16,22 +18,65 @@ enum Commands {
         /// Address to bind to
         #[arg(short, long, default_value = "127.0.0.1:4200")]
         bind: String,
+
+        /// Storage backend: "memory" or a filesystem path for RocksDB
+        #[arg(short, long, default_value = "memory")]
+        storage: String,
     },
 
     /// Start an interactive REPL
-    Repl,
+    Repl {
+        /// Storage backend: "memory" or a filesystem path for RocksDB
+        #[arg(short, long, default_value = "memory")]
+        storage: String,
+    },
 
     /// Execute a single SMQL statement from a string
     Exec {
         /// The SMQL statement to execute
         statement: String,
+
+        /// Storage backend: "memory" or a filesystem path for RocksDB
+        #[arg(short, long, default_value = "memory")]
+        storage: String,
     },
 
     /// Execute SMQL from a file
     Run {
         /// Path to the .smql file
         file: String,
+
+        /// Storage backend: "memory" or a filesystem path for RocksDB
+        #[arg(short, long, default_value = "memory")]
+        storage: String,
     },
+}
+
+fn create_storage(arg: &str) -> Arc<dyn Storage> {
+    if arg == "memory" {
+        return Arc::new(smql_storage::MemoryStorage::new());
+    }
+
+    #[cfg(feature = "rocksdb")]
+    {
+        match smql_storage::RocksDBStorage::open(arg) {
+            Ok(s) => return Arc::new(s),
+            Err(e) => {
+                eprintln!("Failed to open RocksDB at '{}': {}", arg, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        eprintln!(
+            "RocksDB storage requested ('{}') but the 'rocksdb' feature is not enabled.\n\
+             Rebuild with: cargo build --features rocksdb",
+            arg
+        );
+        std::process::exit(1);
+    }
 }
 
 #[tokio::main]
@@ -39,7 +84,7 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Serve { bind }) => {
+        Some(Commands::Serve { bind, storage }) => {
             tracing_subscriber::fmt()
                 .json()
                 .with_target(true)
@@ -48,21 +93,24 @@ async fn main() {
                         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
                 )
                 .init();
-            let server = smql_server::SmqlServer::new();
+            let st = create_storage(&storage);
+            let server = smql_server::SmqlServer::with_storage(st);
             if let Err(e) = server.serve(&bind).await {
                 eprintln!("Server error: {}", e);
                 std::process::exit(1);
             }
         }
 
-        Some(Commands::Exec { statement }) => {
-            run_statements(&statement).await;
+        Some(Commands::Exec { statement, storage }) => {
+            let st = create_storage(&storage);
+            run_statements(&statement, st).await;
         }
 
-        Some(Commands::Run { file }) => {
+        Some(Commands::Run { file, storage }) => {
+            let st = create_storage(&storage);
             match std::fs::read_to_string(&file) {
                 Ok(content) => {
-                    run_statements(&content).await;
+                    run_statements(&content, st).await;
                 }
                 Err(e) => {
                     eprintln!("Cannot read file {}: {}", file, e);
@@ -71,7 +119,12 @@ async fn main() {
             }
         }
 
-        Some(Commands::Repl) | None => {
+        Some(Commands::Repl { storage }) => {
+            let st = create_storage(&storage);
+            smql_cli::repl::run_repl_with_storage(st).await;
+        }
+
+        None => {
             smql_cli::repl::run_repl().await;
         }
     }
@@ -90,11 +143,10 @@ fn resolve_ref(id: &str, spawned_ids: &[String]) -> String {
     id.to_string()
 }
 
-async fn run_statements(input: &str) {
+async fn run_statements(input: &str, storage: Arc<dyn Storage>) {
     use smql_ast::command::{Command, Statement};
 
     let catalog = std::sync::Arc::new(smql_catalog::MachineCatalog::new());
-    let storage = std::sync::Arc::new(smql_storage::MemoryStorage::new());
     let engine = smql_engine_core::Engine::new(catalog, storage);
 
     let stmts = match smql_parser::parse(input) {

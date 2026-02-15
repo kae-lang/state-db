@@ -3883,3 +3883,734 @@ mod composition_tests {
         assert_eq!(final_order.state, "shipped");
     }
 }
+
+#[cfg(test)]
+mod alter_tests {
+    use crate::engine::Engine;
+    use smql_ast::command::{AlterMachineCommand, AlterOperation, SpawnCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn register_simple_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("Task".into(), "open".into());
+        m.states = vec![
+            StateDefinition::new("open".into()),
+            StateDefinition::new("in_progress".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.data = vec![
+            DataFieldDefinition {
+                name: "title".into(),
+                field_type: TypeDefinition::Text,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "priority".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Default(DefaultValue::Int(3))],
+            },
+        ];
+        m.transitions = vec![
+            TransitionDefinition::new(
+                TransitionSource::State("open".into()),
+                "in_progress".into(),
+            ),
+            TransitionDefinition::new(
+                TransitionSource::State("in_progress".into()),
+                "done".into(),
+            ),
+            TransitionDefinition::new(
+                TransitionSource::State("in_progress".into()),
+                "open".into(),
+            ),
+        ];
+        engine.catalog.register_unchecked(m);
+    }
+
+    fn spawn_task(_engine: &Engine, title: &str) -> SpawnCommand {
+        SpawnCommand::new(
+            "Task".into(),
+            vec![(
+                "title".into(),
+                Expression::new(ExpressionKind::Literal(Value::Text(title.into()))),
+            )],
+        )
+    }
+
+    // --- ADD STATE ---
+
+    #[tokio::test]
+    async fn alter_add_state() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddState("blocked".into())],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.operations_applied, 1);
+        assert_eq!(result.instances_migrated, 0);
+
+        let def = engine.catalog.get("Task").unwrap();
+        assert!(def.states.iter().any(|s| s.name == "blocked"));
+        assert_eq!(engine.catalog.version("Task").unwrap(), 2); // Version incremented
+    }
+
+    #[tokio::test]
+    async fn alter_add_state_duplicate_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddState("open".into())],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    // --- REMOVE STATE ---
+
+    #[tokio::test]
+    async fn alter_remove_state_migrates_instances() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        // Spawn an instance and transition it to in_progress
+        let spawn_result = engine.spawn(&spawn_task(&engine, "Test")).await.unwrap();
+        let id = spawn_result.instance.id.as_str();
+
+        let t_cmd = smql_ast::command::TransitionCommand::new(id.clone(), "in_progress".into());
+        engine.transition(&t_cmd).await.unwrap();
+
+        // Now remove in_progress state and migrate to open
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveState {
+                state: "in_progress".into(),
+                migrate_to: "open".into(),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.instances_migrated, 1);
+
+        // Verify instance was migrated
+        let inst_id = smql_storage::InstanceId::from_string(&id).unwrap();
+        let inst = engine.storage.get_instance(&inst_id).await.unwrap().unwrap();
+        assert_eq!(inst.state, "open");
+
+        // Verify state was removed from definition
+        let def = engine.catalog.get("Task").unwrap();
+        assert!(!def.states.iter().any(|s| s.name == "in_progress"));
+    }
+
+    #[tokio::test]
+    async fn alter_remove_state_removes_transitions() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveState {
+                state: "in_progress".into(),
+                migrate_to: "open".into(),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert!(result.warnings.iter().any(|w| w.contains("transition")));
+
+        let def = engine.catalog.get("Task").unwrap();
+        // All transitions involving in_progress should be removed
+        for t in &def.transitions {
+            match &t.from {
+                TransitionSource::State(s) => assert_ne!(s, "in_progress"),
+                _ => {}
+            }
+            assert_ne!(t.to, "in_progress");
+        }
+    }
+
+    #[tokio::test]
+    async fn alter_remove_initial_state_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveState {
+                state: "open".into(),
+                migrate_to: "in_progress".into(),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("initial state"));
+    }
+
+    #[tokio::test]
+    async fn alter_remove_nonexistent_state_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveState {
+                state: "nonexistent".into(),
+                migrate_to: "open".into(),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not exist"));
+    }
+
+    // --- ADD TRANSITION ---
+
+    #[tokio::test]
+    async fn alter_add_transition() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let new_transition = TransitionDefinition::new(
+            TransitionSource::State("open".into()),
+            "done".into(),
+        );
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddTransition(new_transition)],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.operations_applied, 1);
+
+        // Verify transition exists — can now transition open -> done
+        let spawn_result = engine.spawn(&spawn_task(&engine, "Direct")).await.unwrap();
+        let t_cmd = smql_ast::command::TransitionCommand::new(
+            spawn_result.instance.id.as_str(),
+            "done".into(),
+        );
+        let t_result = engine.transition(&t_cmd).await.unwrap();
+        assert_eq!(t_result.to_state, "done");
+    }
+
+    #[tokio::test]
+    async fn alter_add_transition_invalid_state_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let bad_transition = TransitionDefinition::new(
+            TransitionSource::State("open".into()),
+            "nonexistent".into(),
+        );
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddTransition(bad_transition)],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+    }
+
+    // --- REMOVE TRANSITION ---
+
+    #[tokio::test]
+    async fn alter_remove_transition() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveTransition {
+                from: "in_progress".into(),
+                to: "open".into(),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.operations_applied, 1);
+
+        // Verify transition was removed
+        let def = engine.catalog.get("Task").unwrap();
+        assert!(!def.transitions.iter().any(|t| {
+            matches!(&t.from, TransitionSource::State(s) if s == "in_progress") && t.to == "open"
+        }));
+    }
+
+    #[tokio::test]
+    async fn alter_remove_nonexistent_transition_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveTransition {
+                from: "open".into(),
+                to: "done".into(), // This transition doesn't exist
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+    }
+
+    // --- ADD DATA ---
+
+    #[tokio::test]
+    async fn alter_add_data_with_backfill() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        // Spawn some instances first
+        engine.spawn(&spawn_task(&engine, "Task1")).await.unwrap();
+        engine.spawn(&spawn_task(&engine, "Task2")).await.unwrap();
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddData {
+                field: DataFieldDefinition {
+                    name: "category".into(),
+                    field_type: TypeDefinition::Text,
+                    constraints: vec![Constraint::Optional],
+                },
+                backfill: Some(Expression::new(ExpressionKind::Literal(
+                    Value::Text("general".into()),
+                ))),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.instances_migrated, 2);
+        assert!(result.warnings.iter().any(|w| w.contains("Backfilled")));
+
+        // Verify field was added to definition
+        let def = engine.catalog.get("Task").unwrap();
+        assert!(def.data.iter().any(|d| d.name == "category"));
+
+        // Verify instances were backfilled
+        let filter = smql_storage::Filter::default();
+        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        for inst in &instances {
+            assert_eq!(inst.data.get("category"), Some(&Value::Text("general".into())));
+        }
+    }
+
+    #[tokio::test]
+    async fn alter_add_data_with_default() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        engine.spawn(&spawn_task(&engine, "Task1")).await.unwrap();
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddData {
+                field: DataFieldDefinition {
+                    name: "status_note".into(),
+                    field_type: TypeDefinition::Text,
+                    constraints: vec![Constraint::Default(DefaultValue::String("none".into()))],
+                },
+                backfill: None,
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.instances_migrated, 1);
+
+        let filter = smql_storage::Filter::default();
+        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        assert_eq!(instances[0].data.get("status_note"), Some(&Value::Text("none".into())));
+    }
+
+    #[tokio::test]
+    async fn alter_add_data_duplicate_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddData {
+                field: DataFieldDefinition {
+                    name: "title".into(), // Already exists
+                    field_type: TypeDefinition::Text,
+                    constraints: vec![],
+                },
+                backfill: None,
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn alter_add_required_field_without_default_or_backfill_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddData {
+                field: DataFieldDefinition {
+                    name: "new_required".into(),
+                    field_type: TypeDefinition::Text,
+                    constraints: vec![Constraint::Required],
+                },
+                backfill: None,
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("REQUIRED"));
+    }
+
+    // --- REMOVE DATA ---
+
+    #[tokio::test]
+    async fn alter_remove_data() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        // Spawn an instance with priority
+        engine.spawn(&spawn_task(&engine, "Task1")).await.unwrap();
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveData("priority".into())],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.instances_migrated, 1);
+
+        // Verify field removed from definition
+        let def = engine.catalog.get("Task").unwrap();
+        assert!(!def.data.iter().any(|d| d.name == "priority"));
+
+        // Verify field removed from instances
+        let filter = smql_storage::Filter::default();
+        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        assert!(!instances[0].data.contains_key("priority"));
+    }
+
+    #[tokio::test]
+    async fn alter_remove_nonexistent_data_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::RemoveData("nonexistent".into())],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+    }
+
+    // --- BACKFILL ---
+
+    #[tokio::test]
+    async fn alter_backfill() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        engine.spawn(&spawn_task(&engine, "Task1")).await.unwrap();
+        engine.spawn(&spawn_task(&engine, "Task2")).await.unwrap();
+        engine.spawn(&spawn_task(&engine, "Task3")).await.unwrap();
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::Backfill {
+                field: "priority".into(),
+                value: Expression::new(ExpressionKind::Literal(Value::Int(1))),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.instances_migrated, 3);
+
+        let filter = smql_storage::Filter::default();
+        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        for inst in &instances {
+            assert_eq!(inst.data.get("priority"), Some(&Value::Int(1)));
+        }
+    }
+
+    #[tokio::test]
+    async fn alter_backfill_nonexistent_field_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::Backfill {
+                field: "nonexistent".into(),
+                value: Expression::new(ExpressionKind::Literal(Value::Int(1))),
+            }],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+    }
+
+    // --- MODIFY TRANSITION ---
+
+    #[tokio::test]
+    async fn alter_modify_transition() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        // Modify the open -> in_progress transition to add a guard
+        let mut modified = TransitionDefinition::new(
+            TransitionSource::State("open".into()),
+            "in_progress".into(),
+        );
+        modified.guards = vec![Expression::new(ExpressionKind::IsSet(Box::new(
+            Expression::new(ExpressionKind::FieldAccess(vec!["title".into()])),
+        )))];
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::ModifyTransition(modified)],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.operations_applied, 1);
+
+        // Verify the transition now has a guard
+        let def = engine.catalog.get("Task").unwrap();
+        let t = def.transitions.iter().find(|t| {
+            matches!(&t.from, TransitionSource::State(s) if s == "open") && t.to == "in_progress"
+        });
+        assert!(t.is_some());
+        assert_eq!(t.unwrap().guards.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn alter_modify_nonexistent_transition_fails() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let t = TransitionDefinition::new(
+            TransitionSource::State("open".into()),
+            "done".into(), // This transition doesn't exist
+        );
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::ModifyTransition(t)],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+    }
+
+    // --- VERSION TRACKING ---
+
+    #[tokio::test]
+    async fn alter_increments_version() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let v1 = engine.catalog.version("Task").unwrap();
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![AlterOperation::AddState("review".into())],
+        };
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+
+        assert_eq!(result.new_version, v1 + 1);
+        assert_eq!(engine.catalog.version("Task").unwrap(), v1 + 1);
+    }
+
+    // --- MULTIPLE OPERATIONS ---
+
+    #[tokio::test]
+    async fn alter_multiple_operations() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        engine.spawn(&spawn_task(&engine, "Task1")).await.unwrap();
+
+        let cmd = AlterMachineCommand {
+            machine: "Task".into(),
+            operations: vec![
+                AlterOperation::AddState("review".into()),
+                AlterOperation::AddTransition(TransitionDefinition::new(
+                    TransitionSource::State("in_progress".into()),
+                    "review".into(),
+                )),
+                AlterOperation::AddData {
+                    field: DataFieldDefinition {
+                        name: "reviewer".into(),
+                        field_type: TypeDefinition::Text,
+                        constraints: vec![Constraint::Optional],
+                    },
+                    backfill: None,
+                },
+            ],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await.unwrap();
+        assert_eq!(result.operations_applied, 3);
+
+        let def = engine.catalog.get("Task").unwrap();
+        assert!(def.states.iter().any(|s| s.name == "review"));
+        assert!(def.transitions.iter().any(|t| {
+            matches!(&t.from, TransitionSource::State(s) if s == "in_progress") && t.to == "review"
+        }));
+        assert!(def.data.iter().any(|d| d.name == "reviewer"));
+    }
+
+    // --- NONEXISTENT MACHINE ---
+
+    #[tokio::test]
+    async fn alter_nonexistent_machine_fails() {
+        let engine = setup_engine();
+
+        let cmd = AlterMachineCommand {
+            machine: "NonExistent".into(),
+            operations: vec![AlterOperation::AddState("new".into())],
+        };
+
+        let result = engine.execute_alter_machine(&cmd).await;
+        assert!(result.is_err());
+    }
+
+    // --- PARSER INTEGRATION ---
+
+    #[tokio::test]
+    async fn alter_via_parser_add_state() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let input = "ALTER MACHINE Task ADD STATE review";
+        let stmts = smql_parser::parse(input).unwrap();
+        assert_eq!(stmts.len(), 1);
+
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(cmd)) = &stmts[0] {
+            let result = engine.execute_alter_machine(&cmd).await.unwrap();
+            assert_eq!(result.operations_applied, 1);
+            let def = engine.catalog.get("Task").unwrap();
+            assert!(def.states.iter().any(|s| s.name == "review"));
+        } else {
+            panic!("Expected ALTER MACHINE command");
+        }
+    }
+
+    #[tokio::test]
+    async fn alter_via_parser_remove_state() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        let input = "ALTER MACHINE Task REMOVE STATE in_progress MIGRATE TO open";
+        let stmts = smql_parser::parse(input).unwrap();
+
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(cmd)) = &stmts[0] {
+            let result = engine.execute_alter_machine(&cmd).await.unwrap();
+            assert_eq!(result.operations_applied, 1);
+        } else {
+            panic!("Expected ALTER MACHINE command");
+        }
+    }
+
+    #[tokio::test]
+    async fn alter_via_parser_backfill() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        engine.spawn(&spawn_task(&engine, "Task1")).await.unwrap();
+
+        let input = "ALTER MACHINE Task BACKFILL priority = 5";
+        let stmts = smql_parser::parse(input).unwrap();
+
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(cmd)) = &stmts[0] {
+            let result = engine.execute_alter_machine(&cmd).await.unwrap();
+            assert_eq!(result.instances_migrated, 1);
+
+            let filter = smql_storage::Filter::default();
+            let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+            assert_eq!(instances[0].data.get("priority"), Some(&Value::Int(5)));
+        } else {
+            panic!("Expected ALTER MACHINE command");
+        }
+    }
+
+    // --- STORAGE bulk operations ---
+
+    #[tokio::test]
+    async fn storage_migrate_state_updates_indices() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        // Spawn instances in different states
+        engine.spawn(&spawn_task(&engine, "T1")).await.unwrap();
+        let r2 = engine.spawn(&spawn_task(&engine, "T2")).await.unwrap();
+
+        // Move T2 to in_progress
+        let t_cmd = smql_ast::command::TransitionCommand::new(
+            r2.instance.id.as_str(),
+            "in_progress".into(),
+        );
+        engine.transition(&t_cmd).await.unwrap();
+
+        // Migrate in_progress -> open
+        let migrated = engine.storage.migrate_instances_state("Task", "in_progress", "open").await.unwrap();
+        assert_eq!(migrated, 1);
+
+        // Both should now be in open state
+        let filter = smql_storage::Filter { state: Some("open".into()), ..Default::default() };
+        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        assert_eq!(instances.len(), 2);
+
+        // Nothing in in_progress
+        let filter2 = smql_storage::Filter { state: Some("in_progress".into()), ..Default::default() };
+        let instances2 = engine.storage.find_instances("Task", &filter2).await.unwrap();
+        assert_eq!(instances2.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn storage_bulk_update_applies_to_all() {
+        let engine = setup_engine();
+        register_simple_machine(&engine);
+
+        engine.spawn(&spawn_task(&engine, "T1")).await.unwrap();
+        engine.spawn(&spawn_task(&engine, "T2")).await.unwrap();
+
+        let mutations = vec![smql_storage::Mutation::SetField(
+            "priority".into(),
+            Value::Int(99),
+        )];
+        let count = engine.storage.bulk_update_instances("Task", &mutations).await.unwrap();
+        assert_eq!(count, 2);
+
+        let filter = smql_storage::Filter::default();
+        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        for inst in &instances {
+            assert_eq!(inst.data.get("priority"), Some(&Value::Int(99)));
+        }
+    }
+}

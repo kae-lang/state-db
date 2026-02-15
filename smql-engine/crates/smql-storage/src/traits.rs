@@ -63,4 +63,25 @@ pub trait Storage: Send + Sync {
 
     /// Get the parent instance of a child (reads child's parent_id, then fetches parent).
     async fn get_parent(&self, child_id: &InstanceId) -> SmqlResult<Option<Instance>>;
+
+    // --- Schema migration operations ---
+
+    /// Migrate all instances of a machine from one state to another.
+    /// Updates state, state_entered_at, version, and state indices.
+    /// Returns the number of migrated instances.
+    async fn migrate_instances_state(
+        &self,
+        machine: &str,
+        from_state: &str,
+        to_state: &str,
+    ) -> SmqlResult<u64>;
+
+    /// Apply mutations to all instances of a machine.
+    /// Skips version checks (schema migration operation).
+    /// Returns the number of updated instances.
+    async fn bulk_update_instances(
+        &self,
+        machine: &str,
+        mutations: &[Mutation],
+    ) -> SmqlResult<u64>;
 }

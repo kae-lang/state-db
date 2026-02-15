@@ -2,7 +2,7 @@ use axum::Router;
 use smql_catalog::MachineCatalog;
 use smql_engine_core::Engine;
 use smql_hooks::EventBus;
-use smql_storage::MemoryStorage;
+use smql_storage::{MemoryStorage, Storage};
 use std::sync::Arc;
 
 use crate::handlers;
@@ -26,6 +26,22 @@ impl SmqlServer {
     pub fn new() -> Self {
         let catalog = Arc::new(MachineCatalog::new());
         let storage = Arc::new(MemoryStorage::new());
+        let engine = Arc::new(Engine::new(catalog, storage));
+        let event_bus = engine.event_bus().clone();
+        let metrics = Arc::new(SmqlMetrics::new());
+
+        Self {
+            state: AppState {
+                engine,
+                metrics,
+                event_bus,
+            },
+        }
+    }
+
+    /// Create a new server with a custom storage backend.
+    pub fn with_storage(storage: Arc<dyn Storage>) -> Self {
+        let catalog = Arc::new(MachineCatalog::new());
         let engine = Arc::new(Engine::new(catalog, storage));
         let event_bus = engine.event_bus().clone();
         let metrics = Arc::new(SmqlMetrics::new());

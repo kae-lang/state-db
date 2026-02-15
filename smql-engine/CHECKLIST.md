@@ -1,8 +1,8 @@
 # SMQL Engine — Build Checklist
 
 > Last updated: 2026-02-15
-> Current phase: Phase 12
-> Current agent focus: Engine-Dev
+> Current phase: Phase 14 COMPLETE
+> Current agent focus: QA
 
 ---
 
@@ -65,23 +65,27 @@
 - [x] 3.4 Catalog persistence (serialize/deserialize JSON)
 - [x] 3.5 CHECKPOINT: Machines can be defined, validated, stored, and retrieved — 2026-02-15
 
-## Phase 4: Storage Layer [STATUS: COMPLETE (MemoryStorage)]
+## Phase 4: Storage Layer [STATUS: COMPLETE]
 
 - [x] 4.1 Define Storage trait (pluggable backend interface) — 2026-02-15
-- [x] 4.2 Implement MemoryStorage (DashMap-based, for development and tests) — 27 tests passing
+- [x] 4.2 Implement MemoryStorage (DashMap-based, for development and tests) — 42 tests passing
   - [x] 4.2.1 Instance storage with concurrent access (DashMap)
   - [x] 4.2.2 State index (state -> set of instance IDs) for fast state queries
   - [x] 4.2.3 Trail storage (append-only Vec per instance with RwLock)
   - [x] 4.2.4 Full-scan filtering with predicate pushdown (FilterPredicate)
-- [ ] 4.3 Implement RocksDB storage backend (deferred to later phase)
-  - [ ] 4.3.1 Key schema design
-  - [ ] 4.3.2 Column families: instances, state_index, trails, catalog, timers
-  - [ ] 4.3.3 Atomic transitions: WriteBatch for (update instance + update state index + append trail)
-  - [ ] 4.3.4 Prefix iteration for efficient queries
-  - [ ] 4.3.5 Compaction and TTL for old trail entries
+- [x] 4.3 Implement RocksDB storage backend — 44 tests passing — 2026-02-15
+  - [x] 4.3.1 Key schema design (6 column families with NUL-separated composite keys)
+  - [x] 4.3.2 Column families: instances, state_index, machine_index, trails, parent_index, id_index
+  - [x] 4.3.3 Atomic transitions: WriteBatch for (update instance + update state index + append trail)
+  - [x] 4.3.4 Range iteration with upper bounds for efficient prefix queries
+  - [ ] 4.3.5 Compaction and TTL for old trail entries (deferred)
+  - [x] 4.3.6 Feature-gated: `cargo build --features rocksdb`
+  - [x] 4.3.7 CLI --storage flag for selecting backend
+  - [x] 4.3.8 Server SmqlServer::with_storage() constructor
+  - [x] 4.3.9 Data persists across process restarts
 - [x] 4.4 Instance data model (Instance, InstanceId, TrailEntry, Filter, Mutation) — 2026-02-15
-- [x] 4.5 Write storage integration tests — 27 tests passing
-- [x] 4.6 CHECKPOINT: Can store/retrieve/query instances with MemoryStorage — 2026-02-15
+- [x] 4.5 Write storage integration tests — 86 tests passing (42 memory + 44 rocksdb)
+- [x] 4.6 CHECKPOINT: Can store/retrieve/query instances with MemoryStorage and RocksDB — 2026-02-15
 
 ## Phase 5: Core Engine — Spawn & Transition [STATUS: COMPLETE]
 
@@ -219,13 +223,54 @@
 - [x] 12.6 Tests — 11 server tests (3 metrics unit + 5 metrics endpoint + 2 WebSocket + 1 health)
 - [x] 12.7 CHECKPOINT: All 373 tests pass (362 existing + 11 new) — 2026-02-15
 
-## Phase 13: Schema Evolution [STATUS: NOT STARTED]
+## Phase 13: Schema Evolution [STATUS: COMPLETE]
 
-- [ ] 13.1-13.4 ALTER MACHINE and checkpoint
+- [x] 13.1 ALTER MACHINE implementation — 2026-02-15
+  - [x] 13.1.1 ADD STATE: add to states set, validate no duplicate
+  - [x] 13.1.2 REMOVE STATE + MIGRATE: move instances, remove transitions, clean up ANY except
+  - [x] 13.1.3 ADD TRANSITION: add to transition map, validate states exist
+  - [x] 13.1.4 REMOVE TRANSITION: remove from map
+  - [x] 13.1.5 MODIFY TRANSITION: replace matching transition (guards/actions/timeout)
+  - [x] 13.1.6 ADD DATA field: add with optional backfill or default value
+  - [x] 13.1.7 REMOVE DATA field: remove from definition + instances
+  - [x] 13.1.8 BACKFILL: evaluate expression and set on all instances
+- [x] 13.2 Migration safety checks — 2026-02-15
+  - [x] 13.2.1 Cannot remove a state that instances are in without MIGRATE clause (always required)
+  - [x] 13.2.2 Cannot remove initial state
+  - [x] 13.2.3 Warning when adding a REQUIRED field without DEFAULT or BACKFILL (error)
+  - [x] 13.2.4 Validate states exist for transitions, fields exist for backfill
+  - [x] 13.2.5 Sequential validation per operation (supports multi-op ALTER)
+- [x] 13.3 Version tracking in catalog (auto-increment on update)
+- [x] 13.4 Storage migration methods (migrate_instances_state, bulk_update_instances)
+- [x] 13.5 Server handler (POST /execute with ALTER MACHINE SMQL)
+- [x] 13.6 CLI handler (REPL + exec support)
+- [x] 13.7 Tests — 28 tests (engine: 25 alter + 3 parser integration + 2 storage)
+- [x] 13.8 CHECKPOINT: All 401 tests pass (373 existing + 28 new) — 2026-02-15
 
-## Phase 14: Integration Tests & Examples [STATUS: NOT STARTED]
+## Phase 14: Integration Tests & Examples [STATUS: COMPLETE]
 
-- [ ] 14.1-14.5 Integration tests and checkpoint
+- [x] 14.1 Support Ticket end-to-end scenario — 16 tests — 2026-02-15
+  - [x] 14.1.1 Define machine from .smql, spawn tickets, full lifecycle (open→triaged→in_progress→resolved)
+  - [x] 14.1.2 Guard failure testing (missing assignee, wrong actor)
+  - [x] 14.1.3 Timeout registration, reopen flow, MEMO in trail
+  - [x] 14.1.4 FIND by state, AGGREGATE by state, PATHS, FUNNEL queries
+  - [x] 14.1.5 Multiple tickets with diverse paths for analysis
+- [x] 14.2 E-Commerce Order scenario (composition) — 17 tests — 2026-02-15
+  - [x] 14.2.1 Order with LineItems and Shipment (three-machine composition)
+  - [x] 14.2.2 Parent-child spawn and verification
+  - [x] 14.2.3 ALL(items, STATE IS confirmed) guard for order fulfillment
+  - [x] 14.2.4 CASCADE cancellation to children
+  - [x] 14.2.5 Full fulfillment flow (draft→placed→paid→fulfilled→shipped→delivered)
+  - [x] 14.2.6 Shipment guards (tracking/carrier IS SET)
+  - [x] 14.2.7 Wildcard transitions (EXCEPT FROM for LineItem)
+- [x] 14.3 CI/CD Pipeline scenario (three-level composition) — 13 tests — 2026-02-15
+  - [x] 14.3.1 Pipeline → Stage → Job three-level hierarchy
+  - [x] 14.3.2 ALL/ANY guards (stage passes when ALL jobs pass, fails when ANY fails)
+  - [x] 14.3.3 Pipeline passes/fails based on stage states
+  - [x] 14.3.4 CASCADE cancel propagation through three levels
+  - [x] 14.3.5 FIND/AGGREGATE queries across hierarchy
+- [ ] 14.4 Performance benchmarks (deferred)
+- [x] 14.5 CHECKPOINT: All 447 tests pass (401 existing + 46 integration) — 2026-02-15
 
 ## Phase 15: SDK & Developer Experience Polish [STATUS: NOT STARTED]
 

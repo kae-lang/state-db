@@ -4,14 +4,25 @@ use smql_ast::command::{Command, Statement};
 use smql_catalog::MachineCatalog;
 use smql_engine_core::engine::Engine;
 use smql_engine_core::query::QueryResult;
-use smql_storage::MemoryStorage;
+use smql_storage::{MemoryStorage, Storage};
 use std::sync::Arc;
+
+/// Run the SMQL REPL with a custom storage backend.
+pub async fn run_repl_with_storage(storage: Arc<dyn Storage>) {
+    let catalog = Arc::new(MachineCatalog::new());
+    let engine = Engine::new(catalog, storage);
+    run_repl_inner(engine).await;
+}
 
 /// Run the SMQL REPL (Read-Eval-Print Loop).
 pub async fn run_repl() {
     let catalog = Arc::new(MachineCatalog::new());
     let storage = Arc::new(MemoryStorage::new());
     let engine = Engine::new(catalog, storage);
+    run_repl_inner(engine).await;
+}
+
+async fn run_repl_inner(engine: Engine) {
 
     println!("SMQL Engine v0.1.0 — Interactive REPL");
     println!("Type SMQL statements or .help for commands. Press Ctrl+D to exit.\n");
@@ -209,8 +220,20 @@ async fn execute_command(cmd: Command, engine: &Engine) {
             eprintln!("BATCH TRANSITION not yet implemented");
         }
 
-        Command::AlterMachine(_) => {
-            eprintln!("ALTER MACHINE not yet implemented");
+        Command::AlterMachine(alter_cmd) => match engine.execute_alter_machine(&alter_cmd).await {
+            Ok(result) => {
+                println!(
+                    "Machine '{}' altered (v{}, {} operation(s), {} instance(s) migrated).",
+                    result.machine,
+                    result.new_version,
+                    result.operations_applied,
+                    result.instances_migrated
+                );
+                for w in &result.warnings {
+                    println!("  Warning: {}", w);
+                }
+            }
+            Err(e) => eprintln!("Error: {}", e),
         }
     }
 }

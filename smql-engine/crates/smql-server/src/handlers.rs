@@ -322,15 +322,33 @@ async fn execute_command(
             }),
         ),
 
-        Command::AlterMachine(_) => (
-            StatusCode::NOT_IMPLEMENTED,
-            Json(ExecuteResponse {
-                success: false,
-                result: None,
-                error: Some("ALTER MACHINE not yet implemented".to_string()),
-                warnings: None,
-            }),
-        ),
+        Command::AlterMachine(alter_cmd) => {
+            match state.engine.execute_alter_machine(&alter_cmd).await {
+                Ok(result) => {
+                    let warns: Vec<String> = result.warnings;
+                    (
+                        StatusCode::OK,
+                        Json(ExecuteResponse {
+                            success: true,
+                            result: Some(serde_json::json!({
+                                "action": "machine_altered",
+                                "machine": result.machine,
+                                "new_version": result.new_version,
+                                "operations_applied": result.operations_applied,
+                                "instances_migrated": result.instances_migrated,
+                            })),
+                            error: None,
+                            warnings: if warns.is_empty() {
+                                None
+                            } else {
+                                Some(warns)
+                            },
+                        }),
+                    )
+                }
+                Err(e) => error_response(e),
+            }
+        }
     }
 }
 

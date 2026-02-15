@@ -3,6 +3,9 @@ name = "smql-storage"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+rocksdb = ["dep:rocksdb"]
+
 [dependencies]
 smql-ast = { path = "../smql-ast" }
 async-trait = { workspace = true }
@@ -13,3 +16,4 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
 ulid = { workspace = true }
+rocksdb = { workspace = true, optional = true }

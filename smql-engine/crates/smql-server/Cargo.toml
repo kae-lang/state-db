@@ -3,6 +3,9 @@ name = "smql-server"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+rocksdb = ["smql-storage/rocksdb"]
+
 [dependencies]
 smql-ast = { path = "../smql-ast" }
 smql-catalog = { path = "../smql-catalog" }
