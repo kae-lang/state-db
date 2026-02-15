@@ -1,0 +1,22 @@
+[package]
+name = "smql-cli"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "smql"
+path = "src/main.rs"
+
+[dependencies]
+smql-ast = { path = "../smql-ast" }
+smql-catalog = { path = "../smql-catalog" }
+smql-engine-core = { path = "../smql-engine" }
+smql-parser = { path = "../smql-parser" }
+smql-server = { path = "../smql-server" }
+smql-storage = { path = "../smql-storage" }
+clap = { workspace = true }
+rustyline = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing-subscriber = { workspace = true }

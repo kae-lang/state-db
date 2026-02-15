@@ -1,0 +1,9 @@
+[package]
+name = "smql-parser"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+smql-ast = { path = "../smql-ast" }
+winnow = { workspace = true }
+thiserror = { workspace = true }

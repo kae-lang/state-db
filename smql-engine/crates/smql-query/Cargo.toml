@@ -1,0 +1,12 @@
+[package]
+name = "smql-query"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+smql-ast = { path = "../smql-ast" }
+smql-storage = { path = "../smql-storage" }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }

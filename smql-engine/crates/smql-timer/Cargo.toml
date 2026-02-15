@@ -1,0 +1,11 @@
+[package]
+name = "smql-timer"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+smql-ast = { path = "../smql-ast" }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }

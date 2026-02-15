@@ -1,0 +1,17 @@
+[package]
+name = "smql-engine-core"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+smql-ast = { path = "../smql-ast" }
+smql-catalog = { path = "../smql-catalog" }
+smql-storage = { path = "../smql-storage" }
+smql-trail = { path = "../smql-trail" }
+smql-timer = { path = "../smql-timer" }
+smql-hooks = { path = "../smql-hooks" }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+ulid = { workspace = true }

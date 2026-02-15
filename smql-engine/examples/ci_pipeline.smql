@@ -1,0 +1,81 @@
+DEFINE MACHINE Pipeline (
+
+  DATA {
+    repo     : TEXT -> REQUIRED
+    branch   : TEXT -> REQUIRED
+    commit   : TEXT -> REQUIRED
+    trigger  : ENUM(push, pr, manual, schedule) -> DEFAULT(push)
+  }
+
+  STATES { queued, running, passed, failed, cancelled }
+  INITIAL STATE queued
+  TERMINAL STATES { passed, failed, cancelled }
+
+  CHILDREN {
+    stages : LIST(Stage) -> MIN(1)
+  }
+
+  TRANSITIONS {
+    queued -> running {}
+
+    running -> passed {
+      GUARD : ALL(stages, STATE IS passed)
+    }
+
+    running -> failed {
+      GUARD : ANY(stages, STATE IS failed)
+    }
+
+    ANY -> cancelled {
+      EXCEPT FROM { passed, failed }
+    }
+  }
+)
+
+DEFINE MACHINE Stage (
+  PARENT : Pipeline
+
+  DATA {
+    name  : TEXT -> REQUIRED
+    order : INT  -> REQUIRED
+  }
+
+  STATES { pending, running, passed, failed, skipped }
+  INITIAL STATE pending
+  TERMINAL STATES { passed, failed, skipped }
+
+  CHILDREN {
+    jobs : LIST(Job) -> MIN(1)
+  }
+
+  TRANSITIONS {
+    pending -> running {}
+    running -> passed {
+      GUARD : ALL(jobs, STATE IS passed)
+    }
+    running -> failed {
+      GUARD : ANY(jobs, STATE IS failed)
+    }
+    pending -> skipped {}
+  }
+)
+
+DEFINE MACHINE Job (
+  PARENT : Stage
+
+  DATA {
+    name    : TEXT -> REQUIRED
+    image   : TEXT -> OPTIONAL
+    command : TEXT -> REQUIRED
+  }
+
+  STATES { pending, running, passed, failed }
+  INITIAL STATE pending
+  TERMINAL STATES { passed, failed }
+
+  TRANSITIONS {
+    pending -> running {}
+    running -> passed {}
+    running -> failed {}
+  }
+)

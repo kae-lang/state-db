@@ -1,0 +1,116 @@
+DEFINE MACHINE Order (
+
+  DATA {
+    customer : REF(Customer) -> REQUIRED
+    total    : MONEY(USD)    -> REQUIRED
+    notes    : TEXT           -> OPTIONAL
+  }
+
+  STATES { draft, placed, paid, payment_failed, fulfilled, shipped, delivered, cancelled, returned }
+  INITIAL STATE draft
+  TERMINAL STATES { delivered, cancelled, returned }
+
+  CHILDREN {
+    items    : LIST(LineItem)    -> MIN(1)
+    shipment : OPTIONAL(Shipment)
+  }
+
+  TRANSITIONS {
+    draft -> placed {
+      GUARD  : items.count > 0
+      GUARD  : total > 0
+      ACTION : EMIT("order.placed", { order: SELF })
+    }
+
+    placed -> paid {
+      GUARD  : SIGNAL FROM PaymentProcess WHERE state == "succeeded"
+    }
+
+    placed -> payment_failed {
+      GUARD  : SIGNAL FROM PaymentProcess WHERE state == "failed"
+      TIMEOUT: 24h -> cancelled
+    }
+
+    payment_failed -> placed {
+      -- retry payment
+    }
+
+    paid -> fulfilled {
+      GUARD  : ALL(items, STATE IS confirmed)
+      MUTATE : shipment = SPAWN Shipment { order: SELF }
+    }
+
+    fulfilled -> shipped {
+      GUARD : shipment.STATE IS dispatched
+    }
+
+    shipped -> delivered {
+      GUARD : shipment.STATE IS delivered
+    }
+
+    delivered -> returned {
+      GUARD : elapsed_since(delivered) < 14d
+      ACTION: EMIT("order.returned", { order: SELF })
+    }
+
+    ANY -> cancelled {
+      EXCEPT FROM { shipped, delivered, returned }
+      ACTION : EMIT("order.cancelled", { order: SELF })
+    }
+  }
+)
+
+DEFINE MACHINE LineItem (
+  PARENT : Order
+
+  DATA {
+    product  : TEXT          -> REQUIRED
+    quantity : INT           -> MIN(1), REQUIRED
+    price    : MONEY(USD)   -> REQUIRED
+  }
+
+  STATES { pending, confirmed, backordered, cancelled }
+  INITIAL STATE pending
+  TERMINAL STATES { confirmed, cancelled }
+
+  TRANSITIONS {
+    pending -> confirmed {
+      GUARD : quantity > 0
+    }
+    pending -> backordered {
+      ACTION : NOTIFY(PARENT.customer, "item.backordered")
+    }
+    backordered -> confirmed {}
+    ANY -> cancelled {
+      EXCEPT FROM { confirmed }
+    }
+  }
+)
+
+DEFINE MACHINE Shipment (
+  PARENT : Order
+
+  DATA {
+    tracking : TEXT                       -> OPTIONAL
+    carrier  : ENUM(fedex, ups, dhl, usps) -> OPTIONAL
+  }
+
+  STATES { created, dispatched, in_transit, delivered, lost }
+  INITIAL STATE created
+  TERMINAL STATES { delivered, lost }
+
+  TRANSITIONS {
+    created -> dispatched {
+      GUARD  : tracking IS SET
+      GUARD  : carrier IS SET
+      ACTION : NOTIFY(PARENT.customer, "order.shipped")
+    }
+    dispatched -> in_transit {}
+    in_transit -> delivered {
+      SIGNAL PARENT TO delivered
+    }
+    in_transit -> lost {
+      ACTION : NOTIFY(PARENT.customer, "shipment.lost")
+    }
+  }
+)

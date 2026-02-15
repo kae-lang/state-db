@@ -1,0 +1,74 @@
+DEFINE MACHINE SupportTicket (
+
+  DATA {
+    customer_id    : UUID        -> REQUIRED
+    subject        : TEXT        -> REQUIRED, MAX(200)
+    description    : TEXT        -> REQUIRED
+    priority       : ENUM(low, medium, high, critical) -> DEFAULT(medium)
+    assignee       : REF(Agent)  -> OPTIONAL
+    tags           : SET(TEXT)   -> DEFAULT({})
+    satisfaction   : INT         -> RANGE(1, 5), OPTIONAL
+    resolution_note: TEXT        -> OPTIONAL
+  }
+
+  STATES {
+    open
+    triaged
+    in_progress
+    waiting_on_customer
+    resolved
+    closed
+    reopened
+  }
+
+  INITIAL STATE open
+  TERMINAL STATES { closed }
+
+  TRANSITIONS {
+    open -> triaged {
+      GUARD  : assignee IS SET
+      ACTION : NOTIFY(assignee, "ticket.assigned")
+    }
+
+    triaged -> in_progress {
+      GUARD : ACTOR == assignee OR ACTOR.role == "admin"
+    }
+
+    in_progress -> waiting_on_customer {
+      GUARD   : ACTOR == assignee
+      TIMEOUT : 72h -> resolved
+      ACTION  : NOTIFY(customer_id, "ticket.needs_response")
+    }
+
+    waiting_on_customer -> in_progress {
+      GUARD : ACTOR.id == customer_id OR ACTOR == assignee
+    }
+
+    in_progress -> resolved {
+      GUARD  : resolution_note IS SET
+      GUARD  : ACTOR == assignee OR ACTOR.role == "admin"
+      TIMEOUT: 7d -> closed
+      ACTION : NOTIFY(customer_id, "ticket.resolved")
+    }
+
+    resolved -> reopened {
+      GUARD : ACTOR.id == customer_id
+      GUARD : elapsed_since(resolved) < 30d
+    }
+
+    reopened -> in_progress {
+      GUARD : assignee IS SET
+    }
+
+    resolved -> closed {
+      GUARD : elapsed_since(resolved) >= 7d OR ACTOR.role == "admin"
+    }
+
+    ANY -> triaged {
+      EXCEPT FROM { open, closed }
+      GUARD  : ACTOR.role IN ("admin", "supervisor")
+      MUTATE : priority = critical
+      ACTION : LOG("Escalated by {ACTOR}")
+    }
+  }
+)
