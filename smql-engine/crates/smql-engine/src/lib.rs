@@ -8,7 +8,7 @@ pub mod query;
 mod tests;
 
 pub use engine::{Engine, SpawnResult, TransitionResult};
-pub use eval::{eval_expr, eval_guard, ActorInfo, EvalContext};
+pub use eval::{eval_expr, eval_guard, ActorInfo, ChildInfo, EvalContext};
 pub use query::{
     AggregateRow, FunnelResult, FunnelStage, PathResult, QueryResult,
 };

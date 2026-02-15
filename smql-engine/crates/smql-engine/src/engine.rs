@@ -6,14 +6,14 @@ use smql_ast::types::{Constraint, DefaultValue, TypeDefinition};
 use smql_ast::value::Value;
 use smql_ast::{SmqlError, SmqlResult};
 use smql_catalog::MachineCatalog;
-use smql_hooks::{EventBus, HookContext, HookExecutor, ResolvedAction};
+use smql_hooks::{EngineCallback, EventBus, HookContext, HookError, HookExecutor, ResolvedAction};
 use smql_storage::instance::{Instance, Mutation, TrailEntry};
 use smql_storage::traits::Storage;
 use smql_timer::TimerManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::eval::{eval_expr, eval_guard, ActorInfo, EvalContext};
+use crate::eval::{eval_expr, eval_guard, ActorInfo, ChildInfo, EvalContext};
 
 /// The core SMQL engine — executes spawn, transition, and query operations.
 pub struct Engine {
@@ -96,12 +96,30 @@ impl Engine {
         // Validate data against machine DATA definition
         self.validate_spawn_data(&machine_def, &mut data)?;
 
-        // Create instance
-        let instance = Instance::new(
-            cmd.machine.clone(),
-            machine_def.initial_state.clone(),
-            data,
-        );
+        // Create instance (with optional parent linkage)
+        let instance = if let (Some(parent_id_str), Some(parent_machine)) = (&cmd.parent_id, &cmd.parent_machine) {
+            let parent_id = smql_storage::InstanceId::from_string(parent_id_str)
+                .map_err(|_| SmqlError::not_found("Parent instance", parent_id_str))?;
+            // Validate parent exists
+            let _parent = self
+                .storage
+                .get_instance(&parent_id)
+                .await?
+                .ok_or_else(|| SmqlError::not_found("Parent instance", parent_id_str))?;
+            Instance::new_child(
+                cmd.machine.clone(),
+                machine_def.initial_state.clone(),
+                data,
+                parent_id,
+                parent_machine.clone(),
+            )
+        } else {
+            Instance::new(
+                cmd.machine.clone(),
+                machine_def.initial_state.clone(),
+                data,
+            )
+        };
 
         // Create initial trail entry (spawn event)
         let trail_entry = TrailEntry {
@@ -160,6 +178,7 @@ impl Engine {
                 as_actor: None,
                 through: Vec::new(),
                 or_stay: false,
+                cascade: false,
             };
             let result = self.transition(&transition_cmd).await?;
             return Ok(SpawnResult {
@@ -330,7 +349,15 @@ impl Engine {
             created_at: instance.created_at,
             now: Utc::now(),
             timeout_remaining,
+            children: HashMap::new(),
+            parent_data: None,
+            parent_state: None,
         };
+
+        // Populate children/parent context for composition guards
+        if !machine_def.children.is_empty() || instance.parent_id.is_some() {
+            self.populate_composition_context(&mut ctx, &instance, &machine_def).await;
+        }
 
         // Build HookContext for this transition
         let hook_ctx = HookContext {
@@ -437,6 +464,66 @@ impl Engine {
             mutations.push(Mutation::SetField(field.clone(), val));
         }
         for mutate in &transition_def.mutates {
+            // Check for __spawn FunctionCall in MUTATE
+            if let smql_ast::expression::ExpressionKind::FunctionCall { name, args } = &mutate.value.kind {
+                if name == "__spawn" {
+                    // __spawn(machine_name, key1, val1, key2, val2, ...)
+                    if let Some(first_arg) = args.first() {
+                        let machine_val = eval_expr(first_arg, &ctx)?;
+                        let child_machine = match &machine_val {
+                            Value::Text(s) => s.clone(),
+                            _ => first_arg.to_string(),
+                        };
+                        // Collect remaining args as key-value pairs
+                        let mut child_data = Vec::new();
+                        let mut i = 1;
+                        while i + 1 < args.len() {
+                            let key_val = eval_expr(&args[i], &ctx)?;
+                            let val = eval_expr(&args[i + 1], &ctx)?;
+                            let key = match key_val {
+                                Value::Text(k) => k,
+                                _ => args[i].to_string(),
+                            };
+                            child_data.push((key, val));
+                            i += 2;
+                        }
+                        // Spawn child with parent linkage
+                        let child_data_exprs: Vec<(String, smql_ast::expression::Expression)> = child_data
+                            .into_iter()
+                            .map(|(k, v)| {
+                                (k, smql_ast::expression::Expression::new(
+                                    smql_ast::expression::ExpressionKind::Literal(v),
+                                ))
+                            })
+                            .collect();
+                        let child_cmd = SpawnCommand {
+                            machine: child_machine.clone(),
+                            data: child_data_exprs,
+                            then_transition: None,
+                            batch: false,
+                            batch_data: Vec::new(),
+                            parent_id: Some(cmd.instance_id.clone()),
+                            parent_machine: Some(instance.machine.clone()),
+                        };
+                        match self.spawn(&child_cmd).await {
+                            Ok(result) => {
+                                let child_id = result.instance.id.as_str();
+                                mutations.push(Mutation::SetField(
+                                    mutate.field.clone(),
+                                    Value::Ref(child_machine, child_id),
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(SmqlError::internal(format!(
+                                    "MUTATE SPAWN failed: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
             let val = eval_expr(&mutate.value, &ctx)?;
             mutations.push(Mutation::SetField(mutate.field.clone(), val));
         }
@@ -523,6 +610,11 @@ impl Engine {
             )
             .await;
 
+        // --- 10. CASCADE: transition all children to terminal states ---
+        if cmd.cascade {
+            self.cascade_children(&id, &instance.machine).await;
+        }
+
         let updated = self
             .storage
             .get_instance(&id)
@@ -566,6 +658,7 @@ impl Engine {
                 as_actor: cmd.as_actor.clone(),
                 through: Vec::new(),
                 or_stay: false,
+                cascade: false,
             };
 
             let result = self.transition(&step_cmd).await?;
@@ -574,6 +667,49 @@ impl Engine {
         }
 
         last_result.ok_or_else(|| SmqlError::internal("THROUGH transition had no steps"))
+    }
+
+    /// Cascade: transition all children to their machine's first terminal state.
+    /// Errors on child cascade are logged but don't fail the parent.
+    async fn cascade_children(
+        &self,
+        parent_id: &smql_storage::InstanceId,
+        _parent_machine: &str,
+    ) {
+        let children = match self.storage.find_children(parent_id, None).await {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        for child in children {
+            // Find the child's machine definition to get terminal states
+            let child_machine_def = match self.catalog.get(&child.machine) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            // Skip if already in a terminal state
+            if child_machine_def.terminal_states.contains(&child.state) {
+                continue;
+            }
+
+            // Try to find a transition from current state to the first terminal state
+            if let Some(terminal) = child_machine_def.terminal_states.first() {
+                let cmd = TransitionCommand {
+                    machine: Some(child.machine.clone()),
+                    instance_id: child.id.as_str(),
+                    to_state: terminal.clone(),
+                    with_data: Vec::new(),
+                    memo: Some("CASCADE from parent".to_string()),
+                    as_actor: Some("System".to_string()),
+                    through: Vec::new(),
+                    or_stay: false,
+                    cascade: true, // Recursive cascade for grandchildren
+                };
+                // Use try_transition so failures don't propagate
+                let _ = self.try_transition(&cmd).await;
+            }
+        }
     }
 
     /// Find a matching transition definition for the given from -> to states.
@@ -874,6 +1010,168 @@ impl Engine {
             .iter()
             .map(|hook| self.resolve_actions(&hook.actions, ctx))
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EngineCallback — allows hooks to spawn children / signal parent
+// ---------------------------------------------------------------------------
+
+/// Wrapper that holds an Arc<Engine> for use as EngineCallback.
+/// We can't impl EngineCallback directly on Engine because we need Arc<Self>.
+pub struct EngineCallbackImpl {
+    pub catalog: Arc<MachineCatalog>,
+    pub storage: Arc<dyn Storage>,
+    pub timer_manager: Arc<TimerManager>,
+    pub hook_executor: Arc<HookExecutor>,
+}
+
+#[async_trait::async_trait]
+impl EngineCallback for EngineCallbackImpl {
+    async fn spawn_child(
+        &self,
+        parent_instance_id: &str,
+        machine: &str,
+        data: Vec<(String, Value)>,
+    ) -> Result<String, HookError> {
+        let parent_id = smql_storage::InstanceId::from_string(parent_instance_id)
+            .map_err(|_| HookError::ActionFailed {
+                message: format!("Invalid parent instance ID: {}", parent_instance_id),
+            })?;
+        let parent = self
+            .storage
+            .get_instance(&parent_id)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to get parent: {}", e),
+            })?
+            .ok_or_else(|| HookError::ActionFailed {
+                message: format!("Parent instance not found: {}", parent_instance_id),
+            })?;
+
+        let data_exprs: Vec<(String, smql_ast::expression::Expression)> = data
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    smql_ast::expression::Expression::new(
+                        smql_ast::expression::ExpressionKind::Literal(v),
+                    ),
+                )
+            })
+            .collect();
+
+        let cmd = SpawnCommand {
+            machine: machine.to_string(),
+            data: data_exprs,
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: Some(parent_instance_id.to_string()),
+            parent_machine: Some(parent.machine.clone()),
+        };
+
+        // Create a temporary engine to perform the spawn
+        let engine = Engine {
+            catalog: self.catalog.clone(),
+            storage: self.storage.clone(),
+            timer_manager: self.timer_manager.clone(),
+            hook_executor: self.hook_executor.clone(),
+        };
+        let result = engine.spawn(&cmd).await.map_err(|e| HookError::ActionFailed {
+            message: format!("Failed to spawn child: {}", e),
+        })?;
+        Ok(result.instance.id.as_str())
+    }
+
+    async fn signal_parent(
+        &self,
+        child_instance_id: &str,
+        target_state: &str,
+    ) -> Result<(), HookError> {
+        let child_id = smql_storage::InstanceId::from_string(child_instance_id)
+            .map_err(|_| HookError::ActionFailed {
+                message: format!("Invalid child instance ID: {}", child_instance_id),
+            })?;
+        let child = self
+            .storage
+            .get_instance(&child_id)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to get child: {}", e),
+            })?
+            .ok_or_else(|| HookError::ActionFailed {
+                message: format!("Child instance not found: {}", child_instance_id),
+            })?;
+
+        let parent_id = match &child.parent_id {
+            Some(pid) => pid.clone(),
+            None => return Ok(()), // No parent — no-op
+        };
+
+        let cmd = TransitionCommand::new(parent_id.as_str(), target_state.to_string());
+        let engine = Engine {
+            catalog: self.catalog.clone(),
+            storage: self.storage.clone(),
+            timer_manager: self.timer_manager.clone(),
+            hook_executor: self.hook_executor.clone(),
+        };
+        // Use try_transition so if the parent can't transition, we don't fail the hook
+        let _ = engine.try_transition(&cmd).await.map_err(|e| HookError::ActionFailed {
+            message: format!("Failed to signal parent: {}", e),
+        })?;
+        Ok(())
+    }
+}
+
+impl Engine {
+    /// Wire up the engine callback on the hook executor.
+    /// Call this after constructing an Arc<Engine> to enable SPAWN CHILD / SIGNAL PARENT.
+    pub fn wire_callback(&self) {
+        let cb = Arc::new(EngineCallbackImpl {
+            catalog: self.catalog.clone(),
+            storage: self.storage.clone(),
+            timer_manager: self.timer_manager.clone(),
+            hook_executor: self.hook_executor.clone(),
+        });
+        self.hook_executor.set_callback(cb);
+    }
+
+    /// Populate the EvalContext with children and parent data for composition guards.
+    async fn populate_composition_context(
+        &self,
+        ctx: &mut EvalContext,
+        instance: &Instance,
+        machine_def: &MachineDefinition,
+    ) {
+        // Populate children for each child definition in the machine
+        for child_def in &machine_def.children {
+            let children = self
+                .storage
+                .find_children(&instance.id, Some(&child_def.machine))
+                .await
+                .unwrap_or_default();
+
+            let child_infos: Vec<ChildInfo> = children
+                .into_iter()
+                .map(|c| ChildInfo {
+                    id: c.id.as_str(),
+                    machine: c.machine,
+                    state: c.state,
+                    data: c.data,
+                })
+                .collect();
+
+            ctx.children.insert(child_def.name.clone(), child_infos);
+        }
+
+        // Populate parent data if this instance has a parent
+        if let Some(parent_id) = &instance.parent_id {
+            if let Ok(Some(parent)) = self.storage.get_instance(parent_id).await {
+                ctx.parent_data = Some(parent.data);
+                ctx.parent_state = Some(parent.state);
+            }
+        }
     }
 }
 

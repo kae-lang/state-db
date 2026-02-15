@@ -30,6 +30,8 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
             then_transition: None,
             batch: true,
             batch_data,
+            parent_id: None,
+            parent_machine: None,
         }));
     }
 
@@ -49,6 +51,8 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
         then_transition,
         batch: false,
         batch_data: Vec::new(),
+        parent_id: None,
+        parent_machine: None,
     }))
 }
 
@@ -98,6 +102,8 @@ pub fn parse_transition(parser: &mut Parser) -> SmqlResult<Command> {
             parser.expect_punct("]")?;
         } else if parser.try_keyword("OR_STAY") {
             cmd.or_stay = true;
+        } else if parser.try_keyword("CASCADE") {
+            cmd.cascade = true;
         } else {
             break;
         }

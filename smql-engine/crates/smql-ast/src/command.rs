@@ -56,6 +56,10 @@ pub struct SpawnCommand {
     pub batch: bool,
     /// For batch spawn, list of data sets
     pub batch_data: Vec<Vec<(String, Expression)>>,
+    /// Parent instance ID (for child spawn in composition)
+    pub parent_id: Option<String>,
+    /// Parent machine name (for child spawn in composition)
+    pub parent_machine: Option<String>,
 }
 
 impl SpawnCommand {
@@ -66,6 +70,8 @@ impl SpawnCommand {
             then_transition: None,
             batch: false,
             batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
         }
     }
 }
@@ -86,6 +92,8 @@ pub struct TransitionCommand {
     pub through: Vec<String>,
     /// OR STAY — apply mutations even if guard fails
     pub or_stay: bool,
+    /// CASCADE — also transition all children to terminal states
+    pub cascade: bool,
 }
 
 impl TransitionCommand {
@@ -99,6 +107,7 @@ impl TransitionCommand {
             as_actor: None,
             through: Vec::new(),
             or_stay: false,
+            cascade: false,
         }
     }
 }

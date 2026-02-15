@@ -421,6 +421,8 @@ mod engine_tests {
             then_transition: None,
             batch: false,
             batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
         }
     }
 
@@ -899,6 +901,8 @@ mod query_tests {
             then_transition: None,
             batch: false,
             batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
         }
     }
 
@@ -1385,6 +1389,8 @@ mod timer_tests {
             then_transition: None,
             batch: false,
             batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
         }
     }
 
@@ -1890,6 +1896,8 @@ mod hook_tests {
             then_transition: None,
             batch: false,
             batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
         }
     }
 
@@ -2312,5 +2320,983 @@ mod hook_tests {
         assert!(exit_idx.unwrap() < action_idx.unwrap(), "EXIT before ACTION");
         assert!(action_idx.unwrap() < enter_idx.unwrap(), "ACTION before ENTER");
         assert!(enter_idx.unwrap() < after_idx.unwrap(), "ENTER before AFTER");
+    }
+}
+
+#[cfg(test)]
+mod composition_tests {
+    use crate::engine::Engine;
+    use crate::eval::{ChildInfo, EvalContext, eval_expr};
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::expression::{BinaryOperator, Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    /// Register Order machine with CHILDREN { items: LIST(LineItem) }
+    fn register_order_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("Order".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("confirmed".into()),
+            StateDefinition::new("shipped".into()),
+            StateDefinition::new("cancelled".into()),
+        ];
+        m.terminal_states = vec!["shipped".into(), "cancelled".into()];
+        m.data = vec![
+            DataFieldDefinition {
+                name: "customer".into(),
+                field_type: TypeDefinition::Text,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "total".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Default(DefaultValue::Int(0))],
+            },
+        ];
+        m.children = vec![ChildDefinition {
+            name: "items".to_string(),
+            machine: "LineItem".to_string(),
+            cardinality: ChildCardinality::List { min: None, max: None },
+        }];
+        m.transitions = vec![
+            TransitionDefinition::new(
+                TransitionSource::State("pending".into()),
+                "confirmed".into(),
+            ),
+            TransitionDefinition::new(
+                TransitionSource::State("confirmed".into()),
+                "shipped".into(),
+            ),
+            {
+                let t = TransitionDefinition::new(
+                    TransitionSource::Any { except: vec!["cancelled".into(), "shipped".into()] },
+                    "cancelled".into(),
+                );
+                t
+            },
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    /// Register LineItem machine (PARENT Order)
+    fn register_line_item_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("LineItem".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("fulfilled".into()),
+            StateDefinition::new("cancelled".into()),
+        ];
+        m.terminal_states = vec!["fulfilled".into(), "cancelled".into()];
+        m.parent = Some("Order".to_string());
+        m.data = vec![
+            DataFieldDefinition {
+                name: "product".into(),
+                field_type: TypeDefinition::Text,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "qty".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Default(DefaultValue::Int(1))],
+            },
+        ];
+        m.transitions = vec![
+            TransitionDefinition::new(
+                TransitionSource::State("pending".into()),
+                "fulfilled".into(),
+            ),
+            TransitionDefinition::new(
+                TransitionSource::State("pending".into()),
+                "cancelled".into(),
+            ),
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
+        SpawnCommand {
+            machine: machine.to_string(),
+            data: data
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k.to_string(),
+                        Expression::new(ExpressionKind::Literal(v)),
+                    )
+                })
+                .collect(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+        }
+    }
+
+    fn spawn_child_cmd(machine: &str, data: Vec<(&str, Value)>, parent_id: &str, parent_machine: &str) -> SpawnCommand {
+        SpawnCommand {
+            machine: machine.to_string(),
+            data: data
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k.to_string(),
+                        Expression::new(ExpressionKind::Literal(v)),
+                    )
+                })
+                .collect(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: Some(parent_id.to_string()),
+            parent_machine: Some(parent_machine.to_string()),
+        }
+    }
+
+    fn transition_cmd(instance_id: &str, to_state: &str) -> TransitionCommand {
+        TransitionCommand::new(instance_id.to_string(), to_state.to_string())
+    }
+
+    fn lit(v: Value) -> Expression {
+        Expression::new(ExpressionKind::Literal(v))
+    }
+
+    fn field(name: &str) -> Expression {
+        Expression::new(ExpressionKind::FieldAccess(vec![name.to_string()]))
+    }
+
+    fn binop(left: Expression, op: BinaryOperator, right: Expression) -> Expression {
+        Expression::new(ExpressionKind::BinaryOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        })
+    }
+
+    // --- Spawn child links parent ---
+
+    #[tokio::test]
+    async fn spawn_child_links_parent() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Alice".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+
+        let item = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("Widget".into()))],
+                &order_id,
+                "Order",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(item.instance.parent_id.unwrap().as_str(), order_id);
+        assert_eq!(item.instance.parent_machine.unwrap(), "Order");
+    }
+
+    // --- Spawn child validates parent exists ---
+
+    #[tokio::test]
+    async fn spawn_child_invalid_parent_fails() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        let result = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("Widget".into()))],
+                "01NONEXISTENT000000000000",
+                "Order",
+            ))
+            .await;
+        assert!(result.is_err());
+    }
+
+    // --- find_children from engine storage ---
+
+    #[tokio::test]
+    async fn find_children_via_storage() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Bob".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+
+        engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("A".into()))],
+                &order_id,
+                "Order",
+            ))
+            .await
+            .unwrap();
+        engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("B".into()))],
+                &order_id,
+                "Order",
+            ))
+            .await
+            .unwrap();
+
+        let children = engine
+            .storage
+            .find_children(&order.instance.id, Some("LineItem"))
+            .await
+            .unwrap();
+        assert_eq!(children.len(), 2);
+    }
+
+    // --- Guard: ALL children pass ---
+
+    #[test]
+    fn guard_all_children_pass() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "fulfilled".into(),
+                    data: HashMap::new(),
+                },
+                ChildInfo {
+                    id: "c2".into(),
+                    machine: "LineItem".into(),
+                    state: "fulfilled".into(),
+                    data: HashMap::new(),
+                },
+            ],
+        );
+
+        // ALL(items, STATE IS fulfilled)
+        let expr = Expression::new(ExpressionKind::All {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    // --- Guard: ALL children fail (one not fulfilled) ---
+
+    #[test]
+    fn guard_all_children_fail_one() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "fulfilled".into(),
+                    data: HashMap::new(),
+                },
+                ChildInfo {
+                    id: "c2".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
+            ],
+        );
+
+        let expr = Expression::new(ExpressionKind::All {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    // --- Guard: ANY children pass ---
+
+    #[test]
+    fn guard_any_children_pass() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
+                ChildInfo {
+                    id: "c2".into(),
+                    machine: "LineItem".into(),
+                    state: "fulfilled".into(),
+                    data: HashMap::new(),
+                },
+            ],
+        );
+
+        let expr = Expression::new(ExpressionKind::Any {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    // --- Guard: ANY children none match ---
+
+    #[test]
+    fn guard_any_children_none_match() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
+            ],
+        );
+
+        let expr = Expression::new(ExpressionKind::Any {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    // --- child.STATE access in field path ---
+
+    #[test]
+    fn child_state_access_in_guard() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "shipment".to_string(),
+            vec![ChildInfo {
+                id: "s1".into(),
+                machine: "Shipment".into(),
+                state: "dispatched".into(),
+                data: HashMap::new(),
+            }],
+        );
+
+        // shipment.STATE == "dispatched"
+        let expr = binop(
+            Expression::new(ExpressionKind::FieldAccess(vec![
+                "shipment".to_string(),
+                "STATE".to_string(),
+            ])),
+            BinaryOperator::Eq,
+            lit(Value::Text("dispatched".into())),
+        );
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    // --- children.count access ---
+
+    #[test]
+    fn children_count_in_guard() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo { id: "c1".into(), machine: "LineItem".into(), state: "pending".into(), data: HashMap::new() },
+                ChildInfo { id: "c2".into(), machine: "LineItem".into(), state: "pending".into(), data: HashMap::new() },
+                ChildInfo { id: "c3".into(), machine: "LineItem".into(), state: "pending".into(), data: HashMap::new() },
+            ],
+        );
+
+        // items.count > 0
+        let expr = binop(
+            Expression::new(ExpressionKind::FieldAccess(vec![
+                "items".to_string(),
+                "count".to_string(),
+            ])),
+            BinaryOperator::Gt,
+            lit(Value::Int(0)),
+        );
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+
+        // COUNT(items) == 3
+        let count_expr = Expression::new(ExpressionKind::Count(Some(Box::new(field("items")))));
+        assert_eq!(eval_expr(&count_expr, &ctx).unwrap(), Value::Int(3));
+    }
+
+    // --- SIGNAL FROM evaluation ---
+
+    #[test]
+    fn signal_from_matches() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "fulfilled".into(),
+                    data: HashMap::new(),
+                },
+            ],
+        );
+
+        // SIGNAL FROM LineItem WHERE STATE IS fulfilled
+        let expr = Expression::new(ExpressionKind::SignalFrom {
+            machine: "LineItem".to_string(),
+            condition: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn signal_from_no_match() {
+        let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        ctx.children.insert(
+            "items".to_string(),
+            vec![
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
+            ],
+        );
+
+        let expr = Expression::new(ExpressionKind::SignalFrom {
+            machine: "LineItem".to_string(),
+            condition: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    // --- Parent data access from child context ---
+
+    #[test]
+    fn parent_data_access_in_child_guard() {
+        let mut parent_data = HashMap::new();
+        parent_data.insert("customer".to_string(), Value::Text("Alice".into()));
+        parent_data.insert("total".to_string(), Value::Int(100));
+
+        let mut ctx = EvalContext::new(HashMap::new(), "pending".to_string());
+        ctx.parent_data = Some(parent_data);
+        ctx.parent_state = Some("confirmed".to_string());
+
+        // PARENT.customer == "Alice"
+        let expr = binop(
+            Expression::new(ExpressionKind::FieldAccess(vec![
+                "PARENT".to_string(),
+                "customer".to_string(),
+            ])),
+            BinaryOperator::Eq,
+            lit(Value::Text("Alice".into())),
+        );
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+
+        // PARENT.STATE == "confirmed"
+        let state_expr = binop(
+            Expression::new(ExpressionKind::FieldAccess(vec![
+                "PARENT".to_string(),
+                "STATE".to_string(),
+            ])),
+            BinaryOperator::Eq,
+            lit(Value::Text("confirmed".into())),
+        );
+        assert_eq!(eval_expr(&state_expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    // --- Spawn in MUTATE creates child ---
+
+    #[tokio::test]
+    async fn spawn_in_mutate_creates_child() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        // Add a transition with MUTATE that spawns a child
+        let mut m = engine.catalog.get("Order").unwrap().clone();
+        // Replace pending->confirmed with one that has a __spawn mutate
+        m.transitions[0] = {
+            let mut t = TransitionDefinition::new(
+                TransitionSource::State("pending".into()),
+                "confirmed".into(),
+            );
+            t.mutates = vec![MutateClause {
+                field: "first_item".to_string(),
+                value: Expression::new(ExpressionKind::FunctionCall {
+                    name: "__spawn".to_string(),
+                    args: vec![
+                        lit(Value::Text("LineItem".into())),
+                        lit(Value::Text("product".into())),
+                        lit(Value::Text("Auto-Widget".into())),
+                    ],
+                }),
+            }];
+            t
+        };
+        engine.catalog.register(m).unwrap();
+
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Charlie".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+
+        let result = engine.transition(&transition_cmd(&order_id, "confirmed")).await.unwrap();
+
+        // The mutate should have set first_item to a Ref
+        let first_item = result.instance.data.get("first_item").unwrap();
+        match first_item {
+            Value::Ref(machine, _child_id) => {
+                assert_eq!(machine, "LineItem");
+            }
+            other => panic!("Expected Ref, got {:?}", other),
+        }
+
+        // Should have a child linked to the order
+        let children = engine
+            .storage
+            .find_children(&order.instance.id, Some("LineItem"))
+            .await
+            .unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(
+            children[0].data.get("product"),
+            Some(&Value::Text("Auto-Widget".into()))
+        );
+    }
+
+    // --- CASCADE transitions children ---
+
+    #[tokio::test]
+    async fn cascade_transitions_children() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Dave".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+
+        // Spawn two children
+        let child1 = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("A".into()))],
+                &order_id,
+                "Order",
+            ))
+            .await
+            .unwrap();
+        let child2 = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("B".into()))],
+                &order_id,
+                "Order",
+            ))
+            .await
+            .unwrap();
+
+        // CASCADE cancel the order
+        let mut cmd = transition_cmd(&order_id, "cancelled");
+        cmd.cascade = true;
+        engine.transition(&cmd).await.unwrap();
+
+        // Children should also be cancelled (first terminal state for LineItem)
+        let c1 = engine.storage.get_instance(&child1.instance.id).await.unwrap().unwrap();
+        let c2 = engine.storage.get_instance(&child2.instance.id).await.unwrap().unwrap();
+        // LineItem terminal states: ["fulfilled", "cancelled"]
+        // CASCADE tries the first terminal state "fulfilled" — transition from pending->fulfilled exists
+        assert_eq!(c1.state, "fulfilled");
+        assert_eq!(c2.state, "fulfilled");
+    }
+
+    // --- CASCADE skips already terminal ---
+
+    #[tokio::test]
+    async fn cascade_skips_already_terminal() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Eve".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+
+        let child = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("X".into()))],
+                &order_id,
+                "Order",
+            ))
+            .await
+            .unwrap();
+        let child_id = child.instance.id.as_str();
+
+        // Manually transition child to fulfilled (terminal)
+        engine
+            .transition(&transition_cmd(&child_id, "fulfilled"))
+            .await
+            .unwrap();
+
+        // CASCADE cancel the order
+        let mut cmd = transition_cmd(&order_id, "cancelled");
+        cmd.cascade = true;
+        engine.transition(&cmd).await.unwrap();
+
+        // Child should still be fulfilled (not re-transitioned)
+        let c = engine.storage.get_instance(&child.instance.id).await.unwrap().unwrap();
+        assert_eq!(c.state, "fulfilled");
+    }
+
+    // --- Concurrent child spawns ---
+
+    #[tokio::test]
+    async fn concurrent_child_spawns() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Frank".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+
+        // Spawn 5 children
+        for i in 0..5 {
+            engine
+                .spawn(&spawn_child_cmd(
+                    "LineItem",
+                    vec![("product", Value::Text(format!("Item{}", i)))],
+                    &order_id,
+                    "Order",
+                ))
+                .await
+                .unwrap();
+        }
+
+        let children = engine
+            .storage
+            .find_children(&order.instance.id, Some("LineItem"))
+            .await
+            .unwrap();
+        assert_eq!(children.len(), 5);
+    }
+
+    // --- ALL over empty collection is vacuously true ---
+
+    #[test]
+    fn all_over_empty_collection_is_true() {
+        let ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+        // No children set for "items"
+
+        let expr = Expression::new(ExpressionKind::All {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
+    }
+
+    // --- ANY over empty collection is false ---
+
+    #[test]
+    fn any_over_empty_collection_is_false() {
+        let ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
+
+        let expr = Expression::new(ExpressionKind::Any {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        });
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
+    }
+
+    // --- Guard with ALL children, used in actual engine transition ---
+
+    #[tokio::test]
+    async fn guard_all_children_in_transition() {
+        let engine = setup_engine();
+        register_line_item_machine(&engine);
+
+        // Register order with guarded confirmed->shipped requiring ALL items fulfilled
+        let mut m = MachineDefinition::new("GuardedOrder".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("confirmed".into()),
+            StateDefinition::new("shipped".into()),
+        ];
+        m.terminal_states = vec!["shipped".into()];
+        m.data = vec![DataFieldDefinition {
+            name: "customer".into(),
+            field_type: TypeDefinition::Text,
+            constraints: vec![Constraint::Required],
+        }];
+        m.children = vec![ChildDefinition {
+            name: "items".to_string(),
+            machine: "LineItem".to_string(),
+            cardinality: ChildCardinality::List { min: None, max: None },
+        }];
+
+        let t_confirm = TransitionDefinition::new(
+            TransitionSource::State("pending".into()),
+            "confirmed".into(),
+        );
+        let mut t_ship = TransitionDefinition::new(
+            TransitionSource::State("confirmed".into()),
+            "shipped".into(),
+        );
+        // Guard: ALL(items, STATE IS fulfilled)
+        t_ship.guards = vec![Expression::new(ExpressionKind::All {
+            collection: Box::new(field("items")),
+            predicate: Box::new(Expression::new(ExpressionKind::StateIs("fulfilled".into()))),
+        })];
+
+        m.transitions = vec![t_confirm, t_ship];
+        engine.catalog.register(m).unwrap();
+
+        // Spawn order and confirm it
+        let order = engine
+            .spawn(&spawn_cmd("GuardedOrder", vec![("customer", Value::Text("Grace".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+        engine.transition(&transition_cmd(&order_id, "confirmed")).await.unwrap();
+
+        // Spawn two children
+        let c1 = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("A".into()))],
+                &order_id,
+                "GuardedOrder",
+            ))
+            .await
+            .unwrap();
+        let c2 = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("B".into()))],
+                &order_id,
+                "GuardedOrder",
+            ))
+            .await
+            .unwrap();
+
+        // Try to ship — should fail because items are still pending
+        let ship_result = engine.try_transition(&transition_cmd(&order_id, "shipped")).await.unwrap();
+        assert!(ship_result.is_none(), "Should fail: not all items fulfilled");
+
+        // Fulfill first item
+        engine
+            .transition(&transition_cmd(&c1.instance.id.as_str(), "fulfilled"))
+            .await
+            .unwrap();
+
+        // Try again — still should fail
+        let ship_result2 = engine.try_transition(&transition_cmd(&order_id, "shipped")).await.unwrap();
+        assert!(ship_result2.is_none(), "Should fail: only 1 of 2 fulfilled");
+
+        // Fulfill second item
+        engine
+            .transition(&transition_cmd(&c2.instance.id.as_str(), "fulfilled"))
+            .await
+            .unwrap();
+
+        // Now ship should succeed
+        let ship_result3 = engine.transition(&transition_cmd(&order_id, "shipped")).await.unwrap();
+        assert_eq!(ship_result3.instance.state, "shipped");
+    }
+
+    // --- Wire callback and signal parent ---
+
+    #[tokio::test]
+    async fn signal_parent_transitions_parent() {
+        let engine = setup_engine();
+        register_line_item_machine(&engine);
+
+        // Register a simple parent machine
+        let mut m = MachineDefinition::new("SimpleOrder".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("ready".into()),
+        ];
+        m.terminal_states = vec!["ready".into()];
+        m.data = vec![];
+        m.transitions = vec![
+            TransitionDefinition::new(
+                TransitionSource::State("pending".into()),
+                "ready".into(),
+            ),
+        ];
+        engine.catalog.register(m).unwrap();
+
+        // Wire up callback
+        engine.wire_callback();
+
+        let parent = engine
+            .spawn(&spawn_cmd("SimpleOrder", vec![]))
+            .await
+            .unwrap();
+        let parent_id = parent.instance.id.as_str();
+
+        // Spawn a child with SignalParent action on fulfilled
+        let mut child_m = engine.catalog.get("LineItem").unwrap().clone();
+        // Add action to signal parent on pending->fulfilled
+        child_m.transitions[0].actions.push(Action::SignalParent {
+            target_state: "ready".to_string(),
+        });
+        engine.catalog.register(child_m).unwrap();
+
+        let child = engine
+            .spawn(&spawn_child_cmd(
+                "LineItem",
+                vec![("product", Value::Text("Widget".into()))],
+                &parent_id,
+                "SimpleOrder",
+            ))
+            .await
+            .unwrap();
+        let child_id = child.instance.id.as_str();
+
+        // Fulfill the child — should signal parent to "ready"
+        engine
+            .transition(&transition_cmd(&child_id, "fulfilled"))
+            .await
+            .unwrap();
+
+        // Check parent was transitioned
+        let parent_updated = engine
+            .storage
+            .get_instance(&parent.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(parent_updated.state, "ready");
+    }
+
+    // --- Signal parent no parent is noop ---
+
+    #[tokio::test]
+    async fn signal_parent_no_parent_noop() {
+        let engine = setup_engine();
+        register_line_item_machine(&engine);
+        engine.wire_callback();
+
+        // Add SignalParent action
+        let mut child_m = engine.catalog.get("LineItem").unwrap().clone();
+        child_m.transitions[0].actions.push(Action::SignalParent {
+            target_state: "ready".to_string(),
+        });
+        engine.catalog.register(child_m).unwrap();
+
+        // Spawn a LineItem without a parent
+        let item = engine
+            .spawn(&spawn_cmd("LineItem", vec![("product", Value::Text("Solo".into()))]))
+            .await
+            .unwrap();
+        let item_id = item.instance.id.as_str();
+
+        // Should not error even with no parent
+        let result = engine
+            .transition(&transition_cmd(&item_id, "fulfilled"))
+            .await;
+        assert!(result.is_ok());
+    }
+
+    // --- Full order lifecycle (Order + LineItems end-to-end) ---
+
+    #[tokio::test]
+    async fn full_order_lifecycle() {
+        let engine = setup_engine();
+        register_order_machine(&engine);
+        register_line_item_machine(&engine);
+
+        // 1. Spawn order
+        let order = engine
+            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Zara".into()))]))
+            .await
+            .unwrap();
+        let order_id = order.instance.id.as_str();
+        assert_eq!(order.instance.state, "pending");
+
+        // 2. Spawn 3 line items
+        let mut child_ids = Vec::new();
+        for i in 0..3 {
+            let child = engine
+                .spawn(&spawn_child_cmd(
+                    "LineItem",
+                    vec![("product", Value::Text(format!("Product{}", i)))],
+                    &order_id,
+                    "Order",
+                ))
+                .await
+                .unwrap();
+            child_ids.push(child.instance.id.as_str());
+        }
+
+        // 3. Confirm order
+        engine
+            .transition(&transition_cmd(&order_id, "confirmed"))
+            .await
+            .unwrap();
+
+        // 4. Fulfill all line items
+        for child_id in &child_ids {
+            engine
+                .transition(&transition_cmd(child_id, "fulfilled"))
+                .await
+                .unwrap();
+        }
+
+        // 5. Verify all children are fulfilled
+        let children = engine
+            .storage
+            .find_children(&order.instance.id, Some("LineItem"))
+            .await
+            .unwrap();
+        assert_eq!(children.len(), 3);
+        assert!(children.iter().all(|c| c.state == "fulfilled"));
+
+        // 6. Ship order
+        engine
+            .transition(&transition_cmd(&order_id, "shipped"))
+            .await
+            .unwrap();
+
+        let final_order = engine
+            .storage
+            .get_instance(&order.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(final_order.state, "shipped");
     }
 }

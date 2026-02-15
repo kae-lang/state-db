@@ -55,4 +55,12 @@ pub trait Storage: Send + Sync {
 
     /// Query trail entries across instances of a machine.
     async fn query_trails(&self, machine: &str, filter: &TrailFilter) -> SmqlResult<Vec<TrailEntry>>;
+
+    // --- Parent-child composition operations ---
+
+    /// Find child instances of a parent, optionally filtered by child machine type.
+    async fn find_children(&self, parent_id: &InstanceId, child_machine: Option<&str>) -> SmqlResult<Vec<Instance>>;
+
+    /// Get the parent instance of a child (reads child's parent_id, then fetches parent).
+    async fn get_parent(&self, child_id: &InstanceId) -> SmqlResult<Option<Instance>>;
 }

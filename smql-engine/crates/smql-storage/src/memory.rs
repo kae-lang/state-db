@@ -19,6 +19,8 @@ pub struct MemoryStorage {
     machine_index: DashMap<String, HashSet<String>>,
     /// Trail storage: instance_id -> ordered trail entries
     trails: DashMap<String, RwLock<Vec<TrailEntry>>>,
+    /// Parent-child index: parent_id -> set of child instance IDs
+    parent_index: DashMap<String, HashSet<String>>,
 }
 
 impl MemoryStorage {
@@ -28,6 +30,7 @@ impl MemoryStorage {
             state_index: DashMap::new(),
             machine_index: DashMap::new(),
             trails: DashMap::new(),
+            parent_index: DashMap::new(),
         }
     }
 
@@ -109,7 +112,15 @@ impl Storage for MemoryStorage {
         self.instances.insert(id_str.clone(), instance.clone());
         self.add_to_state_index(&instance.machine, &instance.state, &id_str);
         self.add_to_machine_index(&instance.machine, &id_str);
-        self.trails.insert(id_str, RwLock::new(Vec::new()));
+        self.trails.insert(id_str.clone(), RwLock::new(Vec::new()));
+
+        // Update parent-child index if this is a child instance
+        if let Some(parent_id) = &instance.parent_id {
+            self.parent_index
+                .entry(parent_id.as_str())
+                .or_default()
+                .insert(id_str);
+        }
 
         Ok(())
     }
@@ -267,6 +278,13 @@ impl Storage for MemoryStorage {
         self.remove_from_machine_index(&instance.machine, &id_str);
         self.trails.remove(&id_str);
 
+        // Remove from parent-child index if this is a child
+        if let Some(parent_id) = &instance.parent_id {
+            if let Some(mut children) = self.parent_index.get_mut(&parent_id.as_str()) {
+                children.remove(&id_str);
+            }
+        }
+
         Ok(())
     }
 
@@ -349,5 +367,42 @@ impl Storage for MemoryStorage {
         }
 
         Ok(results)
+    }
+
+    async fn find_children(&self, parent_id: &InstanceId, child_machine: Option<&str>) -> SmqlResult<Vec<Instance>> {
+        let parent_str = parent_id.as_str();
+        let child_ids: Vec<String> = self
+            .parent_index
+            .get(&parent_str)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let mut results = Vec::new();
+        for child_id in &child_ids {
+            if let Some(inst) = self.instances.get(child_id) {
+                if let Some(machine) = child_machine {
+                    if inst.machine == machine {
+                        results.push(inst.clone());
+                    }
+                } else {
+                    results.push(inst.clone());
+                }
+            }
+        }
+        Ok(results)
+    }
+
+    async fn get_parent(&self, child_id: &InstanceId) -> SmqlResult<Option<Instance>> {
+        let child = self.get_instance(child_id).await?;
+        match child {
+            Some(inst) => {
+                if let Some(parent_id) = &inst.parent_id {
+                    self.get_instance(parent_id).await
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
     }
 }

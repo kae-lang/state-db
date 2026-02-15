@@ -1,7 +1,7 @@
 # SMQL Engine — Build Checklist
 
 > Last updated: 2026-02-15
-> Current phase: Phase 8
+> Current phase: Phase 9
 > Current agent focus: Engine-Dev
 
 ---
@@ -148,9 +148,31 @@
 - [x] 8.6 CHECKPOINT: All tests pass — 294 total tests passing — 2026-02-15
 - [ ] 8.7 DWELL hooks (deferred — requires timer integration for dwell timers)
 
-## Phase 9: Machine Composition [STATUS: NOT STARTED]
+## Phase 9: Machine Composition [STATUS: COMPLETE]
 
-- [ ] 9.1-9.5 Parent-child relationships and checkpoint
+- [x] 9.1 Storage layer — parent-child tracking — 2026-02-15
+  - [x] 9.1.1 Instance: parent_id, parent_machine fields + new_child() constructor
+  - [x] 9.1.2 Storage trait: find_children, get_parent methods
+  - [x] 9.1.3 MemoryStorage: parent_index (DashMap<String, HashSet<String>>), store/delete updates
+  - [x] 9.1.4 7 parent-child storage tests
+- [x] 9.2 SpawnCommand — parent context — 2026-02-15
+  - [x] 9.2.1 SpawnCommand: parent_id, parent_machine optional fields
+  - [x] 9.2.2 TransitionCommand: cascade bool field
+  - [x] 9.2.3 Parser: CASCADE keyword in transition parsing
+  - [x] 9.2.4 Engine spawn(): validate parent exists, create Instance::new_child
+- [x] 9.3 EvalContext — children & parent access — 2026-02-15
+  - [x] 9.3.1 ChildInfo struct, children/parent_data/parent_state in EvalContext
+  - [x] 9.3.2 ALL/ANY quantifier evaluation over child collections
+  - [x] 9.3.3 SignalFrom evaluation (child machine + condition matching)
+  - [x] 9.3.4 FieldAccess: child.STATE, child.count, PARENT.field, PARENT.STATE
+- [x] 9.4 Engine — EngineCallback & composition wiring — 2026-02-15
+  - [x] 9.4.1 EngineCallbackImpl (spawn_child, signal_parent)
+  - [x] 9.4.2 HookExecutor callback: RwLock for post-construction setting
+  - [x] 9.4.3 Engine::wire_callback(), Engine::populate_composition_context()
+  - [x] 9.4.4 __spawn handling in MUTATE (async spawn, Value::Ref result)
+  - [x] 9.4.5 CASCADE transitions (recursive child cascading to terminal states)
+- [x] 9.5 Composition tests — 22 engine + 7 storage = 29 tests — 2026-02-15
+- [x] 9.6 CHECKPOINT: All 323 tests pass (294 existing + 29 new) — 2026-02-15
 
 ## Phase 10: Server & Wire Protocol [STATUS: COMPLETE]
 

@@ -4,6 +4,15 @@ use smql_ast::value::{SmqlDuration, Value};
 use smql_ast::{SmqlError, SmqlResult};
 use std::collections::HashMap;
 
+/// Information about a child instance (for composition guards).
+#[derive(Debug, Clone)]
+pub struct ChildInfo {
+    pub id: String,
+    pub machine: String,
+    pub state: String,
+    pub data: HashMap<String, Value>,
+}
+
 /// Context for evaluating expressions during transitions and guards.
 pub struct EvalContext {
     /// Instance data fields
@@ -20,6 +29,12 @@ pub struct EvalContext {
     pub now: DateTime<Utc>,
     /// Time remaining until timeout fires (None if no active timeout)
     pub timeout_remaining: Option<chrono::TimeDelta>,
+    /// Child instances grouped by child ref name (for composition)
+    pub children: HashMap<String, Vec<ChildInfo>>,
+    /// Parent's data fields (if this instance has a parent)
+    pub parent_data: Option<HashMap<String, Value>>,
+    /// Parent's state (if this instance has a parent)
+    pub parent_state: Option<String>,
 }
 
 /// Information about the actor performing a transition.
@@ -41,6 +56,9 @@ impl EvalContext {
             created_at: now,
             now,
             timeout_remaining: None,
+            children: HashMap::new(),
+            parent_data: None,
+            parent_state: None,
         }
     }
 }
@@ -55,6 +73,47 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
         ExpressionKind::FieldAccess(path) => {
             if path.is_empty() {
                 return Ok(Value::Null);
+            }
+            // Check if first path segment is a child ref name
+            if path.len() >= 2 {
+                if let Some(children) = ctx.children.get(&path[0]) {
+                    let field = &path[1];
+                    if field.to_uppercase() == "STATE" {
+                        // child_ref.STATE — returns the state of the first child (or Null)
+                        return Ok(children.first()
+                            .map(|c| Value::Text(c.state.clone()))
+                            .unwrap_or(Value::Null));
+                    }
+                    if field == "count" {
+                        return Ok(Value::Int(children.len() as i64));
+                    }
+                    // Access a data field on the first child
+                    if let Some(child) = children.first() {
+                        let mut current = child.data.get(field).cloned().unwrap_or(Value::Null);
+                        for segment in &path[2..] {
+                            current = access_field(&current, segment);
+                        }
+                        return Ok(current);
+                    }
+                    return Ok(Value::Null);
+                }
+                // Check PARENT access
+                if path[0].to_uppercase() == "PARENT" {
+                    let field = &path[1];
+                    if field.to_uppercase() == "STATE" {
+                        return Ok(ctx.parent_state.as_ref()
+                            .map(|s| Value::Text(s.clone()))
+                            .unwrap_or(Value::Null));
+                    }
+                    if let Some(parent_data) = &ctx.parent_data {
+                        let mut current = parent_data.get(field).cloned().unwrap_or(Value::Null);
+                        for segment in &path[2..] {
+                            current = access_field(&current, segment);
+                        }
+                        return Ok(current);
+                    }
+                    return Ok(Value::Null);
+                }
             }
             let mut current = ctx.data.get(&path[0]).cloned().unwrap_or(Value::Null);
             for segment in &path[1..] {
@@ -157,14 +216,45 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
             Ok(Value::Bool(found))
         }
 
-        ExpressionKind::All { .. } | ExpressionKind::Any { .. } => {
-            // ALL/ANY over children — deferred until composition is implemented
+        ExpressionKind::All { collection, predicate } => {
+            let children = resolve_children_from_expr(collection, ctx);
+            if children.is_empty() {
+                // ALL over empty collection is vacuously true
+                return Ok(Value::Bool(true));
+            }
+            for child in &children {
+                let child_ctx = make_child_eval_context(child, ctx);
+                let result = eval_expr(predicate, &child_ctx)?;
+                if !is_truthy(&result) {
+                    return Ok(Value::Bool(false));
+                }
+            }
             Ok(Value::Bool(true))
+        }
+
+        ExpressionKind::Any { collection, predicate } => {
+            let children = resolve_children_from_expr(collection, ctx);
+            for child in &children {
+                let child_ctx = make_child_eval_context(child, ctx);
+                let result = eval_expr(predicate, &child_ctx)?;
+                if is_truthy(&result) {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            Ok(Value::Bool(false))
         }
 
         ExpressionKind::Count(inner) => {
             match inner {
                 Some(expr) => {
+                    // Check if inner expression refers to a children collection
+                    if let ExpressionKind::FieldAccess(path) = &expr.kind {
+                        if path.len() == 1 {
+                            if let Some(children) = ctx.children.get(&path[0]) {
+                                return Ok(Value::Int(children.len() as i64));
+                            }
+                        }
+                    }
                     let val = eval_expr(expr, ctx)?;
                     match val {
                         Value::List(items) => Ok(Value::Int(items.len() as i64)),
@@ -176,8 +266,19 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
             }
         }
 
-        ExpressionKind::SignalFrom { .. } => {
-            // Signal handling deferred to composition phase
+        ExpressionKind::SignalFrom { machine, condition } => {
+            // Find children matching the given machine name
+            for (_, children) in &ctx.children {
+                for child in children {
+                    if child.machine == *machine {
+                        let child_ctx = make_child_eval_context(child, ctx);
+                        let result = eval_expr(condition, &child_ctx)?;
+                        if is_truthy(&result) {
+                            return Ok(Value::Bool(true));
+                        }
+                    }
+                }
+            }
             Ok(Value::Bool(false))
         }
 
@@ -494,6 +595,37 @@ fn eval_function(name: &str, args: &[Expression], ctx: &EvalContext) -> SmqlResu
             // Unknown function — return Null for now
             Ok(Value::Null)
         }
+    }
+}
+
+/// Resolve a collection expression to a list of child instances.
+/// The collection is typically a FieldAccess like `items` referring to a child ref name.
+fn resolve_children_from_expr<'a>(collection: &Expression, ctx: &'a EvalContext) -> Vec<&'a ChildInfo> {
+    match &collection.kind {
+        ExpressionKind::FieldAccess(path) if path.len() == 1 => {
+            if let Some(children) = ctx.children.get(&path[0]) {
+                children.iter().collect()
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Create a temporary EvalContext for evaluating predicates against a child instance.
+fn make_child_eval_context(child: &ChildInfo, parent_ctx: &EvalContext) -> EvalContext {
+    EvalContext {
+        data: child.data.clone(),
+        state: child.state.clone(),
+        actor: parent_ctx.actor.clone(),
+        state_entered_at: parent_ctx.now, // Approximate
+        created_at: parent_ctx.now,
+        now: parent_ctx.now,
+        timeout_remaining: None,
+        children: HashMap::new(),
+        parent_data: Some(parent_ctx.data.clone()),
+        parent_state: Some(parent_ctx.state.clone()),
     }
 }
 

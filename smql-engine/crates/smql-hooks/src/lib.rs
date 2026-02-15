@@ -119,26 +119,26 @@ impl Default for EventBus {
 
 pub struct HookExecutor {
     pub event_bus: Arc<EventBus>,
-    callback: Option<Arc<dyn EngineCallback>>,
+    callback: std::sync::RwLock<Option<Arc<dyn EngineCallback>>>,
 }
 
 impl HookExecutor {
     pub fn new(event_bus: Arc<EventBus>) -> Self {
         Self {
             event_bus,
-            callback: None,
+            callback: std::sync::RwLock::new(None),
         }
     }
 
     pub fn with_callback(event_bus: Arc<EventBus>, callback: Arc<dyn EngineCallback>) -> Self {
         Self {
             event_bus,
-            callback: Some(callback),
+            callback: std::sync::RwLock::new(Some(callback)),
         }
     }
 
-    pub fn set_callback(&mut self, callback: Arc<dyn EngineCallback>) {
-        self.callback = Some(callback);
+    pub fn set_callback(&self, callback: Arc<dyn EngineCallback>) {
+        *self.callback.write().unwrap() = Some(callback);
     }
 
     /// Fire matching hooks for a trigger. Returns Err only if a BEFORE hook rejects.
@@ -247,7 +247,8 @@ impl HookExecutor {
             }
 
             ResolvedAction::SpawnChild { machine, data } => {
-                if let Some(cb) = &self.callback {
+                let cb = self.callback.read().unwrap().clone();
+                if let Some(cb) = cb {
                     let child_id = cb
                         .spawn_child(&ctx.instance_id, machine, data.clone())
                         .await?;
@@ -268,7 +269,8 @@ impl HookExecutor {
             }
 
             ResolvedAction::SignalParent { target_state } => {
-                if let Some(cb) = &self.callback {
+                let cb = self.callback.read().unwrap().clone();
+                if let Some(cb) = cb {
                     cb.signal_parent(&ctx.instance_id, target_state).await?;
                 } else {
                     tracing::warn!(

@@ -502,4 +502,155 @@ mod memory_storage_tests {
         let results = storage.find_instances("Order", &filter).await.unwrap();
         assert_eq!(results.len(), 1);
     }
+
+    // --- Parent-child composition tests ---
+
+    #[tokio::test]
+    async fn store_child_with_parent_id() {
+        let storage = MemoryStorage::new();
+        let parent = make_instance("Order", "open");
+        let parent_id = parent.id.clone();
+        storage.store_instance(&parent).await.unwrap();
+
+        let child = Instance::new_child(
+            "LineItem".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        storage.store_instance(&child).await.unwrap();
+
+        let retrieved = storage.get_instance(&child.id).await.unwrap().unwrap();
+        assert_eq!(retrieved.parent_id.as_ref().unwrap(), &parent_id);
+        assert_eq!(retrieved.parent_machine.as_ref().unwrap(), "Order");
+    }
+
+    #[tokio::test]
+    async fn find_children_returns_correct_children() {
+        let storage = MemoryStorage::new();
+        let parent = make_instance("Order", "open");
+        let parent_id = parent.id.clone();
+        storage.store_instance(&parent).await.unwrap();
+
+        let child1 = Instance::new_child(
+            "LineItem".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        let child2 = Instance::new_child(
+            "LineItem".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        storage.store_instance(&child1).await.unwrap();
+        storage.store_instance(&child2).await.unwrap();
+
+        let children = storage.find_children(&parent_id, None).await.unwrap();
+        assert_eq!(children.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn find_children_filters_by_machine() {
+        let storage = MemoryStorage::new();
+        let parent = make_instance("Order", "open");
+        let parent_id = parent.id.clone();
+        storage.store_instance(&parent).await.unwrap();
+
+        let child1 = Instance::new_child(
+            "LineItem".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        let child2 = Instance::new_child(
+            "Shipment".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        storage.store_instance(&child1).await.unwrap();
+        storage.store_instance(&child2).await.unwrap();
+
+        let line_items = storage.find_children(&parent_id, Some("LineItem")).await.unwrap();
+        assert_eq!(line_items.len(), 1);
+        assert_eq!(line_items[0].machine, "LineItem");
+
+        let shipments = storage.find_children(&parent_id, Some("Shipment")).await.unwrap();
+        assert_eq!(shipments.len(), 1);
+        assert_eq!(shipments[0].machine, "Shipment");
+    }
+
+    #[tokio::test]
+    async fn find_children_empty_when_no_children() {
+        let storage = MemoryStorage::new();
+        let parent = make_instance("Order", "open");
+        let parent_id = parent.id.clone();
+        storage.store_instance(&parent).await.unwrap();
+
+        let children = storage.find_children(&parent_id, None).await.unwrap();
+        assert!(children.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_parent_returns_parent() {
+        let storage = MemoryStorage::new();
+        let parent = make_instance("Order", "open");
+        let parent_id = parent.id.clone();
+        storage.store_instance(&parent).await.unwrap();
+
+        let child = Instance::new_child(
+            "LineItem".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id,
+            "Order".to_string(),
+        );
+        let child_id = child.id.clone();
+        storage.store_instance(&child).await.unwrap();
+
+        let found_parent = storage.get_parent(&child_id).await.unwrap().unwrap();
+        assert_eq!(found_parent.machine, "Order");
+    }
+
+    #[tokio::test]
+    async fn get_parent_returns_none_for_root() {
+        let storage = MemoryStorage::new();
+        let root = make_instance("Order", "open");
+        let root_id = root.id.clone();
+        storage.store_instance(&root).await.unwrap();
+
+        let parent = storage.get_parent(&root_id).await.unwrap();
+        assert!(parent.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_child_removes_from_parent_index() {
+        let storage = MemoryStorage::new();
+        let parent = make_instance("Order", "open");
+        let parent_id = parent.id.clone();
+        storage.store_instance(&parent).await.unwrap();
+
+        let child = Instance::new_child(
+            "LineItem".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        let child_id = child.id.clone();
+        storage.store_instance(&child).await.unwrap();
+
+        assert_eq!(storage.find_children(&parent_id, None).await.unwrap().len(), 1);
+
+        storage.delete_instance(&child_id).await.unwrap();
+
+        assert_eq!(storage.find_children(&parent_id, None).await.unwrap().len(), 0);
+    }
 }

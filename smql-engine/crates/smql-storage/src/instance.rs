@@ -46,6 +46,10 @@ pub struct Instance {
     pub state_entered_at: DateTime<Utc>,
     pub trail_length: u64,
     pub version: u64, // optimistic concurrency control
+    /// Parent instance ID (for child machines in composition)
+    pub parent_id: Option<InstanceId>,
+    /// Parent machine name (for child machines in composition)
+    pub parent_machine: Option<String>,
 }
 
 impl Instance {
@@ -61,6 +65,32 @@ impl Instance {
             state_entered_at: now,
             trail_length: 0,
             version: 1,
+            parent_id: None,
+            parent_machine: None,
+        }
+    }
+
+    /// Create a child instance linked to a parent.
+    pub fn new_child(
+        machine: String,
+        initial_state: String,
+        data: HashMap<String, Value>,
+        parent_id: InstanceId,
+        parent_machine: String,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: InstanceId::new(),
+            machine,
+            state: initial_state,
+            data,
+            created_at: now,
+            updated_at: now,
+            state_entered_at: now,
+            trail_length: 0,
+            version: 1,
+            parent_id: Some(parent_id),
+            parent_machine: Some(parent_machine),
         }
     }
 }
