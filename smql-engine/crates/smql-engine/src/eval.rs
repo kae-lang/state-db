@@ -18,6 +18,8 @@ pub struct EvalContext {
     pub created_at: DateTime<Utc>,
     /// Current timestamp
     pub now: DateTime<Utc>,
+    /// Time remaining until timeout fires (None if no active timeout)
+    pub timeout_remaining: Option<chrono::TimeDelta>,
 }
 
 /// Information about the actor performing a transition.
@@ -38,6 +40,7 @@ impl EvalContext {
             state_entered_at: now,
             created_at: now,
             now,
+            timeout_remaining: None,
         }
     }
 }
@@ -412,6 +415,16 @@ fn eval_function(name: &str, args: &[Expression], ctx: &EvalContext) -> SmqlResu
         "now" => Ok(Value::DateTime(ctx.now)),
 
         "today" => Ok(Value::Date(ctx.now.date_naive())),
+
+        "timeout_remaining" => {
+            match &ctx.timeout_remaining {
+                Some(remaining) => {
+                    let seconds = remaining.num_seconds().max(0) as u64;
+                    Ok(Value::Duration(SmqlDuration::from_seconds(seconds)))
+                }
+                None => Ok(Value::Null),
+            }
+        }
 
         "count" => {
             if args.is_empty() {

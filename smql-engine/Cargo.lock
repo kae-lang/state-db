@@ -1048,11 +1048,13 @@ name = "smql-hooks"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "serde",
  "serde_json",
  "smql-ast",
  "thiserror",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1127,6 +1129,8 @@ name = "smql-timer"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "serde",
+ "serde_json",
  "smql-ast",
  "thiserror",
  "tokio",

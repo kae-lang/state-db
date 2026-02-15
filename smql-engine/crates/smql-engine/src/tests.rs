@@ -1306,3 +1306,1011 @@ mod query_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod timer_tests {
+    use crate::engine::Engine;
+    use crate::eval::{eval_expr, EvalContext};
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::value::{SmqlDuration, Value};
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use smql_timer::TimerManager;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn setup_engine_with_timer() -> (Engine, Arc<TimerManager>) {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let timer_manager = Arc::new(TimerManager::new());
+        let engine = Engine::with_timer_manager(
+            catalog,
+            storage,
+            Arc::clone(&timer_manager),
+        );
+        (engine, timer_manager)
+    }
+
+    /// Register a machine with a timeout on one of its transitions.
+    fn register_timeout_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("TimerMachine".into(), "waiting".into());
+        m.states = vec![
+            StateDefinition::new("waiting".into()),
+            StateDefinition::new("active".into()),
+            StateDefinition::new("expired".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.data = vec![DataFieldDefinition {
+            name: "label".into(),
+            field_type: TypeDefinition::Text,
+            constraints: vec![Constraint::Default(DefaultValue::String("test".into()))],
+        }];
+
+        // waiting -> active with a 72h timeout that auto-transitions to expired
+        let mut t1 = TransitionDefinition::new(
+            TransitionSource::State("waiting".into()),
+            "active".into(),
+        );
+        t1.timeout = Some(TimeoutClause {
+            duration: SmqlDuration::from_hours(72),
+            target_state: "expired".into(),
+        });
+
+        let t2 = TransitionDefinition::new(
+            TransitionSource::State("active".into()),
+            "done".into(),
+        );
+        let t3 = TransitionDefinition::new(
+            TransitionSource::State("expired".into()),
+            "done".into(),
+        );
+
+        m.transitions = vec![t1, t2, t3];
+        engine.catalog.register(m).unwrap();
+    }
+
+    fn spawn_cmd(machine: &str) -> SpawnCommand {
+        SpawnCommand {
+            machine: machine.to_string(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+        }
+    }
+
+    // --- Timer registration tests ---
+
+    #[tokio::test]
+    async fn transition_registers_timeout() {
+        let (engine, timer_manager) = setup_engine_with_timer();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // No timer yet (instance is in "waiting", no timeout on spawn)
+        assert_eq!(timer_manager.timer_count(), 0);
+
+        // Transition to "active" — this transition has TIMEOUT: 72h -> expired
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+
+        // Timer should now be registered
+        assert_eq!(timer_manager.timer_count(), 1);
+
+        let entry = timer_manager.get_timer(&id, "active").unwrap();
+        assert_eq!(entry.from_state, "active");
+        assert_eq!(entry.target_state, "expired");
+        assert_eq!(entry.machine, "TimerMachine");
+    }
+
+    #[tokio::test]
+    async fn transition_cancels_old_timeout() {
+        let (engine, timer_manager) = setup_engine_with_timer();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Transition to active (registers 72h timeout)
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+        assert_eq!(timer_manager.timer_count(), 1);
+
+        // Transition to done — should cancel the active timeout
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "done".into()))
+            .await
+            .unwrap();
+        assert_eq!(timer_manager.timer_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn no_timeout_registered_for_transitions_without_timeout() {
+        let engine = setup_engine();
+
+        let mut m = MachineDefinition::new("NoTimeout".into(), "a".into());
+        m.states = vec![
+            StateDefinition::new("a".into()),
+            StateDefinition::new("b".into()),
+        ];
+        m.terminal_states = vec!["b".into()];
+        m.transitions = vec![TransitionDefinition::new(
+            TransitionSource::State("a".into()),
+            "b".into(),
+        )];
+        engine.catalog.register(m).unwrap();
+
+        let spawned = engine.spawn(&spawn_cmd("NoTimeout")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "b".into()))
+            .await
+            .unwrap();
+
+        assert_eq!(engine.timer_manager.timer_count(), 0);
+    }
+
+    // --- Timeout transition tests ---
+
+    #[tokio::test]
+    async fn timeout_transition_succeeds() {
+        let engine = setup_engine();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Move to active
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+
+        // Simulate timeout firing: force transition active -> expired
+        let result = engine
+            .timeout_transition(&id, "active", "expired")
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.from_state, "active");
+        assert_eq!(result.to_state, "expired");
+        assert_eq!(result.instance.state, "expired");
+    }
+
+    #[tokio::test]
+    async fn timeout_transition_creates_trail_entry() {
+        let engine = setup_engine();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+
+        engine
+            .timeout_transition(&id, "active", "expired")
+            .await
+            .unwrap();
+
+        let trail = engine
+            .storage
+            .get_trail(&spawned.instance.id)
+            .await
+            .unwrap();
+
+        // Spawn + transition to active + timeout transition = 3 entries
+        assert_eq!(trail.len(), 3);
+
+        let timeout_entry = &trail[2];
+        assert_eq!(timeout_entry.transition_name, Some("TIMEOUT".to_string()));
+        assert_eq!(timeout_entry.actor, Some("System".to_string()));
+        assert_eq!(timeout_entry.from_state, "active");
+        assert_eq!(timeout_entry.to_state, "expired");
+    }
+
+    #[tokio::test]
+    async fn timeout_transition_race_condition_noop() {
+        let engine = setup_engine();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Move to active, then to done
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "done".into()))
+            .await
+            .unwrap();
+
+        // Timeout fires for "active" -> "expired", but instance is already in "done"
+        let result = engine
+            .timeout_transition(&id, "active", "expired")
+            .await
+            .unwrap();
+
+        // Should be None (no-op, instance already moved)
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn timeout_transition_nonexistent_instance() {
+        let engine = setup_engine();
+        register_timeout_machine(&engine);
+
+        let result = engine
+            .timeout_transition("01NONEXISTENT000000000000", "active", "expired")
+            .await
+            .unwrap();
+
+        assert!(result.is_none());
+    }
+
+    // --- TIMEOUT_REMAINING evaluation tests ---
+
+    #[test]
+    fn eval_timeout_remaining_with_value() {
+        let mut ctx = EvalContext::new(
+            std::collections::HashMap::new(),
+            "active".to_string(),
+        );
+        ctx.timeout_remaining = Some(chrono::TimeDelta::hours(12));
+
+        let expr = Expression::new(ExpressionKind::FunctionCall {
+            name: "timeout_remaining".to_string(),
+            args: vec![],
+        });
+        let result = eval_expr(&expr, &ctx).unwrap();
+        if let Value::Duration(d) = result {
+            // ~12 hours in seconds
+            assert!(d.seconds >= 43000);
+        } else {
+            panic!("Expected Duration, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn eval_timeout_remaining_without_timer() {
+        let ctx = EvalContext::new(
+            std::collections::HashMap::new(),
+            "active".to_string(),
+        );
+        // No timeout_remaining set (defaults to None)
+
+        let expr = Expression::new(ExpressionKind::FunctionCall {
+            name: "timeout_remaining".to_string(),
+            args: vec![],
+        });
+        let result = eval_expr(&expr, &ctx).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    // --- Timer manager integration with engine ---
+
+    #[tokio::test]
+    async fn timeout_remaining_accessible_from_timer_manager() {
+        let (engine, timer_manager) = setup_engine_with_timer();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Before transition, no timeout
+        assert!(timer_manager.timeout_remaining(&id, "waiting").is_none());
+
+        // Transition to active (registers 72h timeout)
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+
+        // Now timeout_remaining should be about 72h
+        let remaining = timer_manager.timeout_remaining(&id, "active").unwrap();
+        assert!(remaining.num_hours() >= 71);
+    }
+
+    // --- Background timer loop test ---
+
+    #[tokio::test]
+    async fn timer_loop_fires_expired_timeout() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let timer_manager = Arc::new(TimerManager::new());
+        let engine = Arc::new(Engine::with_timer_manager(
+            catalog,
+            storage,
+            Arc::clone(&timer_manager),
+        ));
+
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Transition to active
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+
+        // Cancel the future timer and register one that's already expired
+        timer_manager.cancel(&id, "active");
+        let now = chrono::Utc::now();
+        timer_manager.register_with_deadline(
+            &id,
+            "TimerMachine",
+            "active",
+            "expired",
+            now - chrono::TimeDelta::seconds(1), // Already expired
+            now - chrono::TimeDelta::seconds(100),
+        );
+
+        // Start the timer loop with a short interval
+        let handle = engine.start_timer_loop(std::time::Duration::from_millis(50));
+
+        // Wait for the loop to process
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Abort the loop
+        handle.abort();
+
+        // Instance should have been transitioned to "expired"
+        let instance = engine
+            .storage
+            .get_instance(&spawned.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(instance.state, "expired");
+    }
+
+    #[tokio::test]
+    async fn timer_loop_handles_race_condition() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let timer_manager = Arc::new(TimerManager::new());
+        let engine = Arc::new(Engine::with_timer_manager(
+            catalog,
+            storage,
+            Arc::clone(&timer_manager),
+        ));
+
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Transition to active, then immediately to done
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .await
+            .unwrap();
+        engine
+            .transition(&TransitionCommand::new(id.to_string(), "done".into()))
+            .await
+            .unwrap();
+
+        // Register an already-expired timer for active (simulating race)
+        let now = chrono::Utc::now();
+        timer_manager.register_with_deadline(
+            &id,
+            "TimerMachine",
+            "active",
+            "expired",
+            now - chrono::TimeDelta::seconds(1),
+            now - chrono::TimeDelta::seconds(100),
+        );
+
+        // Start the timer loop
+        let handle = engine.start_timer_loop(std::time::Duration::from_millis(50));
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        handle.abort();
+
+        // Instance should still be in "done" (race condition handled gracefully)
+        let instance = engine
+            .storage
+            .get_instance(&spawned.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(instance.state, "done");
+    }
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use crate::engine::Engine;
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_hooks::{EventBus, HookExecutor};
+    use smql_storage::MemoryStorage;
+    use smql_timer::TimerManager;
+    use std::sync::Arc;
+
+    fn setup_engine_with_event_bus() -> (Engine, Arc<EventBus>) {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let timer_manager = Arc::new(TimerManager::new());
+        let event_bus = Arc::new(EventBus::new(64));
+        let hook_executor = Arc::new(HookExecutor::new(Arc::clone(&event_bus)));
+        let engine = Engine::with_hooks(catalog, storage, timer_manager, hook_executor);
+        (engine, event_bus)
+    }
+
+    /// Register a machine with ON SPAWN, ON ENTER, ON EXIT, BEFORE/AFTER hooks.
+    fn register_hooked_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("HookedTicket".into(), "open".into());
+        m.states = vec![
+            StateDefinition::new("open".into()),
+            StateDefinition::new("in_progress".into()),
+            StateDefinition::new("closed".into()),
+        ];
+        m.terminal_states = vec!["closed".into()];
+        m.data = vec![
+            DataFieldDefinition {
+                name: "title".into(),
+                field_type: TypeDefinition::Text,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "priority".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Default(DefaultValue::Int(3))],
+            },
+        ];
+        m.transitions = vec![
+            TransitionDefinition::new(
+                TransitionSource::State("open".into()),
+                "in_progress".into(),
+            ),
+            TransitionDefinition::new(
+                TransitionSource::State("in_progress".into()),
+                "closed".into(),
+            ),
+        ];
+
+        // Hooks
+        m.hooks = vec![
+            HookDefinition {
+                trigger: HookTrigger::OnSpawn,
+                actions: vec![Action::Emit {
+                    event: "spawned".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnEnter("open".to_string()),
+                actions: vec![Action::Emit {
+                    event: "entered_open".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnEnter("in_progress".to_string()),
+                actions: vec![Action::Emit {
+                    event: "entered_in_progress".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnExit("open".to_string()),
+                actions: vec![Action::Emit {
+                    event: "exited_open".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::BeforeEachTransition,
+                actions: vec![Action::Log("Before transition check".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::AfterEachTransition,
+                actions: vec![Action::Emit {
+                    event: "after_transition".to_string(),
+                    payload: None,
+                }],
+            },
+        ];
+
+        engine.catalog.register(m).unwrap();
+    }
+
+    /// Register a machine with actions on a transition.
+    fn register_action_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("ActionMachine".into(), "draft".into());
+        m.states = vec![
+            StateDefinition::new("draft".into()),
+            StateDefinition::new("published".into()),
+        ];
+        m.terminal_states = vec!["published".into()];
+        m.data = vec![DataFieldDefinition {
+            name: "title".into(),
+            field_type: TypeDefinition::Text,
+            constraints: vec![Constraint::Default(DefaultValue::String("untitled".into()))],
+        }];
+
+        let mut t = TransitionDefinition::new(
+            TransitionSource::State("draft".into()),
+            "published".into(),
+        );
+        t.actions = vec![
+            Action::Emit {
+                event: "published".to_string(),
+                payload: Some(Expression::new(ExpressionKind::FieldAccess(vec![
+                    "title".to_string(),
+                ]))),
+            },
+            Action::Log("Published: {title}".to_string()),
+        ];
+        m.transitions = vec![t];
+
+        engine.catalog.register(m).unwrap();
+    }
+
+    fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
+        SpawnCommand {
+            machine: machine.to_string(),
+            data: data
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k.to_string(),
+                        Expression::new(ExpressionKind::Literal(v)),
+                    )
+                })
+                .collect(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+        }
+    }
+
+    fn transition_cmd(instance_id: &str, to_state: &str) -> TransitionCommand {
+        TransitionCommand::new(instance_id.to_string(), to_state.to_string())
+    }
+
+    // --- ON SPAWN hook fires ---
+
+    #[tokio::test]
+    async fn on_spawn_hook_fires() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+        let mut rx = event_bus.subscribe();
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        engine.spawn(&cmd).await.unwrap();
+
+        // Should receive "spawned" event from ON SPAWN hook
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "spawned");
+    }
+
+    // --- ON ENTER fires for initial state ---
+
+    #[tokio::test]
+    async fn on_enter_fires_for_initial_state() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+        let mut rx = event_bus.subscribe();
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        engine.spawn(&cmd).await.unwrap();
+
+        // First event: "spawned" (ON SPAWN)
+        let e1 = rx.recv().await.unwrap();
+        assert_eq!(e1.name, "spawned");
+
+        // Second event: "entered_open" (ON ENTER open)
+        let e2 = rx.recv().await.unwrap();
+        assert_eq!(e2.name, "entered_open");
+    }
+
+    // --- BEFORE hook passes normally ---
+
+    #[tokio::test]
+    async fn before_hook_passes_normally() {
+        let (engine, _bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // BEFORE hook has LOG action which always succeeds
+        let result = engine.transition(&transition_cmd(&id, "in_progress")).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().instance.state, "in_progress");
+    }
+
+    // --- ON EXIT fires ---
+
+    #[tokio::test]
+    async fn on_exit_fires() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Drain spawn events
+        let mut rx = event_bus.subscribe();
+
+        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+
+        // Collect all events from this transition
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e.name);
+        }
+
+        // Should include "exited_open" from ON EXIT open
+        assert!(events.contains(&"exited_open".to_string()));
+    }
+
+    // --- ON ENTER fires during transition ---
+
+    #[tokio::test]
+    async fn on_enter_fires() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        let mut rx = event_bus.subscribe();
+
+        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e.name);
+        }
+
+        assert!(events.contains(&"entered_in_progress".to_string()));
+    }
+
+    // --- AFTER EACH TRANSITION fires ---
+
+    #[tokio::test]
+    async fn after_hook_fires() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        let mut rx = event_bus.subscribe();
+
+        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e.name);
+        }
+
+        assert!(events.contains(&"after_transition".to_string()));
+    }
+
+    // --- Transition actions fire ---
+
+    #[tokio::test]
+    async fn transition_actions_fire() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_action_machine(&engine);
+
+        let cmd = spawn_cmd("ActionMachine", vec![("title", Value::Text("My Post".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        let mut rx = event_bus.subscribe();
+
+        engine.transition(&transition_cmd(&id, "published")).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+
+        // Should have "published" event from transition action
+        let published_event = events.iter().find(|e| e.name == "published");
+        assert!(published_event.is_some());
+        // Payload should be the resolved title
+        assert_eq!(
+            published_event.unwrap().payload,
+            Some(Value::Text("My Post".into()))
+        );
+    }
+
+    // --- EMIT publishes to event bus ---
+
+    #[tokio::test]
+    async fn emit_publishes_to_event_bus() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let mut rx = event_bus.subscribe();
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        engine.spawn(&cmd).await.unwrap();
+
+        // Receive spawned event
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "spawned");
+        assert_eq!(event.machine, "HookedTicket");
+    }
+
+    // --- Multiple hooks fire ---
+
+    #[tokio::test]
+    async fn multiple_hooks_fire() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        let mut rx = event_bus.subscribe();
+
+        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e.name);
+        }
+
+        // Should have: exited_open, entered_in_progress, after_transition
+        assert!(events.contains(&"exited_open".to_string()));
+        assert!(events.contains(&"entered_in_progress".to_string()));
+        assert!(events.contains(&"after_transition".to_string()));
+    }
+
+    // --- Timeout fires hooks ---
+
+    #[tokio::test]
+    async fn timeout_fires_hooks() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+
+        // Machine with hooks + timeout
+        let mut m = MachineDefinition::new("TimeoutHooked".into(), "waiting".into());
+        m.states = vec![
+            StateDefinition::new("waiting".into()),
+            StateDefinition::new("active".into()),
+            StateDefinition::new("expired".into()),
+        ];
+        m.terminal_states = vec!["expired".into()];
+
+        let mut t = TransitionDefinition::new(
+            TransitionSource::State("waiting".into()),
+            "active".into(),
+        );
+        t.timeout = Some(TimeoutClause {
+            duration: smql_ast::value::SmqlDuration::from_hours(1),
+            target_state: "expired".into(),
+        });
+        m.transitions = vec![
+            t,
+            TransitionDefinition::new(
+                TransitionSource::State("active".into()),
+                "expired".into(),
+            ),
+        ];
+
+        m.hooks = vec![
+            HookDefinition {
+                trigger: HookTrigger::OnExit("active".to_string()),
+                actions: vec![Action::Emit {
+                    event: "timeout_exit_active".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnEnter("expired".to_string()),
+                actions: vec![Action::Emit {
+                    event: "timeout_enter_expired".to_string(),
+                    payload: None,
+                }],
+            },
+        ];
+
+        engine.catalog.register(m).unwrap();
+
+        let cmd = spawn_cmd("TimeoutHooked", vec![]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        engine.transition(&transition_cmd(&id, "active")).await.unwrap();
+
+        let mut rx = event_bus.subscribe();
+
+        // Simulate timeout
+        engine.timeout_transition(&id, "active", "expired").await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e.name);
+        }
+
+        assert!(events.contains(&"timeout_exit_active".to_string()));
+        assert!(events.contains(&"timeout_enter_expired".to_string()));
+    }
+
+    // --- Subscribe and receive events ---
+
+    #[tokio::test]
+    async fn subscribe_receive_events() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        // Subscribe before spawn
+        let mut rx = event_bus.subscribe();
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        engine.spawn(&cmd).await.unwrap();
+
+        // Should be able to receive events
+        let event = rx.recv().await.unwrap();
+        assert!(!event.name.is_empty());
+        assert_eq!(event.machine, "HookedTicket");
+    }
+
+    // --- Hooks don't block transition ---
+
+    #[tokio::test]
+    async fn hooks_dont_block_transition() {
+        let (engine, _bus) = setup_engine_with_event_bus();
+        register_hooked_machine(&engine);
+
+        let cmd = spawn_cmd("HookedTicket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Even with many hooks, transition should succeed
+        let result = engine.transition(&transition_cmd(&id, "in_progress")).await;
+        assert!(result.is_ok());
+
+        let result2 = engine.transition(&transition_cmd(&id, "closed")).await;
+        assert!(result2.is_ok());
+        assert_eq!(result2.unwrap().instance.state, "closed");
+    }
+
+    // --- Log with template ---
+
+    #[tokio::test]
+    async fn log_with_template() {
+        let (engine, _bus) = setup_engine_with_event_bus();
+
+        let mut m = MachineDefinition::new("LogMachine".into(), "a".into());
+        m.states = vec![
+            StateDefinition::new("a".into()),
+            StateDefinition::new("b".into()),
+        ];
+        m.transitions = vec![TransitionDefinition::new(
+            TransitionSource::State("a".into()),
+            "b".into(),
+        )];
+        m.hooks = vec![HookDefinition {
+            trigger: HookTrigger::AfterEachTransition,
+            actions: vec![Action::Log("Moved {from_state} -> {to_state}".to_string())],
+        }];
+
+        engine.catalog.register(m).unwrap();
+
+        let cmd = spawn_cmd("LogMachine", vec![]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Log action shouldn't fail or block
+        let result = engine.transition(&transition_cmd(&id, "b")).await;
+        assert!(result.is_ok());
+    }
+
+    // --- Hook execution order ---
+
+    #[tokio::test]
+    async fn hook_execution_order() {
+        let (engine, event_bus) = setup_engine_with_event_bus();
+
+        let mut m = MachineDefinition::new("OrderMachine".into(), "a".into());
+        m.states = vec![
+            StateDefinition::new("a".into()),
+            StateDefinition::new("b".into()),
+        ];
+
+        let mut t = TransitionDefinition::new(
+            TransitionSource::State("a".into()),
+            "b".into(),
+        );
+        t.actions = vec![Action::Emit {
+            event: "4_transition_action".to_string(),
+            payload: None,
+        }];
+        m.transitions = vec![t];
+
+        m.hooks = vec![
+            HookDefinition {
+                trigger: HookTrigger::OnExit("a".to_string()),
+                actions: vec![Action::Emit {
+                    event: "2_on_exit_a".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnEnter("b".to_string()),
+                actions: vec![Action::Emit {
+                    event: "5_on_enter_b".to_string(),
+                    payload: None,
+                }],
+            },
+            HookDefinition {
+                trigger: HookTrigger::AfterEachTransition,
+                actions: vec![Action::Emit {
+                    event: "6_after_each".to_string(),
+                    payload: None,
+                }],
+            },
+        ];
+
+        engine.catalog.register(m).unwrap();
+
+        let cmd = spawn_cmd("OrderMachine", vec![]);
+        let spawned = engine.spawn(&cmd).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        let mut rx = event_bus.subscribe();
+
+        engine.transition(&transition_cmd(&id, "b")).await.unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e.name.clone());
+        }
+
+        // Verify order: ON EXIT → transition actions → ON ENTER → AFTER EACH
+        let exit_idx = events.iter().position(|e| e == "2_on_exit_a");
+        let action_idx = events.iter().position(|e| e == "4_transition_action");
+        let enter_idx = events.iter().position(|e| e == "5_on_enter_b");
+        let after_idx = events.iter().position(|e| e == "6_after_each");
+
+        assert!(exit_idx.is_some(), "ON EXIT should fire");
+        assert!(action_idx.is_some(), "Transition action should fire");
+        assert!(enter_idx.is_some(), "ON ENTER should fire");
+        assert!(after_idx.is_some(), "AFTER EACH should fire");
+
+        // Verify ordering
+        assert!(exit_idx.unwrap() < action_idx.unwrap(), "EXIT before ACTION");
+        assert!(action_idx.unwrap() < enter_idx.unwrap(), "ACTION before ENTER");
+        assert!(enter_idx.unwrap() < after_idx.unwrap(), "ENTER before AFTER");
+    }
+}

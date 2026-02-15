@@ -1,8 +1,8 @@
 # SMQL Engine — Build Checklist
 
 > Last updated: 2026-02-15
-> Current phase: Phase 10
-> Current agent focus: Server-Dev
+> Current phase: Phase 8
+> Current agent focus: Engine-Dev
 
 ---
 
@@ -92,14 +92,24 @@
 - [x] 5.5 Write comprehensive transition tests — 46 tests passing
 - [x] 5.6 CHECKPOINT: Full spawn and transition lifecycle works — 2026-02-15
 
-## Phase 6: Timer & Timeout System [STATUS: NOT STARTED]
+## Phase 6: Timer & Timeout System [STATUS: COMPLETE]
 
-- [ ] 6.1 Implement TimerManager
-- [ ] 6.2 Background timer thread/task
-- [ ] 6.3 DWELL hooks
-- [ ] 6.4 TIMEOUT_REMAINING query function
-- [ ] 6.5 Write timer tests
-- [ ] 6.6 CHECKPOINT: Timeouts and dwell triggers work correctly
+- [x] 6.1 Implement TimerManager — 2026-02-15
+  - [x] 6.1.1 Timer registration: (instance_id, state, deadline, target_state)
+  - [x] 6.1.2 Timer cancellation: cancel by (instance_id, state) when instance leaves state
+  - [ ] 6.1.3 Timer storage: persist to storage backend (deferred — requires RocksDB)
+  - [x] 6.1.4 BTreeMap priority queue for efficient "what fires next?" lookups
+- [x] 6.2 Background timer thread/task — 2026-02-15
+  - [x] 6.2.1 Tokio interval that checks for expired timers (configurable check interval)
+  - [x] 6.2.2 On expiry: perform guard-free TRANSITION as System actor
+  - [x] 6.2.3 Handle race condition: instance already transitioned (returns None)
+  - [x] 6.2.4 Error handling for failed timeout transitions (silently ignored)
+- [ ] 6.3 DWELL hooks (deferred to Phase 8 — requires hook infrastructure)
+- [x] 6.4 TIMEOUT_REMAINING query function — 2026-02-15
+  - [x] 6.4.1 Calculate remaining time from timer registry
+  - [x] 6.4.2 Return Null for instances without active timeout
+- [x] 6.5 Write timer tests — 26 tests (14 timer crate + 12 engine integration)
+- [x] 6.6 CHECKPOINT: Timeouts work correctly — 266 total tests passing
 
 ## Phase 7: Query Engine [STATUS: COMPLETE]
 
@@ -115,9 +125,28 @@
 - [x] 7.10 Write query tests — 12 query tests passing
 - [x] 7.11 CHECKPOINT: All query types work against test data — 2026-02-15
 
-## Phase 8: Hooks & Actions [STATUS: NOT STARTED]
+## Phase 8: Hooks & Actions [STATUS: COMPLETE]
 
-- [ ] 8.1-8.7 Hooks implementation and checkpoint
+- [x] 8.1 Implement smql-hooks crate — 2026-02-15
+  - [x] 8.1.1 HookError (Rejected, ActionFailed, WebhookFailed)
+  - [x] 8.1.2 HookContext (instance_id, machine, from/to state, data, actor, memo)
+  - [x] 8.1.3 ResolvedAction enum (Notify, Log, Emit, Webhook, SpawnChild, SignalParent)
+  - [x] 8.1.4 EngineCallback trait (spawn_child, signal_parent)
+  - [x] 8.1.5 EventBus (tokio::broadcast channel + subscribe)
+  - [x] 8.1.6 HookExecutor (trigger matching, action dispatch, BEFORE sync/reject)
+  - [x] 8.1.7 Log template rendering ({instance_id}, {from_state}, {field} etc.)
+- [x] 8.2 Engine integration — 2026-02-15
+  - [x] 8.2.1 Engine.hook_executor: Arc<HookExecutor>
+  - [x] 8.2.2 resolve_actions() / resolve_hooks_actions() — eval_expr on Action → ResolvedAction
+  - [x] 8.2.3 Spawn: ON SPAWN + ON ENTER(initial_state) hooks fire
+  - [x] 8.2.4 Transition: BEFORE → guards → mutations → write → ON EXIT → timers → ACTIONs → ON ENTER → AFTER
+  - [x] 8.2.5 Timeout transition: ON EXIT + ON ENTER + AFTER EACH hooks fire
+  - [x] 8.2.6 Engine.with_hooks() constructor, Engine.event_bus() accessor
+- [x] 8.3 Webhook/Notify dry-run (log-only, no reqwest) — 2026-02-15
+- [x] 8.4 SignalParent: logs warning (deferred to Phase 9)
+- [x] 8.5 Write hook tests — 28 tests (14 smql-hooks unit + 14 engine integration)
+- [x] 8.6 CHECKPOINT: All tests pass — 294 total tests passing — 2026-02-15
+- [ ] 8.7 DWELL hooks (deferred — requires timer integration for dwell timers)
 
 ## Phase 9: Machine Composition [STATUS: NOT STARTED]
 
