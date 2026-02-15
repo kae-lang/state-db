@@ -79,7 +79,7 @@ pub fn parse_transition(parser: &mut Parser) -> SmqlResult<Command> {
         return parse_batch_transition(parser);
     }
 
-    let instance_id = parser.expect_ident()?;
+    let instance_id = parser.expect_ident_or_string()?;
     parser.expect_keyword("TO")?;
     let to_state = parser.expect_ident()?;
 
@@ -92,7 +92,7 @@ pub fn parse_transition(parser: &mut Parser) -> SmqlResult<Command> {
         } else if parser.try_keyword("MEMO") {
             cmd.memo = Some(common::parse_string_literal(parser)?);
         } else if parser.try_keyword("AS") {
-            cmd.as_actor = Some(parser.expect_ident()?);
+            cmd.as_actor = Some(parser.expect_ident_or_string()?);
         } else if parser.try_keyword("THROUGH") {
             parser.expect_punct("[")?;
             while !parser.check_punct("]") {
@@ -117,7 +117,7 @@ pub fn parse_try_transition(parser: &mut Parser) -> SmqlResult<Command> {
     parser.expect_keyword("TRY")?;
     parser.expect_keyword("TRANSITION")?;
 
-    let instance_id = parser.expect_ident()?;
+    let instance_id = parser.expect_ident_or_string()?;
     parser.expect_keyword("TO")?;
     let to_state = parser.expect_ident()?;
 
@@ -129,7 +129,7 @@ pub fn parse_try_transition(parser: &mut Parser) -> SmqlResult<Command> {
         } else if parser.try_keyword("MEMO") {
             cmd.memo = Some(common::parse_string_literal(parser)?);
         } else if parser.try_keyword("AS") {
-            cmd.as_actor = Some(parser.expect_ident()?);
+            cmd.as_actor = Some(parser.expect_ident_or_string()?);
         } else {
             break;
         }

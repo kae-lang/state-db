@@ -116,10 +116,12 @@ fn handle_dot_command(cmd: &str, engine: &Engine) {
 }
 
 fn is_complete_statement(input: &str) -> bool {
-    // A simple heuristic: check if braces are balanced
-    let opens = input.chars().filter(|c| *c == '{').count();
-    let closes = input.chars().filter(|c| *c == '}').count();
-    opens == closes
+    // A simple heuristic: check if braces and parens are balanced
+    let brace_opens = input.chars().filter(|c| *c == '{').count();
+    let brace_closes = input.chars().filter(|c| *c == '}').count();
+    let paren_opens = input.chars().filter(|c| *c == '(').count();
+    let paren_closes = input.chars().filter(|c| *c == ')').count();
+    brace_opens == brace_closes && paren_opens == paren_closes
 }
 
 async fn execute_input(input: &str, engine: &Engine) {
@@ -137,6 +139,16 @@ async fn execute_input(input: &str, engine: &Engine) {
             Statement::Query(query) => execute_query(query, engine).await,
         }
     }
+}
+
+/// Execute a command and print results. Public for use from CLI subcommands.
+pub async fn execute_command_public(cmd: Command, engine: &Engine) {
+    execute_command(cmd, engine).await;
+}
+
+/// Execute a query and print results. Public for use from CLI subcommands.
+pub async fn execute_query_public(query: smql_ast::query::Query, engine: &Engine) {
+    execute_query(query, engine).await;
 }
 
 async fn execute_command(cmd: Command, engine: &Engine) {

@@ -49,49 +49,14 @@ async fn main() {
         }
 
         Some(Commands::Exec { statement }) => {
-            let catalog = std::sync::Arc::new(smql_catalog::MachineCatalog::new());
-            let storage = std::sync::Arc::new(smql_storage::MemoryStorage::new());
-            let engine = smql_engine_core::Engine::new(catalog, storage);
-
-            match smql_parser::parse(&statement) {
-                Ok(stmts) => {
-                    for stmt in stmts {
-                        match stmt {
-                            smql_ast::command::Statement::Command(cmd) => {
-                                println!("Parsed command: {}", cmd);
-                            }
-                            smql_ast::command::Statement::Query(query) => {
-                                match engine.execute_query(&query).await {
-                                    Ok(result) => {
-                                        println!("{:?}", result);
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Query error: {}", e);
-                                        std::process::exit(1);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Parse error: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            run_statements(&statement).await;
         }
 
         Some(Commands::Run { file }) => {
             match std::fs::read_to_string(&file) {
-                Ok(content) => match smql_parser::parse(&content) {
-                    Ok(stmts) => {
-                        println!("Parsed {} statement(s) from {}", stmts.len(), file);
-                    }
-                    Err(e) => {
-                        eprintln!("Parse error in {}: {}", file, e);
-                        std::process::exit(1);
-                    }
-                },
+                Ok(content) => {
+                    run_statements(&content).await;
+                }
                 Err(e) => {
                     eprintln!("Cannot read file {}: {}", file, e);
                     std::process::exit(1);
@@ -101,6 +66,91 @@ async fn main() {
 
         Some(Commands::Repl) | None => {
             smql_cli::repl::run_repl().await;
+        }
+    }
+}
+
+/// Resolve $N references (1-indexed) in instance_id fields to spawned IDs.
+fn resolve_ref(id: &str, spawned_ids: &[String]) -> String {
+    if let Some(num_str) = id.strip_prefix('$') {
+        if let Ok(n) = num_str.parse::<usize>() {
+            if n >= 1 && n <= spawned_ids.len() {
+                return spawned_ids[n - 1].clone();
+            }
+            eprintln!("Warning: ${} not yet spawned (only {} spawns so far)", n, spawned_ids.len());
+        }
+    }
+    id.to_string()
+}
+
+async fn run_statements(input: &str) {
+    use smql_ast::command::{Command, Statement};
+
+    let catalog = std::sync::Arc::new(smql_catalog::MachineCatalog::new());
+    let storage = std::sync::Arc::new(smql_storage::MemoryStorage::new());
+    let engine = smql_engine_core::Engine::new(catalog, storage);
+
+    let stmts = match smql_parser::parse(input) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let mut spawned_ids: Vec<String> = Vec::new();
+
+    for stmt in stmts {
+        match stmt {
+            Statement::Command(cmd) => {
+                match cmd {
+                    Command::Spawn(spawn_cmd) => {
+                        match engine.spawn(&spawn_cmd).await {
+                            Ok(result) => {
+                                let id = result.instance.id.to_string();
+                                println!(
+                                    "Spawned {} instance: {} (state: {})",
+                                    result.instance.machine, id, result.instance.state
+                                );
+                                spawned_ids.push(id);
+                            }
+                            Err(e) => eprintln!("Error: {}", e),
+                        }
+                    }
+                    Command::Transition(mut t_cmd) => {
+                        t_cmd.instance_id = resolve_ref(&t_cmd.instance_id, &spawned_ids);
+                        smql_cli::repl::execute_command_public(
+                            Command::Transition(t_cmd),
+                            &engine,
+                        )
+                        .await;
+                    }
+                    Command::TryTransition(mut t_cmd) => {
+                        t_cmd.instance_id = resolve_ref(&t_cmd.instance_id, &spawned_ids);
+                        smql_cli::repl::execute_command_public(
+                            Command::TryTransition(t_cmd),
+                            &engine,
+                        )
+                        .await;
+                    }
+                    other => {
+                        smql_cli::repl::execute_command_public(other, &engine).await;
+                    }
+                }
+            }
+            Statement::Query(mut query) => {
+                // Resolve $N in instance_id fields for GET and TRAIL queries
+                match &mut query {
+                    smql_ast::query::Query::Get(ref mut g) => {
+                        g.instance_id = resolve_ref(&g.instance_id, &spawned_ids);
+                    }
+                    smql_ast::query::Query::Trail(ref mut t) => {
+                        t.instance_id = resolve_ref(&t.instance_id, &spawned_ids);
+                    }
+                    _ => {}
+                }
+                smql_cli::repl::execute_query_public(query, &engine).await;
+            }
         }
     }
 }

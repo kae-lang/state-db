@@ -117,6 +117,22 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Accept an identifier, keyword, or string literal — used for instance IDs
+    /// which may be ULIDs starting with digits.
+    pub fn expect_ident_or_string(&mut self) -> SmqlResult<String> {
+        let tok = self.advance()?;
+        match &tok.kind {
+            lexer::TokenKind::Identifier(s) => Ok(s.clone()),
+            lexer::TokenKind::Keyword(_) => Ok(tok.text.clone()),
+            lexer::TokenKind::StringLiteral(s) => Ok(s.clone()),
+            _ => Err(SmqlError::ParseError {
+                message: format!("Expected identifier or string, found '{}'", tok.text),
+                span: Some(smql_ast::Span::new(tok.offset, tok.offset + tok.text.len())),
+                hint: None,
+            }),
+        }
+    }
+
     pub fn expect_punct(&mut self, p: &str) -> SmqlResult<&Token> {
         let tok = self.advance()?;
         match &tok.kind {

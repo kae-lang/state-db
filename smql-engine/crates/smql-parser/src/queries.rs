@@ -10,7 +10,7 @@ use crate::Parser;
 pub fn parse_get(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     parser.expect_keyword("GET")?;
     let machine = parser.expect_ident()?;
-    let instance_id = parser.expect_ident()?;
+    let instance_id = parser.expect_ident_or_string()?;
     Ok(Query::Get(GetQuery { machine, instance_id }))
 }
 
@@ -160,7 +160,7 @@ fn parse_aggregate_function(parser: &mut Parser) -> SmqlResult<AggregateFunction
 pub fn parse_trail(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     parser.expect_keyword("TRAIL")?;
     parser.expect_keyword("OF")?;
-    let instance_id = parser.expect_ident()?;
+    let instance_id = parser.expect_ident_or_string()?;
 
     let filter = if parser.try_keyword("WHERE") {
         Some(TrailFilter {
