@@ -22,8 +22,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         features: ["", "rocksdb", "auth", "rocksdb,auth"]
-    env:
-      FEATURES_KEY: ${{ matrix.features && replace(matrix.features, ',', '-') || 'default' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +30,13 @@ jobs:
         with:
           toolchain: "1.89"
 
+      - name: Set cache key
+        id: cache-key
+        shell: bash
+        run: echo "features=${FEATURES//,/-}" >> "$GITHUB_OUTPUT"
+        env:
+          FEATURES: ${{ matrix.features || 'default' }}
+
       - name: Cache cargo registry & build
         uses: actions/cache@v4
         with:
@@ -39,9 +44,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             smql-engine/target
-          key: ${{ runner.os }}-cargo-${{ env.FEATURES_KEY }}-${{ hashFiles('smql-engine/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ steps.cache-key.outputs.features }}-${{ hashFiles('smql-engine/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ env.FEATURES_KEY }}-
+            ${{ runner.os }}-cargo-${{ steps.cache-key.outputs.features }}-
             ${{ runner.os }}-cargo-
 
       - name: Build
