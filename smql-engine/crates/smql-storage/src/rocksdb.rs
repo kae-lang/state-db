@@ -26,12 +26,22 @@ const CF_TIMERS: &str = "timers";
 const SEP: u8 = 0x00;
 
 /// RocksDB-backed persistent storage backend.
+///
+/// Uses 7 column families: instances, state_index, machine_index, trails,
+/// parent_index, id_index, and timers. Atomic writes use WriteBatch.
+///
+/// **Concurrency note:** Operations like `store_instance`, `update_instance`,
+/// and `transition_instance` use a read-check-write pattern that is not
+/// transactionally atomic. The engine serializes writes through its own
+/// coordination, but direct concurrent access to the storage layer can
+/// experience TOCTOU races. For true multi-writer safety, migrate to
+/// `TransactionDB` with `get_for_update`.
 pub struct RocksDBStorage {
     db: Arc<DB>,
 }
 
 impl RocksDBStorage {
-    /// Open (or create) a RocksDB database at the given path with 6 column families.
+    /// Open (or create) a RocksDB database at the given path with 7 column families.
     pub fn open(path: impl AsRef<Path>) -> SmqlResult<Self> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
@@ -518,6 +528,14 @@ impl Storage for RocksDBStorage {
             batch.delete_cf(&cf_trails, &key);
         }
 
+        // Delete all timers for this instance
+        let cf_timers = self.db.cf_handle(CF_TIMERS).unwrap();
+        let timer_prefix = Self::prefix_key(&[id_str.as_bytes()]);
+        let timer_pairs = self.scan_prefix(CF_TIMERS, &timer_prefix)?;
+        for (key, _) in timer_pairs {
+            batch.delete_cf(&cf_timers, &key);
+        }
+
         self.db
             .write(batch)
             .map_err(|e| SmqlError::storage(e.to_string()))?;
@@ -528,18 +546,19 @@ impl Storage for RocksDBStorage {
     async fn count_by_state(&self, machine: &str) -> SmqlResult<HashMap<String, usize>> {
         let mut counts: HashMap<String, usize> = HashMap::new();
 
-        let ids = self.scan_machine_index(machine)?;
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
+        // Scan state_index keys directly: format is machine\0state\0id
+        // This avoids loading and deserializing every instance.
+        let prefix = Self::prefix_key(&[machine.as_bytes()]);
+        let pairs = self.scan_prefix(CF_STATE_INDEX, &prefix)?;
+        let machine_prefix_len = machine.len() + 1; // machine + SEP
 
-        for id in &ids {
-            let key = Self::instance_key(machine, id);
-            if let Some(bytes) = self
-                .db
-                .get_cf(&cf_inst, &key)
-                .map_err(|e| SmqlError::storage(e.to_string()))?
-            {
-                let inst = Self::deserialize_instance(&bytes)?;
-                *counts.entry(inst.state).or_insert(0) += 1;
+        for (key, _) in pairs {
+            // Key: machine\0state\0id — extract the state (middle segment)
+            let remainder = &key[machine_prefix_len..];
+            if let Some(sep_pos) = remainder.iter().position(|&b| b == SEP) {
+                if let Ok(state) = std::str::from_utf8(&remainder[..sep_pos]) {
+                    *counts.entry(state.to_string()).or_insert(0) += 1;
+                }
             }
         }
 

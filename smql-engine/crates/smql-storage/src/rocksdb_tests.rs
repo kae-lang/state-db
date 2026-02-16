@@ -1145,7 +1145,7 @@ mod rocksdb_storage_tests {
         cleanup(&path);
     }
 
-    // --- Persistence test ---
+    // --- Persistence tests ---
 
     #[tokio::test]
     async fn data_persists_across_reopen() {
@@ -1167,6 +1167,405 @@ mod rocksdb_storage_tests {
             assert_eq!(retrieved.state, "open");
         }
 
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn trails_persist_across_reopen() {
+        let path = temp_path();
+
+        let inst_id;
+        {
+            let storage = RocksDBStorage::open(&path).unwrap();
+            let inst = make_instance("Order", "open");
+            inst_id = inst.id.clone();
+            storage.store_instance(&inst).await.unwrap();
+
+            let trail = make_trail_entry(&inst, "open", "processing", 1);
+            storage
+                .transition_instance(&inst_id, 1, "processing", &[], trail)
+                .await
+                .unwrap();
+        }
+
+        {
+            let storage = RocksDBStorage::open(&path).unwrap();
+            let trail = storage.get_trail(&inst_id).await.unwrap();
+            assert_eq!(trail.len(), 1);
+            assert_eq!(trail[0].from_state, "open");
+            assert_eq!(trail[0].to_state, "processing");
+
+            // State index also persists
+            let filter = Filter {
+                state: Some("processing".to_string()),
+                ..Default::default()
+            };
+            let found = storage.find_instances("Order", &filter).await.unwrap();
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].id, inst_id);
+        }
+
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn timers_persist_across_reopen() {
+        let path = temp_path();
+
+        {
+            let storage = RocksDBStorage::open(&path).unwrap();
+            let timer = StoredTimer {
+                instance_id: "01ABCDEF".to_string(),
+                machine: "Order".to_string(),
+                from_state: "open".to_string(),
+                target_state: "expired".to_string(),
+                deadline: Utc::now() + chrono::Duration::hours(1),
+                registered_at: Utc::now(),
+            };
+            storage.store_timer(&timer).await.unwrap();
+        }
+
+        {
+            let storage = RocksDBStorage::open(&path).unwrap();
+            let timers = storage.load_all_timers().await.unwrap();
+            assert_eq!(timers.len(), 1);
+            assert_eq!(timers[0].instance_id, "01ABCDEF");
+            assert_eq!(timers[0].from_state, "open");
+            assert_eq!(timers[0].target_state, "expired");
+        }
+
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn parent_child_persists_across_reopen() {
+        let path = temp_path();
+
+        let parent_id;
+        let child_id;
+        {
+            let storage = RocksDBStorage::open(&path).unwrap();
+            let parent = make_instance("Order", "open");
+            parent_id = parent.id.clone();
+            storage.store_instance(&parent).await.unwrap();
+
+            let child = Instance::new_child(
+                "LineItem".to_string(),
+                "pending".to_string(),
+                HashMap::new(),
+                parent_id.clone(),
+                "Order".to_string(),
+            );
+            child_id = child.id.clone();
+            storage.store_instance(&child).await.unwrap();
+        }
+
+        {
+            let storage = RocksDBStorage::open(&path).unwrap();
+            let children = storage.find_children(&parent_id, None).await.unwrap();
+            assert_eq!(children.len(), 1);
+            assert_eq!(children[0].id, child_id);
+
+            let parent = storage.get_parent(&child_id).await.unwrap().unwrap();
+            assert_eq!(parent.id, parent_id);
+        }
+
+        cleanup(&path);
+    }
+
+    // --- Timer tests ---
+
+    #[tokio::test]
+    async fn timer_store_and_load() {
+        let (storage, path) = open_storage();
+        let timer = StoredTimer {
+            instance_id: "inst1".to_string(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "expired".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(1),
+            registered_at: Utc::now(),
+        };
+        storage.store_timer(&timer).await.unwrap();
+
+        let timers = storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].instance_id, "inst1");
+        assert_eq!(timers[0].machine, "Order");
+        assert_eq!(timers[0].from_state, "open");
+        assert_eq!(timers[0].target_state, "expired");
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn timer_remove_specific() {
+        let (storage, path) = open_storage();
+        let timer = StoredTimer {
+            instance_id: "inst1".to_string(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "expired".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(1),
+            registered_at: Utc::now(),
+        };
+        storage.store_timer(&timer).await.unwrap();
+
+        storage.remove_timer("inst1", "open").await.unwrap();
+
+        let timers = storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 0);
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn timer_remove_nonexistent_is_ok() {
+        let (storage, path) = open_storage();
+        // Should not error
+        storage.remove_timer("nonexistent", "state").await.unwrap();
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn timer_remove_all_for_instance() {
+        let (storage, path) = open_storage();
+        let t1 = StoredTimer {
+            instance_id: "inst1".to_string(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "expired".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(1),
+            registered_at: Utc::now(),
+        };
+        let t2 = StoredTimer {
+            instance_id: "inst1".to_string(),
+            machine: "Order".to_string(),
+            from_state: "processing".to_string(),
+            target_state: "timeout".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(2),
+            registered_at: Utc::now(),
+        };
+        let t3 = StoredTimer {
+            instance_id: "inst2".to_string(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "expired".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(1),
+            registered_at: Utc::now(),
+        };
+        storage.store_timer(&t1).await.unwrap();
+        storage.store_timer(&t2).await.unwrap();
+        storage.store_timer(&t3).await.unwrap();
+
+        storage.remove_all_timers("inst1").await.unwrap();
+
+        let timers = storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].instance_id, "inst2");
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn timer_overwrite_existing() {
+        let (storage, path) = open_storage();
+        let t1 = StoredTimer {
+            instance_id: "inst1".to_string(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "expired".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(1),
+            registered_at: Utc::now(),
+        };
+        storage.store_timer(&t1).await.unwrap();
+
+        // Overwrite with a different target
+        let t2 = StoredTimer {
+            instance_id: "inst1".to_string(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "cancelled".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(2),
+            registered_at: Utc::now(),
+        };
+        storage.store_timer(&t2).await.unwrap();
+
+        let timers = storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].target_state, "cancelled");
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn timer_load_all_empty() {
+        let (storage, path) = open_storage();
+        let timers = storage.load_all_timers().await.unwrap();
+        assert!(timers.is_empty());
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    // --- Cursor pagination tests ---
+
+    #[tokio::test]
+    async fn cursor_filters_by_after_id() {
+        let (storage, path) = open_storage();
+        let mut instances = Vec::new();
+        for _ in 0..5 {
+            let inst = make_instance("Order", "open");
+            storage.store_instance(&inst).await.unwrap();
+            instances.push(inst);
+        }
+
+        // Sort by ID to know the expected order
+        instances.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+
+        // Get all after the 2nd instance
+        let filter = Filter {
+            after_id: Some(instances[1].id.as_str()),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.id.as_str() > instances[1].id.as_str()));
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn cursor_with_limit() {
+        let (storage, path) = open_storage();
+        for _ in 0..5 {
+            let inst = make_instance("Order", "open");
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        let filter = Filter {
+            limit: Some(2),
+            ..Default::default()
+        };
+        let page1 = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(page1.len(), 2);
+
+        // Page 2: use last ID as cursor
+        let filter2 = Filter {
+            after_id: Some(page1.last().unwrap().id.as_str()),
+            limit: Some(2),
+            ..Default::default()
+        };
+        let page2 = storage.find_instances("Order", &filter2).await.unwrap();
+        assert_eq!(page2.len(), 2);
+
+        // Pages should not overlap
+        assert!(page2[0].id.as_str() > page1[1].id.as_str());
+
+        // Page 3: last page
+        let filter3 = Filter {
+            after_id: Some(page2.last().unwrap().id.as_str()),
+            limit: Some(2),
+            ..Default::default()
+        };
+        let page3 = storage.find_instances("Order", &filter3).await.unwrap();
+        assert_eq!(page3.len(), 1);
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn cursor_at_end_returns_empty() {
+        let (storage, path) = open_storage();
+        let inst = make_instance("Order", "open");
+        let last_id = inst.id.as_str();
+        storage.store_instance(&inst).await.unwrap();
+
+        let filter = Filter {
+            after_id: Some(last_id),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert!(results.is_empty());
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn cursor_with_predicate() {
+        let (storage, path) = open_storage();
+        for i in 0..6 {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("priority".to_string(), Value::Int(i % 3)); // 0,1,2,0,1,2
+            storage.store_instance(&inst).await.unwrap();
+        }
+
+        // First page: priority == 1, limit 1
+        let filter = Filter {
+            predicate: Some(FilterPredicate::Eq("priority".to_string(), Value::Int(1))),
+            limit: Some(1),
+            ..Default::default()
+        };
+        let page1 = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].data.get("priority"), Some(&Value::Int(1)));
+
+        // Second page
+        let filter2 = Filter {
+            predicate: Some(FilterPredicate::Eq("priority".to_string(), Value::Int(1))),
+            after_id: Some(page1[0].id.as_str()),
+            limit: Some(1),
+            ..Default::default()
+        };
+        let page2 = storage.find_instances("Order", &filter2).await.unwrap();
+        assert_eq!(page2.len(), 1);
+        assert!(page2[0].id.as_str() > page1[0].id.as_str());
+
+        drop(storage);
+        cleanup(&path);
+    }
+
+    // --- Delete cleans up timers ---
+
+    #[tokio::test]
+    async fn delete_instance_removes_timers() {
+        let (storage, path) = open_storage();
+        let inst = make_instance("Order", "open");
+        let id = inst.id.clone();
+        let id_str = id.as_str();
+        storage.store_instance(&inst).await.unwrap();
+
+        // Store a timer for this instance
+        let timer = StoredTimer {
+            instance_id: id_str.clone(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "expired".to_string(),
+            deadline: Utc::now() + chrono::Duration::hours(1),
+            registered_at: Utc::now(),
+        };
+        storage.store_timer(&timer).await.unwrap();
+
+        // Verify timer exists
+        let timers = storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 1);
+
+        // Delete instance should also clean up timers
+        storage.delete_instance(&id).await.unwrap();
+
+        let timers = storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 0);
+
+        drop(storage);
         cleanup(&path);
     }
 }

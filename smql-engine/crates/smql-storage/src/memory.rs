@@ -296,6 +296,18 @@ impl Storage for MemoryStorage {
             }
         }
 
+        // Remove all timers for this instance
+        let prefix = format!("{}:", &id_str);
+        let keys: Vec<String> = self
+            .timers
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in keys {
+            self.timers.remove(&key);
+        }
+
         Ok(())
     }
 
