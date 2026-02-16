@@ -1,0 +1,1 @@
+import{_ as i,o as a,c as t,ag as e}from"./chunks/framework.DEqXEGcv.js";const E=JSON.parse('{"title":"smql run","description":"","frontmatter":{},"headers":[],"relativePath":"cli/run.md","filePath":"cli/run.md"}'),n={name:"cli/run.md"};function l(h,s,p,k,d,r){return a(),t("div",null,[...s[0]||(s[0]=[e("",23)])])}const c=i(n,[["render",l]]);export{E as __pageData,c as default};

@@ -1,0 +1,43 @@
+---
+layout: home
+hero:
+  name: SMQL Engine
+  text: State Machine Query Language
+  tagline: Your data has a lifecycle. Your database should understand it.
+  actions:
+    - theme: brand
+      text: Start Learning
+      link: /tutorials/your-first-machine
+    - theme: alt
+      text: Quick Start
+      link: /introduction/quick-start
+    - theme: alt
+      text: Language Reference
+      link: /language/define-machine
+
+features:
+  - icon: "🔄"
+    title: Declarative State Machines
+    details: Define machines with states, transitions, guards, and data fields in a single declaration. No boilerplate, no ORM.
+  - icon: "➡️"
+    title: First-Class Transitions
+    details: Transitions are not afterthoughts. Guards, mutations, actions, timeouts, and memos are part of the transition definition.
+  - icon: "⏱️"
+    title: Native Time
+    details: Built-in TIMEOUT clauses on transitions. Automatic timer management with cancel-on-exit semantics.
+  - icon: "🧩"
+    title: Machine Composition
+    details: Parent-child hierarchies with ALL/ANY predicates and CASCADE transitions. Build complex systems from simple machines.
+  - icon: "🌐"
+    title: HTTP/JSON API
+    details: Axum-powered server with REST endpoints, WebSocket subscriptions, and Prometheus metrics out of the box.
+  - icon: "📊"
+    title: Built-in Analytics
+    details: FUNNEL analysis, PATH analysis, AGGREGATE queries with GROUP BY, and immutable audit trails for every instance.
+  - icon: "🦀"
+    title: Rust SDK + Codegen
+    details: Type-safe Rust client with builder pattern queries, WebSocket subscriptions, and code generation from machine definitions.
+  - icon: "💾"
+    title: Schema Evolution
+    details: ALTER MACHINE to add states, fields, and transitions to production machines without losing existing data.
+---
