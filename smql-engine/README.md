@@ -2,6 +2,56 @@
 
 A State Machine Query Language database engine in Rust. Define state machines, spawn instances, transition between states, and query your data — all through a declarative language.
 
+## Installation
+
+### Install Script (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kae-lang/state-db/main/install.sh | sh
+```
+
+Set a custom install directory:
+
+```bash
+SMQL_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/kae-lang/state-db/main/install.sh | sh
+```
+
+### Prebuilt Binaries
+
+Download from [GitHub Releases](https://github.com/kae-lang/state-db/releases/latest):
+
+| Target | Archive |
+|--------|---------|
+| macOS (Apple Silicon) | `smql-{version}-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `smql-{version}-x86_64-apple-darwin.tar.gz` |
+| Linux x86_64 (static) | `smql-{version}-x86_64-unknown-linux-musl.tar.gz` |
+| Linux aarch64 (static) | `smql-{version}-aarch64-unknown-linux-musl.tar.gz` |
+| Windows x86_64 | `smql-{version}-x86_64-pc-windows-msvc.zip` |
+
+All binaries include RocksDB and auth support.
+
+### Docker
+
+```bash
+docker run -p 4200:4200 -v smql-data:/data ghcr.io/kae-lang/state-db:latest
+```
+
+Or build locally:
+
+```bash
+docker build -t smql .
+docker run -p 4200:4200 -v smql-data:/data smql
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/kae-lang/state-db.git
+cd state-db/smql-engine
+cargo build --release --bin smql --features "rocksdb,auth"
+# Binary at target/release/smql
+```
+
 ## Quick Start
 
 ### Define a Machine

@@ -5,6 +5,9 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/kae-lang/state-db"
+homepage = "https://github.com/kae-lang/state-db"
 
 [workspace.dependencies]
 # Async runtime
@@ -31,7 +34,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 prometheus = "0.13"
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 url = "2"
 # Utilities
 uuid = { version = "1", features = ["v7", "serde"] }
