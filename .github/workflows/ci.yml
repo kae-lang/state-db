@@ -28,7 +28,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.89"
+          toolchain: "1.93"
 
       - name: Set cache key
         id: cache-key
@@ -65,7 +65,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.89"
+          toolchain: "1.93"
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.89"
+          toolchain: "1.93"
           components: clippy
       - name: Cache cargo registry & build
         uses: actions/cache@v4
