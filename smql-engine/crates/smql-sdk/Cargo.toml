@@ -15,4 +15,11 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 smql-server = { path = "../smql-server" }
+smql-engine-core = { path = "../smql-engine" }
+smql-catalog = { path = "../smql-catalog" }
+smql-storage = { path = "../smql-storage" }
+smql-parser = { path = "../smql-parser" }
+smql-hooks = { path = "../smql-hooks" }
+smql-timer = { path = "../smql-timer" }
+smql-ast = { path = "../smql-ast" }
 axum = { workspace = true }

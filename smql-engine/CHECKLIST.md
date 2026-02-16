@@ -1,7 +1,7 @@
 # SMQL Engine — Build Checklist
 
 > Last updated: 2026-02-16
-> Current phase: Phase 15 COMPLETE
+> Current phase: Phase 15 COMPLETE + Bugfixes
 > Current agent focus: Done
 
 ---
@@ -299,3 +299,17 @@
 - [x] 15.5 Bug fix: server route params `:name`/`:id` (axum 0.7 syntax, was using 0.8 `{name}` syntax)
 - [x] 15.6 Documentation (README.md, SDK example, rustdoc)
 - [x] 15.7 CHECKPOINT: All 530 tests pass (486 base + 44 rocksdb) — 2026-02-16
+
+## Bugfixes [STATUS: COMPLETE]
+
+- [x] BF-1 Wire `engine.wire_callback()` in server and CLI — 2026-02-16
+  - **Root cause**: `EngineCallbackImpl` (SIGNAL PARENT / SPAWN CHILD) was fully implemented but `wire_callback()` was never called outside engine unit tests, so both actions silently logged a warning and skipped in server/CLI/REPL.
+  - [x] BF-1.1 `SmqlServer::new()` — call `engine.wire_callback()` after `Engine::new()`
+  - [x] BF-1.2 `SmqlServer::with_storage()` — call `engine.wire_callback()` after `Engine::new()`
+  - [x] BF-1.3 `SmqlServer::with_engine()` — call `engine.wire_callback()` on the Arc'd engine
+  - [x] BF-1.4 `run_statements()` in smql-cli — call `engine.wire_callback()` after `Engine::new()`
+  - [x] BF-1.5 `run_repl_with_storage()` — call `engine.wire_callback()` after `Engine::new()`
+  - [x] BF-1.6 `run_repl()` — call `engine.wire_callback()` after `Engine::new()`
+  - [x] BF-1.7 Integration test: `signal_parent_from_shipment_delivery` in test_order_flow.rs (Shipment dispatched→in_transit fires SIGNAL PARENT TO shipped on parent Order)
+  - [x] BF-1.8 SDK integration test: `test_signal_parent_via_server` exercises SIGNAL PARENT through the HTTP API
+  - [x] BF-1.9 CHECKPOINT: All 932 tests pass (888 base + 44 rocksdb) — 2026-02-16

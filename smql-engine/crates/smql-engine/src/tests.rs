@@ -1085,6 +1085,7 @@ mod query_tests {
             sort: Vec::new(),
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1118,6 +1119,7 @@ mod query_tests {
             sort: Vec::new(),
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1149,6 +1151,7 @@ mod query_tests {
             }],
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1179,6 +1182,7 @@ mod query_tests {
             sort: Vec::new(),
             limit: Some(2),
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1464,6 +1468,7 @@ mod query_tests {
             }],
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1513,6 +1518,7 @@ mod query_tests {
             }],
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1544,6 +1550,7 @@ mod query_tests {
             sort: Vec::new(),
             limit: Some(2),
             offset: Some(2),
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1583,6 +1590,7 @@ mod query_tests {
             }],
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1616,6 +1624,7 @@ mod query_tests {
             sort: Vec::new(),
             limit: None,
             offset: None,
+            after: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1930,6 +1939,142 @@ mod query_tests {
             panic!("Expected Funnel result");
         }
     }
+
+    // --- Cursor-based pagination tests ---
+
+    #[tokio::test]
+    async fn find_with_cursor_multi_page_iteration() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        // Spawn 5 tickets
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let result = engine
+                .spawn(&spawn_ticket(&engine, &format!("T{}", i), i))
+                .await
+                .unwrap();
+            ids.push(result.instance.id.as_str());
+        }
+
+        // Page 1: first 2
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: Vec::new(),
+            limit: Some(2),
+            offset: None,
+            after: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        let page1 = if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 2);
+            insts
+        } else {
+            panic!("Expected Instances");
+        };
+
+        // Page 2: next 2 using cursor
+        let cursor = page1.last().unwrap().id.as_str();
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: Vec::new(),
+            limit: Some(2),
+            offset: None,
+            after: Some(cursor.clone()),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        let page2 = if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 2);
+            insts
+        } else {
+            panic!("Expected Instances");
+        };
+
+        // Verify no overlap
+        let page1_ids: Vec<String> = page1.iter().map(|i| i.id.as_str()).collect();
+        let page2_ids: Vec<String> = page2.iter().map(|i| i.id.as_str()).collect();
+        for id in &page2_ids {
+            assert!(!page1_ids.contains(id));
+        }
+
+        // Page 3: last 1
+        let cursor2 = page2.last().unwrap().id.as_str();
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: Vec::new(),
+            limit: Some(2),
+            offset: None,
+            after: Some(cursor2),
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 1);
+        } else {
+            panic!("Expected Instances");
+        }
+    }
+
+    #[tokio::test]
+    async fn find_no_cursor_returns_first_page() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        for i in 0..3 {
+            engine
+                .spawn(&spawn_ticket(&engine, &format!("T{}", i), i))
+                .await
+                .unwrap();
+        }
+
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: Vec::new(),
+            limit: Some(2),
+            offset: None,
+            after: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            assert_eq!(insts.len(), 2);
+        } else {
+            panic!("Expected Instances");
+        }
+    }
+
+    #[tokio::test]
+    async fn find_cursor_returns_sorted_by_id() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        for i in 0..5 {
+            engine
+                .spawn(&spawn_ticket(&engine, &format!("T{}", i), i))
+                .await
+                .unwrap();
+        }
+
+        let query = Query::Find(FindQuery {
+            machine: "Ticket".into(),
+            filter: None,
+            sort: Vec::new(),
+            limit: None,
+            offset: None,
+            after: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(insts) = result {
+            // Verify instances are sorted by ID (ULIDs)
+            for i in 1..insts.len() {
+                assert!(insts[i].id.as_str() >= insts[i - 1].id.as_str());
+            }
+        } else {
+            panic!("Expected Instances");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1942,7 +2087,7 @@ mod timer_tests {
     use smql_ast::types::*;
     use smql_ast::value::{SmqlDuration, Value};
     use smql_catalog::MachineCatalog;
-    use smql_storage::MemoryStorage;
+    use smql_storage::{MemoryStorage, Storage};
     use smql_timer::TimerManager;
     use std::sync::Arc;
 
@@ -2365,6 +2510,88 @@ mod timer_tests {
             .unwrap()
             .unwrap();
         assert_eq!(instance.state, "done");
+    }
+
+    // --- Timer persistence tests ---
+
+    #[tokio::test]
+    async fn transition_persists_timer_to_storage() {
+        let (engine, _timer_manager) = setup_engine_with_timer();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Transition to "active" — has 72h timeout -> expired
+        let cmd = TransitionCommand::new("TimerMachine".into(), id.clone(), "active".into());
+        engine.transition(&cmd).await.unwrap();
+
+        // Timer should be persisted in storage
+        let timers = engine.storage.load_all_timers().await.unwrap();
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].instance_id, id);
+        assert_eq!(timers[0].machine, "TimerMachine");
+        assert_eq!(timers[0].from_state, "active");
+        assert_eq!(timers[0].target_state, "expired");
+    }
+
+    #[tokio::test]
+    async fn transition_removes_old_timer_from_storage() {
+        let (engine, _timer_manager) = setup_engine_with_timer();
+        register_timeout_machine(&engine);
+
+        let spawned = engine.spawn(&spawn_cmd("TimerMachine")).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Transition to "active" (registers + persists timer)
+        let cmd = TransitionCommand::new("TimerMachine".into(), id.clone(), "active".into());
+        engine.transition(&cmd).await.unwrap();
+        assert_eq!(engine.storage.load_all_timers().await.unwrap().len(), 1);
+
+        // Transition to "done" — should remove the timer from storage
+        let cmd2 = TransitionCommand::new("TimerMachine".into(), id.clone(), "done".into());
+        engine.transition(&cmd2).await.unwrap();
+
+        let timers = engine.storage.load_all_timers().await.unwrap();
+        assert!(timers.is_empty(), "Timer should be removed after transition away");
+    }
+
+    #[tokio::test]
+    async fn restore_timers_from_storage() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let timer_manager = Arc::new(TimerManager::new());
+
+        // Simulate a previously persisted timer
+        let now = chrono::Utc::now();
+        let stored = smql_storage::StoredTimer {
+            instance_id: "inst_abc".to_string(),
+            machine: "TimerMachine".to_string(),
+            from_state: "active".to_string(),
+            target_state: "expired".to_string(),
+            deadline: now + chrono::Duration::hours(1),
+            registered_at: now,
+        };
+        storage.store_timer(&stored).await.unwrap();
+
+        let engine = Engine::with_timer_manager(
+            catalog,
+            storage,
+            Arc::clone(&timer_manager),
+        );
+
+        // Before restore, timer manager is empty
+        assert_eq!(timer_manager.timer_count(), 0);
+
+        // Restore
+        let count = engine.restore_timers().await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(timer_manager.timer_count(), 1);
+
+        // Verify the restored timer
+        let entry = timer_manager.get_timer("inst_abc", "active").unwrap();
+        assert_eq!(entry.target_state, "expired");
+        assert_eq!(entry.machine, "TimerMachine");
     }
 }
 

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use smql_ast::SmqlResult;
 use std::collections::HashMap;
 
-use crate::instance::{Filter, Instance, InstanceId, Mutation, TrailEntry, TrailFilter};
+use crate::instance::{Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter};
 
 /// Pluggable storage backend trait.
 /// All storage implementations must be Send + Sync for concurrent access.
@@ -84,4 +84,18 @@ pub trait Storage: Send + Sync {
         machine: &str,
         mutations: &[Mutation],
     ) -> SmqlResult<u64>;
+
+    // --- Timer persistence ---
+
+    /// Store a timer. Key = "{instance_id}:{state}". Overwrites existing.
+    async fn store_timer(&self, timer: &StoredTimer) -> SmqlResult<()>;
+
+    /// Remove a timer for a specific instance and state.
+    async fn remove_timer(&self, instance_id: &str, state: &str) -> SmqlResult<()>;
+
+    /// Remove all timers for a specific instance.
+    async fn remove_all_timers(&self, instance_id: &str) -> SmqlResult<()>;
+
+    /// Load all stored timers (for restore on startup).
+    async fn load_all_timers(&self) -> SmqlResult<Vec<StoredTimer>>;
 }

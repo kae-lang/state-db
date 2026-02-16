@@ -13,7 +13,7 @@ mod tests;
 mod rocksdb_tests;
 
 pub use instance::{
-    Filter, FilterPredicate, Instance, InstanceId, Mutation, TrailEntry, TrailFilter,
+    Filter, FilterPredicate, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter,
 };
 pub use memory::MemoryStorage;
 #[cfg(feature = "rocksdb")]

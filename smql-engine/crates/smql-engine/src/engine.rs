@@ -584,6 +584,10 @@ impl Engine {
         // --- 6. Cancel old timeout, register new one ---
         self.timer_manager
             .cancel(&cmd.instance_id, &instance.state);
+        let _ = self
+            .storage
+            .remove_timer(&cmd.instance_id, &instance.state)
+            .await;
 
         if let Some(timeout) = &transition_def.timeout {
             self.timer_manager.register(
@@ -593,6 +597,18 @@ impl Engine {
                 &timeout.duration,
                 &timeout.target_state,
             );
+            // Persist timer to storage for crash recovery
+            if let Some(entry) = self.timer_manager.get_timer(&cmd.instance_id, &cmd.to_state) {
+                let stored = smql_storage::StoredTimer {
+                    instance_id: cmd.instance_id.clone(),
+                    machine: instance.machine.clone(),
+                    from_state: cmd.to_state.clone(),
+                    target_state: timeout.target_state.clone(),
+                    deadline: entry.deadline,
+                    registered_at: entry.registered_at,
+                };
+                let _ = self.storage.store_timer(&stored).await;
+            }
         }
 
         // --- 7. Transition ACTIONs (fire-and-forget) ---
@@ -824,6 +840,12 @@ impl Engine {
             )
             .await?;
 
+        // Remove fired timer from storage
+        let _ = self
+            .storage
+            .remove_timer(instance_id, expected_from_state)
+            .await;
+
         // --- Fire hooks for timeout transition ---
         if let Ok(machine_def) = self.catalog.get(&instance.machine) {
             let hook_ctx = HookContext {
@@ -864,6 +886,18 @@ impl Engine {
                             &timeout.duration,
                             &timeout.target_state,
                         );
+                        // Persist new timer to storage
+                        if let Some(entry) = self.timer_manager.get_timer(instance_id, target_state) {
+                            let stored = smql_storage::StoredTimer {
+                                instance_id: instance_id.to_string(),
+                                machine: instance.machine.clone(),
+                                from_state: target_state.to_string(),
+                                target_state: timeout.target_state.clone(),
+                                deadline: entry.deadline,
+                                registered_at: entry.registered_at,
+                            };
+                            let _ = self.storage.store_timer(&stored).await;
+                        }
                         break; // Only one timeout per state
                     }
                 }
@@ -907,6 +941,18 @@ impl Engine {
                                 &timeout.duration,
                                 &timeout.target_state,
                             );
+                            // Persist new timer to storage
+                            if let Some(entry) = self.timer_manager.get_timer(instance_id, target_state) {
+                                let stored = smql_storage::StoredTimer {
+                                    instance_id: instance_id.to_string(),
+                                    machine: instance.machine.clone(),
+                                    from_state: target_state.to_string(),
+                                    target_state: timeout.target_state.clone(),
+                                    deadline: entry.deadline,
+                                    registered_at: entry.registered_at,
+                                };
+                                let _ = self.storage.store_timer(&stored).await;
+                            }
                             break;
                         }
                     }
@@ -954,6 +1000,30 @@ impl Engine {
                 }
             }
         })
+    }
+
+    /// Restore persisted timers from storage into the in-memory TimerManager.
+    ///
+    /// Call this on startup before `start_timer_loop()` to recover timers
+    /// that were registered before a restart. Returns the number of timers restored.
+    pub async fn restore_timers(&self) -> SmqlResult<usize> {
+        let stored_timers = self.storage.load_all_timers().await?;
+        let mut count = 0;
+        for timer in &stored_timers {
+            self.timer_manager.register_with_deadline(
+                &timer.instance_id,
+                &timer.machine,
+                &timer.from_state,
+                &timer.target_state,
+                timer.deadline,
+                timer.registered_at,
+            );
+            count += 1;
+        }
+        if count > 0 {
+            tracing::info!(count, "restored timers from storage");
+        }
+        Ok(count)
     }
 
     // -----------------------------------------------------------------------

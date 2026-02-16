@@ -303,6 +303,7 @@ async fn find_by_state() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -452,6 +453,7 @@ async fn multiple_tickets_diverse_paths() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -598,6 +600,7 @@ async fn find_with_limit_offset() {
         sort: vec![],
         limit: Some(2),
         offset: Some(1),
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {

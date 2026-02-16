@@ -5,7 +5,7 @@ use smql_ast::{SmqlError, SmqlResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-use crate::instance::{Filter, Instance, InstanceId, Mutation, TrailEntry, TrailFilter};
+use crate::instance::{Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter};
 use crate::traits::Storage;
 
 /// In-memory storage backend using DashMap for concurrent access.
@@ -21,6 +21,8 @@ pub struct MemoryStorage {
     trails: DashMap<String, RwLock<Vec<TrailEntry>>>,
     /// Parent-child index: parent_id -> set of child instance IDs
     parent_index: DashMap<String, HashSet<String>>,
+    /// Timer persistence: "{instance_id}:{state}" -> StoredTimer
+    timers: DashMap<String, StoredTimer>,
 }
 
 impl MemoryStorage {
@@ -31,6 +33,7 @@ impl MemoryStorage {
             machine_index: DashMap::new(),
             trails: DashMap::new(),
             parent_index: DashMap::new(),
+            timers: DashMap::new(),
         }
     }
 
@@ -167,6 +170,14 @@ impl Storage for MemoryStorage {
                 }
             })
             .collect();
+
+        // Sort by ID for deterministic cursor-based pagination
+        results.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+
+        // Apply cursor filter: only instances with ID > after_id
+        if let Some(after_id) = &filter.after_id {
+            results.retain(|inst| inst.id.as_str().as_str() > after_id.as_str());
+        }
 
         // Apply offset and limit
         if let Some(offset) = filter.offset {
@@ -464,5 +475,35 @@ impl Storage for MemoryStorage {
         }
 
         Ok(count)
+    }
+
+    async fn store_timer(&self, timer: &StoredTimer) -> SmqlResult<()> {
+        let key = format!("{}:{}", timer.instance_id, timer.from_state);
+        self.timers.insert(key, timer.clone());
+        Ok(())
+    }
+
+    async fn remove_timer(&self, instance_id: &str, state: &str) -> SmqlResult<()> {
+        let key = format!("{}:{}", instance_id, state);
+        self.timers.remove(&key);
+        Ok(())
+    }
+
+    async fn remove_all_timers(&self, instance_id: &str) -> SmqlResult<()> {
+        let prefix = format!("{}:", instance_id);
+        let keys: Vec<String> = self
+            .timers
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| entry.key().clone())
+            .collect();
+        for key in keys {
+            self.timers.remove(&key);
+        }
+        Ok(())
+    }
+
+    async fn load_all_timers(&self) -> SmqlResult<Vec<StoredTimer>> {
+        Ok(self.timers.iter().map(|entry| entry.value().clone()).collect())
     }
 }

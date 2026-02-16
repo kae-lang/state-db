@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::instance::{Filter, Instance, InstanceId, Mutation, TrailEntry, TrailFilter};
+use crate::instance::{Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter};
 use crate::traits::Storage;
 
 type DB = DBWithThreadMode<MultiThreaded>;
@@ -21,6 +21,7 @@ const CF_MACHINE_INDEX: &str = "machine_index";
 const CF_TRAILS: &str = "trails";
 const CF_PARENT_INDEX: &str = "parent_index";
 const CF_ID_INDEX: &str = "id_index";
+const CF_TIMERS: &str = "timers";
 
 const SEP: u8 = 0x00;
 
@@ -43,6 +44,7 @@ impl RocksDBStorage {
             CF_TRAILS,
             CF_PARENT_INDEX,
             CF_ID_INDEX,
+            CF_TIMERS,
         ];
 
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = cf_names
@@ -345,6 +347,14 @@ impl Storage for RocksDBStorage {
                     }
                 }
             }
+        }
+
+        // Sort by ID for deterministic cursor-based pagination
+        results.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+
+        // Apply cursor filter: only instances with ID > after_id
+        if let Some(after_id) = &filter.after_id {
+            results.retain(|inst| inst.id.as_str().as_str() > after_id.as_str());
         }
 
         // Apply offset and limit
@@ -746,5 +756,52 @@ impl Storage for RocksDBStorage {
             .map_err(|e| SmqlError::storage(e.to_string()))?;
 
         Ok(count)
+    }
+
+    async fn store_timer(&self, timer: &StoredTimer) -> SmqlResult<()> {
+        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let key = Self::make_key(&[timer.instance_id.as_bytes(), timer.from_state.as_bytes()]);
+        let bytes = serde_json::to_vec(timer)
+            .map_err(|e| SmqlError::storage(format!("Serialize timer: {}", e)))?;
+        self.db
+            .put_cf(&cf, &key, &bytes)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn remove_timer(&self, instance_id: &str, state: &str) -> SmqlResult<()> {
+        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let key = Self::make_key(&[instance_id.as_bytes(), state.as_bytes()]);
+        self.db
+            .delete_cf(&cf, &key)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn remove_all_timers(&self, instance_id: &str) -> SmqlResult<()> {
+        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let prefix = Self::prefix_key(&[instance_id.as_bytes()]);
+        let pairs = self.scan_prefix(CF_TIMERS, &prefix)?;
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+        for (key, _) in pairs {
+            batch.delete_cf(&cf, &key);
+        }
+        self.db
+            .write(batch)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn load_all_timers(&self) -> SmqlResult<Vec<StoredTimer>> {
+        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        let mut timers = Vec::new();
+        for item in iter {
+            let (_, value) = item.map_err(|e| SmqlError::storage(e.to_string()))?;
+            let timer: StoredTimer = serde_json::from_slice(&value)
+                .map_err(|e| SmqlError::storage(format!("Deserialize timer: {}", e)))?;
+            timers.push(timer);
+        }
+        Ok(timers)
     }
 }

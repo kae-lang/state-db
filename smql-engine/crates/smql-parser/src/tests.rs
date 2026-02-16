@@ -772,4 +772,52 @@ mod query_tests {
             _ => panic!("Expected Aggregate"),
         }
     }
+
+    // --- Cursor-based pagination (AFTER) ---
+
+    #[test]
+    fn parse_find_after_alone() {
+        let input = r#"FIND Order AFTER "01HWZK4G5C8T3RNMK1VNSH7HYM""#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Find(f)) => {
+                assert_eq!(f.machine, "Order");
+                assert_eq!(f.after, Some("01HWZK4G5C8T3RNMK1VNSH7HYM".to_string()));
+                assert_eq!(f.limit, None);
+                assert_eq!(f.offset, None);
+            }
+            _ => panic!("Expected Find"),
+        }
+    }
+
+    #[test]
+    fn parse_find_after_with_limit() {
+        let input = r#"FIND Order LIMIT 20 AFTER "01HWZK4G5C8T3RNMK1VNSH7HYM""#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Find(f)) => {
+                assert_eq!(f.machine, "Order");
+                assert_eq!(f.limit, Some(20));
+                assert_eq!(f.after, Some("01HWZK4G5C8T3RNMK1VNSH7HYM".to_string()));
+            }
+            _ => panic!("Expected Find"),
+        }
+    }
+
+    #[test]
+    fn parse_find_full_syntax_with_after() {
+        let input = r#"FIND Order WHERE state == "open" SORT BY priority DESC LIMIT 10 OFFSET 0 AFTER "01ABC""#;
+        let stmts = parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Query(Query::Find(f)) => {
+                assert_eq!(f.machine, "Order");
+                assert!(f.filter.is_some());
+                assert_eq!(f.sort.len(), 1);
+                assert_eq!(f.limit, Some(10));
+                assert_eq!(f.offset, Some(0));
+                assert_eq!(f.after, Some("01ABC".to_string()));
+            }
+            _ => panic!("Expected Find"),
+        }
+    }
 }

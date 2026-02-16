@@ -507,10 +507,15 @@ fn query_result_to_json(result: QueryResult) -> serde_json::Value {
         QueryResult::Instance(inst) => instance_to_json(&inst),
         QueryResult::Instances(insts) => {
             let items: Vec<serde_json::Value> = insts.iter().map(instance_to_json).collect();
-            serde_json::json!({
+            let next_cursor = insts.last().map(|inst| inst.id.as_str());
+            let mut result = serde_json::json!({
                 "count": items.len(),
                 "instances": items,
-            })
+            });
+            if let Some(cursor) = next_cursor {
+                result["next_cursor"] = serde_json::Value::String(cursor);
+            }
+            result
         }
         QueryResult::Trail(entries) => {
             let items: Vec<serde_json::Value> = entries

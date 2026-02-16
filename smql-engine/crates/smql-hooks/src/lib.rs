@@ -1,10 +1,14 @@
 // SMQL Hooks — Action/hook execution runtime
 
+pub mod webhook;
+
 use smql_ast::machine::{HookDefinition, HookTrigger};
 use smql_ast::value::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+
+pub use webhook::{WebhookClient, WebhookConfig};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -120,6 +124,7 @@ impl Default for EventBus {
 pub struct HookExecutor {
     pub event_bus: Arc<EventBus>,
     callback: std::sync::RwLock<Option<Arc<dyn EngineCallback>>>,
+    webhook_client: std::sync::RwLock<Option<Arc<WebhookClient>>>,
 }
 
 impl HookExecutor {
@@ -127,6 +132,7 @@ impl HookExecutor {
         Self {
             event_bus,
             callback: std::sync::RwLock::new(None),
+            webhook_client: std::sync::RwLock::new(None),
         }
     }
 
@@ -134,11 +140,18 @@ impl HookExecutor {
         Self {
             event_bus,
             callback: std::sync::RwLock::new(Some(callback)),
+            webhook_client: std::sync::RwLock::new(None),
         }
     }
 
     pub fn set_callback(&self, callback: Arc<dyn EngineCallback>) {
         *self.callback.write().unwrap() = Some(callback);
+    }
+
+    /// Set the webhook HTTP client. When set, WEBHOOK actions make real HTTP POST requests.
+    /// When not set, WEBHOOK actions are logged as dry-run.
+    pub fn set_webhook_client(&self, client: Arc<WebhookClient>) {
+        *self.webhook_client.write().unwrap() = Some(client);
     }
 
     /// Fire matching hooks for a trigger. Returns Err only if a BEFORE hook rejects.
@@ -237,12 +250,37 @@ impl HookExecutor {
             }
 
             ResolvedAction::Webhook { url, payload } => {
-                tracing::info!(
-                    url = %url,
-                    instance_id = %ctx.instance_id,
-                    has_payload = payload.is_some(),
-                    "WEBHOOK (dry-run, no HTTP client)"
-                );
+                let client = self.webhook_client.read().unwrap().clone();
+                if let Some(client) = client {
+                    match client.execute(url, ctx, payload.as_ref()).await {
+                        Ok(()) => {
+                            tracing::info!(
+                                url = %url,
+                                instance_id = %ctx.instance_id,
+                                "WEBHOOK delivered"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                url = %url,
+                                instance_id = %ctx.instance_id,
+                                error = %e,
+                                "WEBHOOK failed"
+                            );
+                            return Err(HookError::WebhookFailed {
+                                url: url.clone(),
+                                message: e.to_string(),
+                            });
+                        }
+                    }
+                } else {
+                    tracing::info!(
+                        url = %url,
+                        instance_id = %ctx.instance_id,
+                        has_payload = payload.is_some(),
+                        "WEBHOOK (dry-run, no HTTP client)"
+                    );
+                }
                 Ok(())
             }
 

@@ -383,6 +383,7 @@ async fn find_jobs_by_state() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {

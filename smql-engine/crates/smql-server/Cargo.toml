@@ -5,6 +5,7 @@ edition.workspace = true
 
 [features]
 rocksdb = ["smql-storage/rocksdb"]
+auth = ["dep:jsonwebtoken"]
 
 [dependencies]
 smql-ast = { path = "../smql-ast" }
@@ -24,6 +25,8 @@ tracing-subscriber = { workspace = true }
 prometheus = { workspace = true }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+jsonwebtoken = { workspace = true, optional = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 http = "1"

@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub async fn run_repl_with_storage(storage: Arc<dyn Storage>) {
     let catalog = Arc::new(MachineCatalog::new());
     let engine = Engine::new(catalog, storage);
+    engine.wire_callback();
     run_repl_inner(engine).await;
 }
 
@@ -19,6 +20,7 @@ pub async fn run_repl() {
     let catalog = Arc::new(MachineCatalog::new());
     let storage = Arc::new(MemoryStorage::new());
     let engine = Engine::new(catalog, storage);
+    engine.wire_callback();
     run_repl_inner(engine).await;
 }
 

@@ -118,6 +118,8 @@ pub struct Filter {
     pub predicate: Option<FilterPredicate>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+    /// Cursor-based pagination: only return instances with ID > after_id.
+    pub after_id: Option<String>,
 }
 
 /// A filter predicate for data field comparisons.
@@ -179,6 +181,17 @@ fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
         (Value::Duration(a), Value::Duration(b)) => Some(a.cmp(b)),
         _ => None,
     }
+}
+
+/// A persisted timer that survives server restarts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredTimer {
+    pub instance_id: String,
+    pub machine: String,
+    pub from_state: String,
+    pub target_state: String,
+    pub deadline: DateTime<Utc>,
+    pub registered_at: DateTime<Utc>,
 }
 
 /// A mutation to apply to an instance's data.

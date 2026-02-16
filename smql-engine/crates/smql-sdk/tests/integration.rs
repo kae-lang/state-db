@@ -383,3 +383,131 @@ async fn test_raw_execute() {
     assert!(resp.success);
     assert!(resp.result.is_some());
 }
+
+// 16. SIGNAL PARENT through the HTTP API
+//
+// Pre-builds an engine with parent + child machines (child has SIGNAL PARENT),
+// spawns parent & child via engine, then triggers the signalling transition
+// via the SDK HTTP client.
+#[tokio::test]
+async fn test_signal_parent_via_server() {
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::value::Value;
+
+    let signal_smql = r#"
+DEFINE MACHINE SigParent (
+    DATA { label : TEXT -> REQUIRED }
+    STATES { open, progressing, closed }
+    INITIAL STATE open
+    TERMINAL STATES { closed }
+    TRANSITIONS {
+        open -> progressing {}
+        progressing -> closed {}
+    }
+)
+DEFINE MACHINE SigChild (
+    PARENT : SigParent
+    STATES { todo, doing, done }
+    INITIAL STATE todo
+    TERMINAL STATES { done }
+    TRANSITIONS {
+        todo -> doing {}
+        doing -> done {
+            SIGNAL PARENT TO closed
+        }
+    }
+)
+"#;
+
+    // Build engine with pre-loaded machines
+    let machines = smql_parser::parse_machines(signal_smql).expect("parse");
+    let catalog = std::sync::Arc::new(smql_catalog::MachineCatalog::new());
+    for m in machines {
+        catalog.register(m).expect("register");
+    }
+    let storage = std::sync::Arc::new(smql_storage::MemoryStorage::new());
+    let timer = std::sync::Arc::new(smql_timer::TimerManager::new());
+    let event_bus = std::sync::Arc::new(smql_hooks::EventBus::new(64));
+    let hooks = std::sync::Arc::new(smql_hooks::HookExecutor::new(event_bus));
+    let engine = std::sync::Arc::new(
+        smql_engine_core::Engine::with_hooks(catalog, storage, timer, hooks),
+    );
+    // wire_callback is called inside SmqlServer::with_engine()
+
+    // Pre-spawn parent
+    let parent = engine
+        .spawn(&SpawnCommand {
+            machine: "SigParent".into(),
+            data: vec![("label".into(), Expression::new(ExpressionKind::Literal(Value::Text("test".into()))))],
+            then_transition: None,
+            batch: false,
+            batch_data: vec![],
+            parent_id: None,
+            parent_machine: None,
+        })
+        .await
+        .unwrap();
+    let parent_id = parent.instance.id.to_string();
+
+    // Transition parent to progressing
+    engine
+        .transition(&TransitionCommand::new(
+            "SigParent".into(),
+            parent_id.clone(),
+            "progressing".into(),
+        ))
+        .await
+        .unwrap();
+
+    // Pre-spawn child linked to parent
+    let child = engine
+        .spawn(&SpawnCommand {
+            machine: "SigChild".into(),
+            data: vec![],
+            then_transition: None,
+            batch: false,
+            batch_data: vec![],
+            parent_id: Some(parent_id.clone()),
+            parent_machine: Some("SigParent".into()),
+        })
+        .await
+        .unwrap();
+    let child_id = child.instance.id.to_string();
+
+    // Transition child: todo -> doing (via engine, no signal here)
+    engine
+        .transition(&TransitionCommand::new(
+            "SigChild".into(),
+            child_id.clone(),
+            "doing".into(),
+        ))
+        .await
+        .unwrap();
+
+    // Start server with this pre-built engine
+    let server = smql_server::SmqlServer::with_engine(engine);
+    let app = server.router();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let url = format!("http://{}", addr);
+    let client = SmqlClient::new(&url).unwrap();
+
+    // Transition child: doing -> done (fires SIGNAL PARENT TO closed) via HTTP
+    let tr = client
+        .transition("SigChild", &child_id, "done", TransitionOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(tr.to_state, "done");
+
+    // Verify parent moved to "closed" via HTTP
+    let parent_inst = client.get_instance(&parent_id).await.unwrap();
+    assert_eq!(
+        parent_inst.state, "closed",
+        "SIGNAL PARENT should have transitioned parent to closed"
+    );
+}

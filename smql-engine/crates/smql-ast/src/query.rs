@@ -52,6 +52,9 @@ pub struct FindQuery {
     pub sort: Vec<SortClause>,
     pub limit: Option<u64>,
     pub offset: Option<u64>,
+    /// Cursor-based pagination: return instances with ID > after.
+    #[serde(default)]
+    pub after: Option<String>,
 }
 
 /// AGGREGATE query — compute aggregations over instances.

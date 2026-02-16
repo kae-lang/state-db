@@ -464,6 +464,7 @@ mod query_tests {
             sort: vec![],
             limit: Some(10),
             offset: None,
+            after: None,
         });
         assert_eq!(q.to_string(), "FIND Order");
     }

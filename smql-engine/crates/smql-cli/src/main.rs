@@ -251,6 +251,7 @@ async fn run_statements(input: &str, storage: Arc<dyn Storage>) {
 
     let catalog = std::sync::Arc::new(smql_catalog::MachineCatalog::new());
     let engine = smql_engine_core::Engine::new(catalog, storage);
+    engine.wire_callback();
 
     let stmts = match smql_parser::parse(input) {
         Ok(s) => s,

@@ -435,6 +435,7 @@ async fn find_line_items_by_state() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -450,6 +451,7 @@ async fn find_line_items_by_state() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -514,6 +516,7 @@ async fn multiple_orders_lifecycle() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -529,6 +532,7 @@ async fn multiple_orders_lifecycle() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -651,5 +655,127 @@ async fn full_order_fulfillment_flow() {
             assert!(entries.len() >= 6, "trail should have at least 6 entries, got {}", entries.len());
         }
         _ => panic!("expected Trail"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SIGNAL PARENT test
+// ---------------------------------------------------------------------------
+
+/// Machines where Shipment's dispatched → in_transit fires SIGNAL PARENT TO shipped.
+const SIGNAL_PARENT_SMQL: &str = r#"
+DEFINE MACHINE SigOrder (
+    DATA {
+        customer : TEXT -> REQUIRED
+        total    : INT  -> REQUIRED
+    }
+    STATES { draft, placed, paid, fulfilled, shipped, delivered, cancelled }
+    INITIAL STATE draft
+    TERMINAL STATES { delivered, cancelled }
+
+    CHILDREN {
+        shipment : OPTIONAL(SigShipment)
+    }
+
+    TRANSITIONS {
+        draft -> placed {
+            GUARD : total > 0
+        }
+        placed -> paid {}
+        paid -> fulfilled {}
+        fulfilled -> shipped {}
+        shipped -> delivered {}
+        ANY -> cancelled {
+            EXCEPT FROM { shipped, delivered }
+        }
+    }
+)
+
+DEFINE MACHINE SigShipment (
+    PARENT : SigOrder
+    DATA {
+        tracking : TEXT -> OPTIONAL
+        carrier  : TEXT -> OPTIONAL
+    }
+    STATES { created, dispatched, in_transit, delivered, lost }
+    INITIAL STATE created
+    TERMINAL STATES { delivered, lost }
+
+    TRANSITIONS {
+        created -> dispatched {
+            GUARD : tracking IS SET
+            GUARD : carrier IS SET
+        }
+        dispatched -> in_transit {
+            SIGNAL PARENT TO shipped
+        }
+        in_transit -> delivered {}
+        in_transit -> lost {}
+    }
+)
+"#;
+
+/// Verify SIGNAL PARENT: transitioning Shipment dispatched → in_transit
+/// signals the parent Order to transition to "shipped".
+#[tokio::test]
+async fn signal_parent_from_shipment_delivery() {
+    let machines = smql_parser::parse_machines(SIGNAL_PARENT_SMQL).expect("parse signal parent defs");
+    let catalog = Arc::new(MachineCatalog::new());
+    for m in machines {
+        catalog.register(m).expect("register machine");
+    }
+    let storage = Arc::new(MemoryStorage::new());
+    let timer = Arc::new(TimerManager::new());
+    let event_bus = Arc::new(EventBus::new(64));
+    let hooks = Arc::new(HookExecutor::new(event_bus));
+    let engine = Engine::with_hooks(catalog, storage, timer, hooks);
+    engine.wire_callback();
+
+    // Spawn order, transition to fulfilled
+    let order = engine
+        .spawn(&spawn_cmd("SigOrder", vec![
+            ("customer", Value::Text("cust_001".into())),
+            ("total", Value::Int(5000)),
+        ]))
+        .await
+        .unwrap();
+    let order_id = order.instance.id.as_str();
+
+    engine.transition(&transition_cmd("SigOrder", &order_id, "placed")).await.unwrap();
+    engine.transition(&transition_cmd("SigOrder", &order_id, "paid")).await.unwrap();
+    engine.transition(&transition_cmd("SigOrder", &order_id, "fulfilled")).await.unwrap();
+
+    // Spawn shipment as child of order
+    let ship = engine
+        .spawn(&spawn_child_cmd("SigShipment", vec![], &order_id, "SigOrder"))
+        .await
+        .unwrap();
+    let ship_id = ship.instance.id.as_str();
+
+    // Transition shipment: created → dispatched (needs tracking + carrier)
+    let cmd = transition_with(
+        "SigShipment",
+        &ship_id,
+        "dispatched",
+        vec![
+            ("tracking", Value::Text("TRACK999".into())),
+            ("carrier", Value::Text("ups".into())),
+        ],
+    );
+    engine.transition(&cmd).await.unwrap();
+
+    // Transition shipment: dispatched → in_transit (fires SIGNAL PARENT TO shipped)
+    engine.transition(&transition_cmd("SigShipment", &ship_id, "in_transit")).await.unwrap();
+
+    // Assert: order should now be in "shipped" state
+    let q = Query::Get(GetQuery {
+        machine: "SigOrder".into(),
+        instance_id: order_id.to_string(),
+    });
+    match engine.execute_query(&q).await.unwrap() {
+        QueryResult::Instance(inst) => {
+            assert_eq!(inst.state, "shipped", "SIGNAL PARENT should have moved order to shipped");
+        }
+        _ => panic!("expected Instance"),
     }
 }

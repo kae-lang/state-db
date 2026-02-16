@@ -55,12 +55,19 @@ pub fn parse_find(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
         None
     };
 
+    let after = if parser.try_keyword("AFTER") {
+        Some(parser.expect_ident_or_string()?)
+    } else {
+        None
+    };
+
     Ok(Query::Find(FindQuery {
         machine,
         filter,
         sort,
         limit,
         offset,
+        after,
     }))
 }
 

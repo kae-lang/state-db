@@ -183,6 +183,7 @@ async fn level2_find_all() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -214,6 +215,7 @@ async fn level2_find_by_state() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -233,6 +235,7 @@ async fn level2_find_by_state() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -258,6 +261,7 @@ async fn level2_find_with_limit() {
         sort: vec![],
         limit: Some(3),
         offset: None,
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -282,6 +286,7 @@ async fn level2_find_with_limit_offset() {
         sort: vec![],
         limit: Some(2),
         offset: Some(3),
+        after: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -850,6 +855,7 @@ async fn level7_find_children() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -865,6 +871,7 @@ async fn level7_find_children() {
         sort: vec![],
         limit: None,
         offset: None,
+        after: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {

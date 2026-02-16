@@ -110,6 +110,7 @@ impl Engine {
         let filter = Filter {
             limit: query.limit.map(|l| l as usize),
             offset: query.offset.map(|o| o as usize),
+            after_id: query.after.clone(),
             ..Default::default()
         };
 

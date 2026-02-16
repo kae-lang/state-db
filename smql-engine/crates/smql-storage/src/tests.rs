@@ -809,4 +809,222 @@ mod memory_storage_tests {
         let results = storage.find_instances("Order", &filter).await.unwrap();
         assert_eq!(results.len(), 2);
     }
+
+    // --- Cursor-based pagination tests ---
+
+    #[tokio::test]
+    async fn cursor_filters_by_after_id() {
+        let storage = MemoryStorage::new();
+        let mut ids = Vec::new();
+        for _ in 0..5 {
+            let inst = make_instance("Order", "open");
+            ids.push(inst.id.as_str());
+            storage.store_instance(&inst).await.unwrap();
+        }
+        ids.sort();
+
+        // Use the 2nd ID as cursor — should get IDs 3, 4, 5
+        let filter = Filter {
+            after_id: Some(ids[1].clone()),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 3);
+        for inst in &results {
+            assert!(inst.id.as_str() > ids[1]);
+        }
+    }
+
+    #[tokio::test]
+    async fn cursor_with_limit() {
+        let storage = MemoryStorage::new();
+        let mut ids = Vec::new();
+        for _ in 0..5 {
+            let inst = make_instance("Order", "open");
+            ids.push(inst.id.as_str());
+            storage.store_instance(&inst).await.unwrap();
+        }
+        ids.sort();
+
+        let filter = Filter {
+            after_id: Some(ids[0].clone()),
+            limit: Some(2),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].id.as_str() > ids[0]);
+    }
+
+    #[tokio::test]
+    async fn cursor_at_end_returns_empty() {
+        let storage = MemoryStorage::new();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let inst = make_instance("Order", "open");
+            ids.push(inst.id.as_str());
+            storage.store_instance(&inst).await.unwrap();
+        }
+        ids.sort();
+
+        // Use the last ID as cursor — should get nothing
+        let filter = Filter {
+            after_id: Some(ids[2].clone()),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cursor_with_predicate() {
+        let storage = MemoryStorage::new();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("priority".to_string(), Value::Int(i));
+            ids.push(inst.id.as_str());
+            storage.store_instance(&inst).await.unwrap();
+        }
+        ids.sort();
+
+        // Cursor + predicate: after first ID, priority > 2
+        let filter = Filter {
+            after_id: Some(ids[0].clone()),
+            predicate: Some(FilterPredicate::Gt("priority".to_string(), Value::Int(2))),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        // Should be instances with priority 3 and 4 whose IDs are > ids[0]
+        for inst in &results {
+            assert!(inst.id.as_str() > ids[0]);
+            let p = match inst.data.get("priority") {
+                Some(Value::Int(v)) => *v,
+                _ => panic!("Expected Int priority"),
+            };
+            assert!(p > 2);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Timer persistence tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn timer_store_and_load() {
+        let storage = MemoryStorage::new();
+        let now = Utc::now();
+        let timer = StoredTimer {
+            instance_id: "inst_1".to_string(),
+            machine: "Ticket".to_string(),
+            from_state: "waiting".to_string(),
+            target_state: "resolved".to_string(),
+            deadline: now + chrono::Duration::hours(1),
+            registered_at: now,
+        };
+        storage.store_timer(&timer).await.unwrap();
+
+        let all = storage.load_all_timers().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].instance_id, "inst_1");
+        assert_eq!(all[0].from_state, "waiting");
+        assert_eq!(all[0].target_state, "resolved");
+    }
+
+    #[tokio::test]
+    async fn timer_remove_specific() {
+        let storage = MemoryStorage::new();
+        let now = Utc::now();
+        let timer = StoredTimer {
+            instance_id: "inst_1".to_string(),
+            machine: "Ticket".to_string(),
+            from_state: "waiting".to_string(),
+            target_state: "resolved".to_string(),
+            deadline: now + chrono::Duration::hours(1),
+            registered_at: now,
+        };
+        storage.store_timer(&timer).await.unwrap();
+        storage.remove_timer("inst_1", "waiting").await.unwrap();
+
+        let all = storage.load_all_timers().await.unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn timer_remove_all_for_instance() {
+        let storage = MemoryStorage::new();
+        let now = Utc::now();
+        for state in &["waiting", "open", "triaged"] {
+            let timer = StoredTimer {
+                instance_id: "inst_1".to_string(),
+                machine: "Ticket".to_string(),
+                from_state: state.to_string(),
+                target_state: "resolved".to_string(),
+                deadline: now + chrono::Duration::hours(1),
+                registered_at: now,
+            };
+            storage.store_timer(&timer).await.unwrap();
+        }
+        // Also store for another instance
+        let other = StoredTimer {
+            instance_id: "inst_2".to_string(),
+            machine: "Ticket".to_string(),
+            from_state: "waiting".to_string(),
+            target_state: "resolved".to_string(),
+            deadline: now + chrono::Duration::hours(1),
+            registered_at: now,
+        };
+        storage.store_timer(&other).await.unwrap();
+
+        storage.remove_all_timers("inst_1").await.unwrap();
+
+        let all = storage.load_all_timers().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].instance_id, "inst_2");
+    }
+
+    #[tokio::test]
+    async fn timer_load_all_empty() {
+        let storage = MemoryStorage::new();
+        let all = storage.load_all_timers().await.unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn timer_overwrite_existing() {
+        let storage = MemoryStorage::new();
+        let now = Utc::now();
+        let timer1 = StoredTimer {
+            instance_id: "inst_1".to_string(),
+            machine: "Ticket".to_string(),
+            from_state: "waiting".to_string(),
+            target_state: "resolved".to_string(),
+            deadline: now + chrono::Duration::hours(1),
+            registered_at: now,
+        };
+        storage.store_timer(&timer1).await.unwrap();
+
+        // Overwrite with different target
+        let timer2 = StoredTimer {
+            instance_id: "inst_1".to_string(),
+            machine: "Ticket".to_string(),
+            from_state: "waiting".to_string(),
+            target_state: "closed".to_string(),
+            deadline: now + chrono::Duration::hours(2),
+            registered_at: now,
+        };
+        storage.store_timer(&timer2).await.unwrap();
+
+        let all = storage.load_all_timers().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].target_state, "closed");
+    }
+
+    #[tokio::test]
+    async fn timer_remove_nonexistent_is_ok() {
+        let storage = MemoryStorage::new();
+        // Should not error
+        storage.remove_timer("nonexistent", "whatever").await.unwrap();
+        storage.remove_all_timers("nonexistent").await.unwrap();
+    }
 }
