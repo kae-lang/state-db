@@ -49,10 +49,7 @@ impl Default for AuthConfig {
 /// 3. Decode JWT with jsonwebtoken
 /// 4. On success → insert AuthClaims into request extensions
 /// 5. On failure + required=true → 401. On failure + required=false → pass through
-pub async fn auth_middleware(
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn auth_middleware(request: Request, next: Next) -> Response {
     // Get auth config from extensions
     let config = match request.extensions().get::<AuthConfig>() {
         Some(config) => config.clone(),
@@ -243,9 +240,7 @@ mod tests {
             .route("/test", get(handler_with_claims))
             .route("/health", get(|| async { "ok" }))
             .layer(middleware::from_fn(auth_middleware))
-            .layer(AuthConfigLayer {
-                config,
-            })
+            .layer(AuthConfigLayer { config })
     }
 
     #[tokio::test]
@@ -300,12 +295,7 @@ mod tests {
         let app = build_test_router(config);
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/test")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
@@ -321,12 +311,7 @@ mod tests {
         let app = build_test_router(config);
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/test")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
             .await
             .unwrap();
 

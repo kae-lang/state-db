@@ -25,7 +25,6 @@ pub async fn run_repl() {
 }
 
 async fn run_repl_inner(engine: Engine) {
-
     println!("SMQL Engine v0.1.0 — Interactive REPL");
     println!("Type SMQL statements or .help for commands. Press Ctrl+D to exit.\n");
 
@@ -183,9 +182,7 @@ async fn execute_command(cmd: Command, engine: &Engine) {
             Ok(result) => {
                 println!(
                     "Spawned {} instance: {} (state: {})",
-                    result.instance.machine,
-                    result.instance.id,
-                    result.instance.state
+                    result.instance.machine, result.instance.id, result.instance.state
                 );
             }
             Err(e) => eprintln!("Error: {}", e),
@@ -195,9 +192,7 @@ async fn execute_command(cmd: Command, engine: &Engine) {
             Ok(result) => {
                 println!(
                     "Transitioned {} -> {} (instance: {})",
-                    result.from_state,
-                    result.to_state,
-                    result.instance.id
+                    result.from_state, result.to_state, result.instance.id
                 );
             }
             Err(e) => eprintln!("Error: {}", e),
@@ -207,9 +202,7 @@ async fn execute_command(cmd: Command, engine: &Engine) {
             Ok(Some(result)) => {
                 println!(
                     "Transitioned {} -> {} (instance: {})",
-                    result.from_state,
-                    result.to_state,
-                    result.instance.id
+                    result.from_state, result.to_state, result.instance.id
                 );
             }
             Ok(None) => {
@@ -236,7 +229,7 @@ async fn execute_command(cmd: Command, engine: &Engine) {
                 }
             }
             Err(e) => eprintln!("Error: {}", e),
-        }
+        },
     }
 }
 
@@ -342,12 +335,16 @@ mod tests {
 
     #[test]
     fn is_complete_statement_balanced_braces() {
-        assert!(is_complete_statement("DEFINE MACHINE Foo { STATES { open } }"));
+        assert!(is_complete_statement(
+            "DEFINE MACHINE Foo { STATES { open } }"
+        ));
     }
 
     #[test]
     fn is_complete_statement_unbalanced_braces() {
-        assert!(!is_complete_statement("DEFINE MACHINE Foo { STATES { open }"));
+        assert!(!is_complete_statement(
+            "DEFINE MACHINE Foo { STATES { open }"
+        ));
     }
 
     #[test]
@@ -372,17 +369,23 @@ mod tests {
 
     #[test]
     fn is_complete_statement_mixed_balanced() {
-        assert!(is_complete_statement("DEFINE MACHINE Foo { HOOKS { ON SPAWN { EMIT(\"created\") } } }"));
+        assert!(is_complete_statement(
+            "DEFINE MACHINE Foo { HOOKS { ON SPAWN { EMIT(\"created\") } } }"
+        ));
     }
 
     #[test]
     fn is_complete_statement_mixed_unbalanced_brace() {
-        assert!(!is_complete_statement("DEFINE MACHINE Foo { HOOKS { ON SPAWN { EMIT(\"created\") }"));
+        assert!(!is_complete_statement(
+            "DEFINE MACHINE Foo { HOOKS { ON SPAWN { EMIT(\"created\") }"
+        ));
     }
 
     #[test]
     fn is_complete_statement_mixed_unbalanced_paren() {
-        assert!(!is_complete_statement("AGGREGATE Machine MEASURE AVG(price"));
+        assert!(!is_complete_statement(
+            "AGGREGATE Machine MEASURE AVG(price"
+        ));
     }
 
     #[test]

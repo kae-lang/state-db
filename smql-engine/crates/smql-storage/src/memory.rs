@@ -5,7 +5,9 @@ use smql_ast::{SmqlError, SmqlResult};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
-use crate::instance::{Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter};
+use crate::instance::{
+    Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter,
+};
 use crate::traits::Storage;
 
 /// In-memory storage backend using DashMap for concurrent access.
@@ -355,7 +357,11 @@ impl Storage for MemoryStorage {
             .map_err(|e| SmqlError::internal(format!("Trail lock poisoned: {}", e)))
     }
 
-    async fn query_trails(&self, machine: &str, filter: &TrailFilter) -> SmqlResult<Vec<TrailEntry>> {
+    async fn query_trails(
+        &self,
+        machine: &str,
+        filter: &TrailFilter,
+    ) -> SmqlResult<Vec<TrailEntry>> {
         let mut results = Vec::new();
 
         let ids: Vec<String> = self
@@ -368,9 +374,18 @@ impl Storage for MemoryStorage {
             if let Some(trail) = self.trails.get(id) {
                 if let Ok(entries) = trail.read() {
                     for entry in entries.iter() {
-                        let matches = filter.from_state.as_ref().map_or(true, |s| entry.from_state == *s)
-                            && filter.to_state.as_ref().map_or(true, |s| entry.to_state == *s)
-                            && filter.actor.as_ref().map_or(true, |a| entry.actor.as_ref() == Some(a))
+                        let matches = filter
+                            .from_state
+                            .as_ref()
+                            .map_or(true, |s| entry.from_state == *s)
+                            && filter
+                                .to_state
+                                .as_ref()
+                                .map_or(true, |s| entry.to_state == *s)
+                            && filter
+                                .actor
+                                .as_ref()
+                                .map_or(true, |a| entry.actor.as_ref() == Some(a))
                             && filter.after.map_or(true, |t| entry.timestamp > t)
                             && filter.before.map_or(true, |t| entry.timestamp < t);
 
@@ -392,7 +407,11 @@ impl Storage for MemoryStorage {
         Ok(results)
     }
 
-    async fn find_children(&self, parent_id: &InstanceId, child_machine: Option<&str>) -> SmqlResult<Vec<Instance>> {
+    async fn find_children(
+        &self,
+        parent_id: &InstanceId,
+        child_machine: Option<&str>,
+    ) -> SmqlResult<Vec<Instance>> {
         let parent_str = parent_id.as_str();
         let child_ids: Vec<String> = self
             .parent_index
@@ -516,6 +535,10 @@ impl Storage for MemoryStorage {
     }
 
     async fn load_all_timers(&self) -> SmqlResult<Vec<StoredTimer>> {
-        Ok(self.timers.iter().map(|entry| entry.value().clone()).collect())
+        Ok(self
+            .timers
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect())
     }
 }

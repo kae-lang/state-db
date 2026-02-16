@@ -69,10 +69,7 @@ pub fn validate_machine(
                 for ex in except {
                     if !state_names.contains(ex.as_str()) {
                         return Err(SmqlError::ValidationError {
-                            message: format!(
-                                "EXCEPT FROM state '{}' is not in the STATES set",
-                                ex
-                            ),
+                            message: format!("EXCEPT FROM state '{}' is not in the STATES set", ex),
                             field: Some("transitions".into()),
                             hint: Some(format!("Add '{}' to STATES", ex)),
                         });
@@ -143,7 +140,10 @@ pub fn validate_machine(
     // 3.2.6: Detect dead-end states (non-terminal states with no outgoing transitions)
     let states_with_outgoing = compute_states_with_outgoing(machine, &state_names);
     // Also account for ANY wildcards which provide outgoing for all states
-    let has_any_wildcard = machine.transitions.iter().any(|t| matches!(&t.from, TransitionSource::Any { .. }));
+    let has_any_wildcard = machine
+        .transitions
+        .iter()
+        .any(|t| matches!(&t.from, TransitionSource::Any { .. }));
 
     for state in &machine.states {
         if !terminal_set.contains(state.name.as_str())

@@ -42,7 +42,10 @@ mod types_tests {
         let s = TypeDefinition::Set(Box::new(TypeDefinition::Int));
         assert_eq!(s.to_string(), "SET(INT)");
 
-        let m = TypeDefinition::Map(Box::new(TypeDefinition::Text), Box::new(TypeDefinition::Int));
+        let m = TypeDefinition::Map(
+            Box::new(TypeDefinition::Text),
+            Box::new(TypeDefinition::Int),
+        );
         assert_eq!(m.to_string(), "MAP(TEXT, INT)");
     }
 
@@ -81,7 +84,10 @@ mod types_tests {
             field_type: TypeDefinition::Enum(vec!["low".into(), "high".into()]),
             constraints: vec![Constraint::Default(DefaultValue::String("low".into()))],
         };
-        assert_eq!(field.to_string(), "priority : ENUM(low, high) -> DEFAULT(\"low\")");
+        assert_eq!(
+            field.to_string(),
+            "priority : ENUM(low, high) -> DEFAULT(\"low\")"
+        );
     }
 
     #[test]
@@ -109,7 +115,10 @@ mod types_tests {
         assert_eq!(AggregateFunction::Avg.to_string(), "AVG");
         assert_eq!(AggregateFunction::Min.to_string(), "MIN");
         assert_eq!(AggregateFunction::Max.to_string(), "MAX");
-        assert_eq!(AggregateFunction::Percentile(95.0).to_string(), "PERCENTILE(95)");
+        assert_eq!(
+            AggregateFunction::Percentile(95.0).to_string(),
+            "PERCENTILE(95)"
+        );
     }
 }
 
@@ -145,7 +154,10 @@ mod value_tests {
 
     #[test]
     fn value_display_ref() {
-        assert_eq!(Value::Ref("Agent".into(), "ag_123".into()).to_string(), "Agent#ag_123");
+        assert_eq!(
+            Value::Ref("Agent".into(), "ag_123".into()).to_string(),
+            "Agent#ag_123"
+        );
     }
 
     #[test]
@@ -237,14 +249,20 @@ mod expression_tests {
         let e = Expression::new(ExpressionKind::FieldAccess(vec!["priority".into()]));
         assert_eq!(e.to_string(), "priority");
 
-        let e2 = Expression::new(ExpressionKind::FieldAccess(vec!["a".into(), "b".into(), "c".into()]));
+        let e2 = Expression::new(ExpressionKind::FieldAccess(vec![
+            "a".into(),
+            "b".into(),
+            "c".into(),
+        ]));
         assert_eq!(e2.to_string(), "a.b.c");
     }
 
     #[test]
     fn binary_op_display() {
         let e = Expression::new(ExpressionKind::BinaryOp {
-            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec!["x".into()]))),
+            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
+                "x".into()
+            ]))),
             op: BinaryOperator::Gt,
             right: Box::new(Expression::new(ExpressionKind::Literal(Value::Int(10)))),
         });
@@ -278,7 +296,10 @@ mod expression_tests {
         let e = Expression::new(ExpressionKind::StateIs("open".into()));
         assert_eq!(e.to_string(), "STATE IS open");
 
-        let e2 = Expression::new(ExpressionKind::StateIn(vec!["open".into(), "triaged".into()]));
+        let e2 = Expression::new(ExpressionKind::StateIn(vec![
+            "open".into(),
+            "triaged".into(),
+        ]));
         assert_eq!(e2.to_string(), "STATE IN {open, triaged}");
     }
 
@@ -301,9 +322,13 @@ mod expression_tests {
     #[test]
     fn expression_serde() {
         let e = Expression::new(ExpressionKind::BinaryOp {
-            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec!["x".into()]))),
+            left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
+                "x".into()
+            ]))),
             op: BinaryOperator::Eq,
-            right: Box::new(Expression::new(ExpressionKind::Literal(Value::Text("test".into())))),
+            right: Box::new(Expression::new(ExpressionKind::Literal(Value::Text(
+                "test".into(),
+            )))),
         });
         let json = serde_json::to_string(&e).unwrap();
         let e2: Expression = serde_json::from_str(&json).unwrap();
@@ -370,7 +395,10 @@ mod machine_tests {
             .to_string(),
             "ANY EXCEPT FROM {closed, delivered}"
         );
-        assert_eq!(TransitionSource::Group("active".into()).to_string(), "GROUP(active)");
+        assert_eq!(
+            TransitionSource::Group("active".into()).to_string(),
+            "GROUP(active)"
+        );
     }
 
     #[test]
@@ -401,7 +429,10 @@ mod machine_tests {
 
     #[test]
     fn action_display() {
-        assert_eq!(Action::Log("test message".into()).to_string(), "LOG(\"test message\")");
+        assert_eq!(
+            Action::Log("test message".into()).to_string(),
+            "LOG(\"test message\")"
+        );
         assert_eq!(
             Action::SignalParent {
                 target_state: "delivered".into()
@@ -428,8 +459,14 @@ mod machine_tests {
     #[test]
     fn hook_trigger_display() {
         assert_eq!(HookTrigger::OnSpawn.to_string(), "ON SPAWN");
-        assert_eq!(HookTrigger::BeforeEachTransition.to_string(), "BEFORE EACH TRANSITION");
-        assert_eq!(HookTrigger::OnEnter("open".into()).to_string(), "ON ENTER open");
+        assert_eq!(
+            HookTrigger::BeforeEachTransition.to_string(),
+            "BEFORE EACH TRANSITION"
+        );
+        assert_eq!(
+            HookTrigger::OnEnter("open".into()).to_string(),
+            "ON ENTER open"
+        );
     }
 
     #[test]
@@ -512,21 +549,35 @@ mod command_tests {
     fn spawn_command_display() {
         let c = Command::Spawn(SpawnCommand::new(
             "SupportTicket".into(),
-            vec![("subject".into(), Expression::new(ExpressionKind::Literal(Value::Text("Test".into()))))],
+            vec![(
+                "subject".into(),
+                Expression::new(ExpressionKind::Literal(Value::Text("Test".into()))),
+            )],
         ));
         assert_eq!(c.to_string(), "SPAWN SupportTicket");
     }
 
     #[test]
     fn transition_command_display() {
-        let c = Command::Transition(TransitionCommand::new("SupportTicket".into(), "tk_123".into(), "triaged".into()));
+        let c = Command::Transition(TransitionCommand::new(
+            "SupportTicket".into(),
+            "tk_123".into(),
+            "triaged".into(),
+        ));
         assert_eq!(c.to_string(), "TRANSITION SupportTicket tk_123 TO triaged");
     }
 
     #[test]
     fn try_transition_command_display() {
-        let c = Command::TryTransition(TransitionCommand::new("SupportTicket".into(), "tk_123".into(), "resolved".into()));
-        assert_eq!(c.to_string(), "TRY TRANSITION SupportTicket tk_123 TO resolved");
+        let c = Command::TryTransition(TransitionCommand::new(
+            "SupportTicket".into(),
+            "tk_123".into(),
+            "resolved".into(),
+        ));
+        assert_eq!(
+            c.to_string(),
+            "TRY TRANSITION SupportTicket tk_123 TO resolved"
+        );
     }
 
     #[test]
@@ -558,7 +609,11 @@ mod command_tests {
 
     #[test]
     fn command_serde() {
-        let c = Command::Transition(TransitionCommand::new("Machine".into(), "tk_1".into(), "open".into()));
+        let c = Command::Transition(TransitionCommand::new(
+            "Machine".into(),
+            "tk_1".into(),
+            "open".into(),
+        ));
         let json = serde_json::to_string(&c).unwrap();
         let c2: Command = serde_json::from_str(&json).unwrap();
         assert_eq!(c, c2);
@@ -574,7 +629,11 @@ mod error_tests {
     fn smql_error_parse() {
         let e = SmqlError::parse("unexpected token");
         match &e {
-            SmqlError::ParseError { message, span, hint } => {
+            SmqlError::ParseError {
+                message,
+                span,
+                hint,
+            } => {
                 assert_eq!(message, "unexpected token");
                 assert!(span.is_none());
                 assert!(hint.is_none());
@@ -642,7 +701,10 @@ mod error_tests {
         let json = serde_json::to_string(&e).unwrap();
         let e2: SmqlError = serde_json::from_str(&json).unwrap();
         match (&e, &e2) {
-            (SmqlError::ParseError { message: m1, .. }, SmqlError::ParseError { message: m2, .. }) => {
+            (
+                SmqlError::ParseError { message: m1, .. },
+                SmqlError::ParseError { message: m2, .. },
+            ) => {
                 assert_eq!(m1, m2);
             }
             _ => panic!("Serde roundtrip failed"),

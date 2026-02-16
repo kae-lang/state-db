@@ -159,10 +159,7 @@ impl fmt::Display for MutateClause {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     /// NOTIFY(target, event_name)
-    Notify {
-        target: Expression,
-        event: String,
-    },
+    Notify { target: Expression, event: String },
     /// LOG(message_template)
     Log(String),
     /// EMIT(event_name, payload)
@@ -181,9 +178,7 @@ pub enum Action {
         data: Vec<(String, Expression)>,
     },
     /// SIGNAL PARENT TO state
-    SignalParent {
-        target_state: String,
-    },
+    SignalParent { target_state: String },
 }
 
 impl fmt::Display for Action {

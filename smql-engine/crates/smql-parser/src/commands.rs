@@ -1,9 +1,9 @@
-use smql_ast::{SmqlError, SmqlResult};
-use smql_ast::command::*;
-use smql_ast::machine::TransitionDefinition;
 use crate::common;
 use crate::expr;
 use crate::Parser;
+use smql_ast::command::*;
+use smql_ast::machine::TransitionDefinition;
+use smql_ast::{SmqlError, SmqlResult};
 
 /// Parse SPAWN Machine { field: value, ... } [THEN TRANSITION TO state].
 pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
@@ -56,7 +56,9 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
     }))
 }
 
-fn parse_spawn_data(parser: &mut Parser) -> SmqlResult<Vec<(String, smql_ast::expression::Expression)>> {
+fn parse_spawn_data(
+    parser: &mut Parser,
+) -> SmqlResult<Vec<(String, smql_ast::expression::Expression)>> {
     parser.expect_punct("{")?;
     let mut data = Vec::new();
     while !parser.check_punct("}") {
@@ -191,10 +193,8 @@ pub fn parse_alter_machine(parser: &mut Parser) -> SmqlResult<Command> {
                 let from = parser.expect_ident()?;
                 parser.expect_operator("->")?;
                 let to = parser.expect_ident()?;
-                let transition = TransitionDefinition::new(
-                    smql_ast::machine::TransitionSource::State(from),
-                    to,
-                );
+                let transition =
+                    TransitionDefinition::new(smql_ast::machine::TransitionSource::State(from), to);
                 operations.push(AlterOperation::AddTransition(transition));
             } else if parser.try_keyword("DATA") {
                 let field = crate::machine::parse_data_field_from_alter(parser)?;
@@ -205,7 +205,9 @@ pub fn parse_alter_machine(parser: &mut Parser) -> SmqlResult<Command> {
                 };
                 operations.push(AlterOperation::AddData { field, backfill });
             } else {
-                return Err(SmqlError::parse("Expected STATE, TRANSITION, or DATA after ADD"));
+                return Err(SmqlError::parse(
+                    "Expected STATE, TRANSITION, or DATA after ADD",
+                ));
             }
         } else if parser.try_keyword("REMOVE") {
             if parser.try_keyword("STATE") {
@@ -223,7 +225,9 @@ pub fn parse_alter_machine(parser: &mut Parser) -> SmqlResult<Command> {
                 let field = parser.expect_ident()?;
                 operations.push(AlterOperation::RemoveData(field));
             } else {
-                return Err(SmqlError::parse("Expected STATE, TRANSITION, or DATA after REMOVE"));
+                return Err(SmqlError::parse(
+                    "Expected STATE, TRANSITION, or DATA after REMOVE",
+                ));
             }
         } else if parser.try_keyword("BACKFILL") {
             let field = parser.expect_ident()?;
@@ -235,5 +239,8 @@ pub fn parse_alter_machine(parser: &mut Parser) -> SmqlResult<Command> {
         }
     }
 
-    Ok(Command::AlterMachine(AlterMachineCommand { machine, operations }))
+    Ok(Command::AlterMachine(AlterMachineCommand {
+        machine,
+        operations,
+    }))
 }

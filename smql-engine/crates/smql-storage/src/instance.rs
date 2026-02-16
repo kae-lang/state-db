@@ -142,22 +142,24 @@ impl FilterPredicate {
         match self {
             FilterPredicate::Eq(field, val) => data.get(field).map_or(false, |v| v == val),
             FilterPredicate::Ne(field, val) => data.get(field).map_or(true, |v| v != val),
-            FilterPredicate::Gt(field, val) => {
-                data.get(field).map_or(false, |v| compare_values(v, val) == Some(std::cmp::Ordering::Greater))
-            }
-            FilterPredicate::Gte(field, val) => {
-                data.get(field).map_or(false, |v| {
-                    matches!(compare_values(v, val), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
-                })
-            }
-            FilterPredicate::Lt(field, val) => {
-                data.get(field).map_or(false, |v| compare_values(v, val) == Some(std::cmp::Ordering::Less))
-            }
-            FilterPredicate::Lte(field, val) => {
-                data.get(field).map_or(false, |v| {
-                    matches!(compare_values(v, val), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
-                })
-            }
+            FilterPredicate::Gt(field, val) => data.get(field).map_or(false, |v| {
+                compare_values(v, val) == Some(std::cmp::Ordering::Greater)
+            }),
+            FilterPredicate::Gte(field, val) => data.get(field).map_or(false, |v| {
+                matches!(
+                    compare_values(v, val),
+                    Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                )
+            }),
+            FilterPredicate::Lt(field, val) => data.get(field).map_or(false, |v| {
+                compare_values(v, val) == Some(std::cmp::Ordering::Less)
+            }),
+            FilterPredicate::Lte(field, val) => data.get(field).map_or(false, |v| {
+                matches!(
+                    compare_values(v, val),
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                )
+            }),
             FilterPredicate::IsNull(field) => {
                 data.get(field).map_or(true, |v| matches!(v, Value::Null))
             }

@@ -53,9 +53,7 @@ fn generate_field_enum(name: &str, variants: &[String]) -> String {
 
 fn generate_state_enum(def: &MachineDefinition) -> String {
     let mut out = String::new();
-    out.push_str(
-        "    #[derive(Debug, Clone, PartialEq)]\n    pub enum State {\n",
-    );
+    out.push_str("    #[derive(Debug, Clone, PartialEq)]\n    pub enum State {\n");
     for state in &def.states {
         out.push_str(&format!("        {},\n", to_pascal_case(&state.name)));
     }
@@ -158,13 +156,8 @@ fn generate_machine_marker(def: &MachineDefinition) -> String {
         "        pub const MACHINE_NAME: &'static str = \"{}\";\n",
         def.name
     ));
-    out.push_str(&format!(
-        "        pub type Data = {};\n",
-        data_name
-    ));
-    out.push_str(&format!(
-        "        pub type MachineState = State;\n"
-    ));
+    out.push_str(&format!("        pub type Data = {};\n", data_name));
+    out.push_str(&format!("        pub type MachineState = State;\n"));
     out.push_str("    }\n");
     out
 }

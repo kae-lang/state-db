@@ -65,199 +65,185 @@ impl Engine {
         machine_def: &MachineDefinition,
         op: &AlterOperation,
     ) -> SmqlResult<()> {
-            match op {
-                AlterOperation::AddState(name) => {
-                    if machine_def.states.iter().any(|s| s.name == *name) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "State '{}' already exists in machine '{}'",
-                                name, machine_def.name
-                            ),
-                            hint: None,
-                        });
-                    }
-                }
-
-                AlterOperation::RemoveState { state, migrate_to } => {
-                    if !machine_def.states.iter().any(|s| s.name == *state) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "State '{}' does not exist in machine '{}'",
-                                state, machine_def.name
-                            ),
-                            hint: None,
-                        });
-                    }
-                    if !machine_def.states.iter().any(|s| s.name == *migrate_to) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Migration target state '{}' does not exist in machine '{}'",
-                                migrate_to, machine_def.name
-                            ),
-                            hint: None,
-                        });
-                    }
-                    if *state == machine_def.initial_state {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Cannot remove initial state '{}' from machine '{}'",
-                                state, machine_def.name
-                            ),
-                            hint: Some("Change the initial state first".to_string()),
-                        });
-                    }
-                    if *state == *migrate_to {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Cannot migrate state '{}' to itself",
-                                state
-                            ),
-                            hint: None,
-                        });
-                    }
-                }
-
-                AlterOperation::AddTransition(t) => {
-                    let from_name = match &t.from {
-                        TransitionSource::State(s) => Some(s.as_str()),
-                        TransitionSource::Any { .. } => None,
-                        TransitionSource::Group(_) => None,
-                    };
-                    if let Some(from) = from_name {
-                        if !machine_def.states.iter().any(|s| s.name == from) {
-                            return Err(SmqlError::ValidationError {
-                                field: None,
-                                message: format!(
-                                    "Transition source state '{}' does not exist",
-                                    from
-                                ),
-                                hint: None,
-                            });
-                        }
-                    }
-                    if !machine_def.states.iter().any(|s| s.name == t.to) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Transition target state '{}' does not exist",
-                                t.to
-                            ),
-                            hint: None,
-                        });
-                    }
-                }
-
-                AlterOperation::RemoveTransition { from, to } => {
-                    let exists = machine_def.transitions.iter().any(|t| {
-                        t.to == *to
-                            && match &t.from {
-                                TransitionSource::State(s) => s == from,
-                                _ => false,
-                            }
+        match op {
+            AlterOperation::AddState(name) => {
+                if machine_def.states.iter().any(|s| s.name == *name) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "State '{}' already exists in machine '{}'",
+                            name, machine_def.name
+                        ),
+                        hint: None,
                     });
-                    if !exists {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "No transition from '{}' to '{}' exists",
-                                from, to
-                            ),
-                            hint: None,
-                        });
-                    }
-                }
-
-                AlterOperation::ModifyTransition(t) => {
-                    let from_name = match &t.from {
-                        TransitionSource::State(s) => s.clone(),
-                        TransitionSource::Any { .. } => "ANY".to_string(),
-                        TransitionSource::Group(g) => g.clone(),
-                    };
-                    let exists = machine_def.transitions.iter().any(|existing| {
-                        existing.to == t.to
-                            && match (&existing.from, &t.from) {
-                                (TransitionSource::State(a), TransitionSource::State(b)) => a == b,
-                                (TransitionSource::Any { .. }, TransitionSource::Any { .. }) => true,
-                                _ => false,
-                            }
-                    });
-                    if !exists {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "No transition from '{}' to '{}' exists to modify",
-                                from_name, t.to
-                            ),
-                            hint: None,
-                        });
-                    }
-                }
-
-                AlterOperation::AddData { field, backfill } => {
-                    if machine_def.data.iter().any(|d| d.name == field.name) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Data field '{}' already exists in machine '{}'",
-                                field.name, machine_def.name
-                            ),
-                            hint: None,
-                        });
-                    }
-                    // Warn if required and no default or backfill
-                    let is_required = field
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, Constraint::Required));
-                    let has_default = field
-                        .constraints
-                        .iter()
-                        .any(|c| matches!(c, Constraint::Default(_)));
-                    if is_required && !has_default && backfill.is_none() {
-                        return Err(SmqlError::ValidationError {
-                            field: Some(field.name.clone()),
-                            message: format!(
-                                "Adding REQUIRED field '{}' without DEFAULT or BACKFILL expression",
-                                field.name
-                            ),
-                            hint: Some(
-                                "Add a DEFAULT value or BACKFILL expression".to_string(),
-                            ),
-                        });
-                    }
-                }
-
-                AlterOperation::RemoveData(name) => {
-                    if !machine_def.data.iter().any(|d| d.name == *name) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Data field '{}' does not exist in machine '{}'",
-                                name, machine_def.name
-                            ),
-                            hint: None,
-                        });
-                    }
-                }
-
-                AlterOperation::Backfill { field, .. } => {
-                    if !machine_def.data.iter().any(|d| d.name == *field) {
-                        return Err(SmqlError::ValidationError {
-                            field: None,
-                            message: format!(
-                                "Data field '{}' does not exist in machine '{}'",
-                                field, machine_def.name
-                            ),
-                            hint: Some("Add the field first with ADD DATA".to_string()),
-                        });
-                    }
                 }
             }
+
+            AlterOperation::RemoveState { state, migrate_to } => {
+                if !machine_def.states.iter().any(|s| s.name == *state) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "State '{}' does not exist in machine '{}'",
+                            state, machine_def.name
+                        ),
+                        hint: None,
+                    });
+                }
+                if !machine_def.states.iter().any(|s| s.name == *migrate_to) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "Migration target state '{}' does not exist in machine '{}'",
+                            migrate_to, machine_def.name
+                        ),
+                        hint: None,
+                    });
+                }
+                if *state == machine_def.initial_state {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "Cannot remove initial state '{}' from machine '{}'",
+                            state, machine_def.name
+                        ),
+                        hint: Some("Change the initial state first".to_string()),
+                    });
+                }
+                if *state == *migrate_to {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!("Cannot migrate state '{}' to itself", state),
+                        hint: None,
+                    });
+                }
+            }
+
+            AlterOperation::AddTransition(t) => {
+                let from_name = match &t.from {
+                    TransitionSource::State(s) => Some(s.as_str()),
+                    TransitionSource::Any { .. } => None,
+                    TransitionSource::Group(_) => None,
+                };
+                if let Some(from) = from_name {
+                    if !machine_def.states.iter().any(|s| s.name == from) {
+                        return Err(SmqlError::ValidationError {
+                            field: None,
+                            message: format!("Transition source state '{}' does not exist", from),
+                            hint: None,
+                        });
+                    }
+                }
+                if !machine_def.states.iter().any(|s| s.name == t.to) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!("Transition target state '{}' does not exist", t.to),
+                        hint: None,
+                    });
+                }
+            }
+
+            AlterOperation::RemoveTransition { from, to } => {
+                let exists = machine_def.transitions.iter().any(|t| {
+                    t.to == *to
+                        && match &t.from {
+                            TransitionSource::State(s) => s == from,
+                            _ => false,
+                        }
+                });
+                if !exists {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!("No transition from '{}' to '{}' exists", from, to),
+                        hint: None,
+                    });
+                }
+            }
+
+            AlterOperation::ModifyTransition(t) => {
+                let from_name = match &t.from {
+                    TransitionSource::State(s) => s.clone(),
+                    TransitionSource::Any { .. } => "ANY".to_string(),
+                    TransitionSource::Group(g) => g.clone(),
+                };
+                let exists = machine_def.transitions.iter().any(|existing| {
+                    existing.to == t.to
+                        && match (&existing.from, &t.from) {
+                            (TransitionSource::State(a), TransitionSource::State(b)) => a == b,
+                            (TransitionSource::Any { .. }, TransitionSource::Any { .. }) => true,
+                            _ => false,
+                        }
+                });
+                if !exists {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "No transition from '{}' to '{}' exists to modify",
+                            from_name, t.to
+                        ),
+                        hint: None,
+                    });
+                }
+            }
+
+            AlterOperation::AddData { field, backfill } => {
+                if machine_def.data.iter().any(|d| d.name == field.name) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "Data field '{}' already exists in machine '{}'",
+                            field.name, machine_def.name
+                        ),
+                        hint: None,
+                    });
+                }
+                // Warn if required and no default or backfill
+                let is_required = field
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c, Constraint::Required));
+                let has_default = field
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c, Constraint::Default(_)));
+                if is_required && !has_default && backfill.is_none() {
+                    return Err(SmqlError::ValidationError {
+                        field: Some(field.name.clone()),
+                        message: format!(
+                            "Adding REQUIRED field '{}' without DEFAULT or BACKFILL expression",
+                            field.name
+                        ),
+                        hint: Some("Add a DEFAULT value or BACKFILL expression".to_string()),
+                    });
+                }
+            }
+
+            AlterOperation::RemoveData(name) => {
+                if !machine_def.data.iter().any(|d| d.name == *name) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "Data field '{}' does not exist in machine '{}'",
+                            name, machine_def.name
+                        ),
+                        hint: None,
+                    });
+                }
+            }
+
+            AlterOperation::Backfill { field, .. } => {
+                if !machine_def.data.iter().any(|d| d.name == *field) {
+                    return Err(SmqlError::ValidationError {
+                        field: None,
+                        message: format!(
+                            "Data field '{}' does not exist in machine '{}'",
+                            field, machine_def.name
+                        ),
+                        hint: Some("Add the field first with ADD DATA".to_string()),
+                    });
+                }
+            }
+        }
 
         Ok(())
     }
@@ -360,10 +346,7 @@ impl Engine {
 
                 // Backfill existing instances if expression provided
                 if let Some(backfill_expr) = backfill {
-                    let ctx = EvalContext::new(
-                        std::collections::HashMap::new(),
-                        String::new(),
-                    );
+                    let ctx = EvalContext::new(std::collections::HashMap::new(), String::new());
                     let value = eval_expr(backfill_expr, &ctx)?;
                     let mutations = vec![Mutation::SetField(field.name.clone(), value)];
                     let count = self
@@ -425,10 +408,7 @@ impl Engine {
             }
 
             AlterOperation::Backfill { field, value } => {
-                let ctx = EvalContext::new(
-                    std::collections::HashMap::new(),
-                    String::new(),
-                );
+                let ctx = EvalContext::new(std::collections::HashMap::new(), String::new());
                 let val = eval_expr(value, &ctx)?;
                 let mutations = vec![Mutation::SetField(field.clone(), val)];
                 let count = self

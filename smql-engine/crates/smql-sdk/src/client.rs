@@ -61,9 +61,10 @@ impl SmqlClient {
             .await?;
 
         let status = resp.status();
-        let body: ExecuteResponse = resp.json().await.map_err(|e| {
-            SdkError::Deserialize(format!("Failed to parse response: {}", e))
-        })?;
+        let body: ExecuteResponse = resp
+            .json()
+            .await
+            .map_err(|e| SdkError::Deserialize(format!("Failed to parse response: {}", e)))?;
 
         if !body.success {
             let msg = body.error.unwrap_or_default();
@@ -98,9 +99,9 @@ impl SmqlClient {
     ) -> SdkResult<InstanceResponse> {
         let smql = smql_fmt::format_spawn(machine, &data);
         let resp = self.execute(&smql).await?;
-        let result = resp.result.ok_or_else(|| {
-            SdkError::Deserialize("Missing result in spawn response".to_string())
-        })?;
+        let result = resp
+            .result
+            .ok_or_else(|| SdkError::Deserialize("Missing result in spawn response".to_string()))?;
         serde_json::from_value(result).map_err(|e| SdkError::Deserialize(e.to_string()))
     }
 
@@ -150,8 +151,7 @@ impl SmqlClient {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            let body: serde_json::Value =
-                serde_json::from_str(&body_text).unwrap_or_default();
+            let body: serde_json::Value = serde_json::from_str(&body_text).unwrap_or_default();
             let msg = body["error"]
                 .as_str()
                 .map(String::from)

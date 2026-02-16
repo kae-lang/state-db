@@ -47,12 +47,26 @@ pub struct HookContext {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedAction {
-    Notify { target: Value, event: String },
+    Notify {
+        target: Value,
+        event: String,
+    },
     Log(String),
-    Emit { event: String, payload: Option<Value> },
-    Webhook { url: String, payload: Option<Value> },
-    SpawnChild { machine: String, data: Vec<(String, Value)> },
-    SignalParent { target_state: String },
+    Emit {
+        event: String,
+        payload: Option<Value>,
+    },
+    Webhook {
+        url: String,
+        payload: Option<Value>,
+    },
+    SpawnChild {
+        machine: String,
+        data: Vec<(String, Value)>,
+    },
+    SignalParent {
+        target_state: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -449,7 +463,9 @@ mod tests {
     async fn execute_log_action() {
         let (exec, _bus) = make_executor();
         let ctx = test_ctx();
-        let actions = vec![ResolvedAction::Log("Transitioning {instance_id}".to_string())];
+        let actions = vec![ResolvedAction::Log(
+            "Transitioning {instance_id}".to_string(),
+        )];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_ok());
     }
@@ -554,12 +570,7 @@ mod tests {
         let resolved = vec![vec![ResolvedAction::Log("checking...".to_string())]];
 
         let result = exec
-            .fire_hooks(
-                &hooks,
-                &HookTrigger::BeforeEachTransition,
-                &ctx,
-                &resolved,
-            )
+            .fire_hooks(&hooks, &HookTrigger::BeforeEachTransition, &ctx, &resolved)
             .await;
         assert!(result.is_ok());
     }
@@ -615,7 +626,10 @@ mod tests {
 
     #[test]
     fn trigger_matches_on_spawn() {
-        assert!(trigger_matches(&HookTrigger::OnSpawn, &HookTrigger::OnSpawn));
+        assert!(trigger_matches(
+            &HookTrigger::OnSpawn,
+            &HookTrigger::OnSpawn
+        ));
         assert!(!trigger_matches(
             &HookTrigger::OnSpawn,
             &HookTrigger::AfterEachTransition,
@@ -769,14 +783,12 @@ mod tests {
 
         // Fire as AfterEachTransition — the error should be swallowed (fire-and-forget)
         let result = exec
-            .fire_hooks(
-                &hooks,
-                &HookTrigger::AfterEachTransition,
-                &ctx,
-                &resolved,
-            )
+            .fire_hooks(&hooks, &HookTrigger::AfterEachTransition, &ctx, &resolved)
             .await;
-        assert!(result.is_ok(), "Non-BEFORE hook errors should not propagate");
+        assert!(
+            result.is_ok(),
+            "Non-BEFORE hook errors should not propagate"
+        );
     }
 
     #[tokio::test]
@@ -799,12 +811,7 @@ mod tests {
 
         // Fire as BeforeEachTransition — the error SHOULD propagate
         let result = exec
-            .fire_hooks(
-                &hooks,
-                &HookTrigger::BeforeEachTransition,
-                &ctx,
-                &resolved,
-            )
+            .fire_hooks(&hooks, &HookTrigger::BeforeEachTransition, &ctx, &resolved)
             .await;
         assert!(result.is_err(), "BEFORE hook errors should propagate");
     }
@@ -849,10 +856,10 @@ mod tests {
             child_instance_id: &str,
             target_state: &str,
         ) -> Result<(), HookError> {
-            self.signal_calls.lock().unwrap().push((
-                child_instance_id.to_string(),
-                target_state.to_string(),
-            ));
+            self.signal_calls
+                .lock()
+                .unwrap()
+                .push((child_instance_id.to_string(), target_state.to_string()));
             Ok(())
         }
     }
@@ -861,7 +868,10 @@ mod tests {
     async fn spawn_child_with_callback_calls_callback_and_passes_data() {
         let bus = Arc::new(EventBus::new(16));
         let cb = Arc::new(RecordingCallback::new());
-        let exec = HookExecutor::with_callback(Arc::clone(&bus), Arc::clone(&cb) as Arc<dyn EngineCallback>);
+        let exec = HookExecutor::with_callback(
+            Arc::clone(&bus),
+            Arc::clone(&cb) as Arc<dyn EngineCallback>,
+        );
         let ctx = test_ctx();
 
         let data = vec![
@@ -888,7 +898,10 @@ mod tests {
     async fn signal_parent_with_callback_calls_callback() {
         let bus = Arc::new(EventBus::new(16));
         let cb = Arc::new(RecordingCallback::new());
-        let exec = HookExecutor::with_callback(Arc::clone(&bus), Arc::clone(&cb) as Arc<dyn EngineCallback>);
+        let exec = HookExecutor::with_callback(
+            Arc::clone(&bus),
+            Arc::clone(&cb) as Arc<dyn EngineCallback>,
+        );
         let ctx = test_ctx();
 
         let actions = vec![ResolvedAction::SignalParent {
@@ -907,7 +920,10 @@ mod tests {
     async fn multiple_hooks_same_trigger_all_fire() {
         let bus = Arc::new(EventBus::new(64));
         let cb = Arc::new(RecordingCallback::new());
-        let exec = HookExecutor::with_callback(Arc::clone(&bus), Arc::clone(&cb) as Arc<dyn EngineCallback>);
+        let exec = HookExecutor::with_callback(
+            Arc::clone(&bus),
+            Arc::clone(&cb) as Arc<dyn EngineCallback>,
+        );
         let ctx = test_ctx();
         let mut rx = bus.subscribe();
 
@@ -934,14 +950,9 @@ mod tests {
             }],
         ];
 
-        exec.fire_hooks(
-            &hooks,
-            &HookTrigger::AfterEachTransition,
-            &ctx,
-            &resolved,
-        )
-        .await
-        .unwrap();
+        exec.fire_hooks(&hooks, &HookTrigger::AfterEachTransition, &ctx, &resolved)
+            .await
+            .unwrap();
 
         // Both hooks should have emitted events
         let e1 = rx.recv().await.unwrap();
@@ -976,12 +987,7 @@ mod tests {
 
         // Should not panic — second hook gets empty actions via unwrap_or_default
         let result = exec
-            .fire_hooks(
-                &hooks,
-                &HookTrigger::AfterEachTransition,
-                &ctx,
-                &resolved,
-            )
+            .fire_hooks(&hooks, &HookTrigger::AfterEachTransition, &ctx, &resolved)
             .await;
         assert!(result.is_ok());
 
@@ -1091,12 +1097,7 @@ mod tests {
         }]];
 
         let result = exec
-            .fire_hooks(
-                &hooks,
-                &HookTrigger::BeforeEachTransition,
-                &ctx,
-                &resolved,
-            )
+            .fire_hooks(&hooks, &HookTrigger::BeforeEachTransition, &ctx, &resolved)
             .await;
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();

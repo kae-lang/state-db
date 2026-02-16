@@ -45,10 +45,7 @@ pub enum SmqlError {
     },
 
     #[error("Storage error: {message}")]
-    StorageError {
-        message: String,
-        retryable: bool,
-    },
+    StorageError { message: String, retryable: bool },
 
     #[error("Timeout error: {message}")]
     TimeoutError {
@@ -58,10 +55,7 @@ pub enum SmqlError {
     },
 
     #[error("Not found: {entity_type} '{id}'")]
-    NotFound {
-        entity_type: String,
-        id: String,
-    },
+    NotFound { entity_type: String, id: String },
 
     #[error("Conflict: {message}")]
     Conflict {
@@ -70,9 +64,7 @@ pub enum SmqlError {
     },
 
     #[error("Internal error: {message}")]
-    Internal {
-        message: String,
-    },
+    Internal { message: String },
 }
 
 impl SmqlError {

@@ -101,9 +101,18 @@ mod memory_storage_tests {
     #[tokio::test]
     async fn find_all_in_machine() {
         let storage = MemoryStorage::new();
-        storage.store_instance(&make_instance("Order", "open")).await.unwrap();
-        storage.store_instance(&make_instance("Order", "closed")).await.unwrap();
-        storage.store_instance(&make_instance("Ticket", "open")).await.unwrap();
+        storage
+            .store_instance(&make_instance("Order", "open"))
+            .await
+            .unwrap();
+        storage
+            .store_instance(&make_instance("Order", "closed"))
+            .await
+            .unwrap();
+        storage
+            .store_instance(&make_instance("Ticket", "open"))
+            .await
+            .unwrap();
 
         let filter = Filter::default();
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -161,7 +170,10 @@ mod memory_storage_tests {
         storage.update_instance(&id, 1, &mutations).await.unwrap();
 
         let updated = storage.get_instance(&id).await.unwrap().unwrap();
-        assert_eq!(updated.data.get("name"), Some(&Value::Text("updated".to_string())));
+        assert_eq!(
+            updated.data.get("name"),
+            Some(&Value::Text("updated".to_string()))
+        );
         assert_eq!(updated.data.get("new_field"), Some(&Value::Int(42)));
         assert_eq!(updated.version, 2);
     }
@@ -187,7 +199,10 @@ mod memory_storage_tests {
         storage.store_instance(&inst).await.unwrap();
 
         let trail = make_trail_entry(&inst, "open", "processing", 1);
-        let mutations = vec![Mutation::SetField("assigned".to_string(), Value::Bool(true))];
+        let mutations = vec![Mutation::SetField(
+            "assigned".to_string(),
+            Value::Bool(true),
+        )];
 
         storage
             .transition_instance(&id, 1, "processing", &mutations, trail)
@@ -227,7 +242,10 @@ mod memory_storage_tests {
             state: Some("closed".to_string()),
             ..Default::default()
         };
-        let closed = storage.find_instances("Order", &closed_filter).await.unwrap();
+        let closed = storage
+            .find_instances("Order", &closed_filter)
+            .await
+            .unwrap();
         assert_eq!(closed.len(), 1);
     }
 
@@ -272,10 +290,22 @@ mod memory_storage_tests {
     #[tokio::test]
     async fn count_by_state() {
         let storage = MemoryStorage::new();
-        storage.store_instance(&make_instance("Order", "open")).await.unwrap();
-        storage.store_instance(&make_instance("Order", "open")).await.unwrap();
-        storage.store_instance(&make_instance("Order", "closed")).await.unwrap();
-        storage.store_instance(&make_instance("Ticket", "open")).await.unwrap();
+        storage
+            .store_instance(&make_instance("Order", "open"))
+            .await
+            .unwrap();
+        storage
+            .store_instance(&make_instance("Order", "open"))
+            .await
+            .unwrap();
+        storage
+            .store_instance(&make_instance("Order", "closed"))
+            .await
+            .unwrap();
+        storage
+            .store_instance(&make_instance("Ticket", "open"))
+            .await
+            .unwrap();
 
         let counts = storage.count_by_state("Order").await.unwrap();
         assert_eq!(counts.get("open"), Some(&2));
@@ -412,11 +442,17 @@ mod memory_storage_tests {
     async fn append_to_list_mutation() {
         let storage = MemoryStorage::new();
         let mut inst = make_instance("Order", "open");
-        inst.data.insert("tags".to_string(), Value::List(vec![Value::Text("a".to_string())]));
+        inst.data.insert(
+            "tags".to_string(),
+            Value::List(vec![Value::Text("a".to_string())]),
+        );
         let id = inst.id.clone();
         storage.store_instance(&inst).await.unwrap();
 
-        let mutations = vec![Mutation::AppendToList("tags".to_string(), Value::Text("b".to_string()))];
+        let mutations = vec![Mutation::AppendToList(
+            "tags".to_string(),
+            Value::Text("b".to_string()),
+        )];
         storage.update_instance(&id, 1, &mutations).await.unwrap();
 
         let updated = storage.get_instance(&id).await.unwrap().unwrap();
@@ -490,7 +526,9 @@ mod memory_storage_tests {
         inst1.data.insert("notes".to_string(), Value::Null);
 
         let mut inst2 = make_instance("Order", "open");
-        inst2.data.insert("notes".to_string(), Value::Text("hello".to_string()));
+        inst2
+            .data
+            .insert("notes".to_string(), Value::Text("hello".to_string()));
 
         storage.store_instance(&inst1).await.unwrap();
         storage.store_instance(&inst2).await.unwrap();
@@ -578,11 +616,17 @@ mod memory_storage_tests {
         storage.store_instance(&child1).await.unwrap();
         storage.store_instance(&child2).await.unwrap();
 
-        let line_items = storage.find_children(&parent_id, Some("LineItem")).await.unwrap();
+        let line_items = storage
+            .find_children(&parent_id, Some("LineItem"))
+            .await
+            .unwrap();
         assert_eq!(line_items.len(), 1);
         assert_eq!(line_items[0].machine, "LineItem");
 
-        let shipments = storage.find_children(&parent_id, Some("Shipment")).await.unwrap();
+        let shipments = storage
+            .find_children(&parent_id, Some("Shipment"))
+            .await
+            .unwrap();
         assert_eq!(shipments.len(), 1);
         assert_eq!(shipments[0].machine, "Shipment");
     }
@@ -647,11 +691,17 @@ mod memory_storage_tests {
         let child_id = child.id.clone();
         storage.store_instance(&child).await.unwrap();
 
-        assert_eq!(storage.find_children(&parent_id, None).await.unwrap().len(), 1);
+        assert_eq!(
+            storage.find_children(&parent_id, None).await.unwrap().len(),
+            1
+        );
 
         storage.delete_instance(&child_id).await.unwrap();
 
-        assert_eq!(storage.find_children(&parent_id, None).await.unwrap().len(), 0);
+        assert_eq!(
+            storage.find_children(&parent_id, None).await.unwrap().len(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -750,7 +800,9 @@ mod memory_storage_tests {
     async fn filter_is_not_null() {
         let storage = MemoryStorage::new();
         let mut inst1 = make_instance("Order", "open");
-        inst1.data.insert("assignee".to_string(), Value::Text("alice".to_string()));
+        inst1
+            .data
+            .insert("assignee".to_string(), Value::Text("alice".to_string()));
         let mut inst2 = make_instance("Order", "open");
         inst2.data.insert("assignee".to_string(), Value::Null);
         let inst3 = make_instance("Order", "open"); // no assignee field at all
@@ -1024,7 +1076,10 @@ mod memory_storage_tests {
     async fn timer_remove_nonexistent_is_ok() {
         let storage = MemoryStorage::new();
         // Should not error
-        storage.remove_timer("nonexistent", "whatever").await.unwrap();
+        storage
+            .remove_timer("nonexistent", "whatever")
+            .await
+            .unwrap();
         storage.remove_all_timers("nonexistent").await.unwrap();
     }
 }

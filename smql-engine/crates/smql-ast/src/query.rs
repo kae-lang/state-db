@@ -79,10 +79,7 @@ pub struct MeasureClause {
 pub enum GroupByClause {
     Field(String),
     State,
-    TimeBucket {
-        field: String,
-        interval: String,
-    },
+    TimeBucket { field: String, interval: String },
 }
 
 /// TRAIL query — retrieve transition history.

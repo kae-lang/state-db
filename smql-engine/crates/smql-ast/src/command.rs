@@ -26,9 +26,17 @@ impl fmt::Display for Command {
         match self {
             Command::DefineMachine(m) => write!(f, "DEFINE {}", m),
             Command::Spawn(s) => write!(f, "SPAWN {}", s.machine),
-            Command::Transition(t) => write!(f, "TRANSITION {} {} TO {}", t.machine, t.instance_id, t.to_state),
+            Command::Transition(t) => write!(
+                f,
+                "TRANSITION {} {} TO {}",
+                t.machine, t.instance_id, t.to_state
+            ),
             Command::TryTransition(t) => {
-                write!(f, "TRY TRANSITION {} {} TO {}", t.machine, t.instance_id, t.to_state)
+                write!(
+                    f,
+                    "TRY TRANSITION {} {} TO {}",
+                    t.machine, t.instance_id, t.to_state
+                )
             }
             Command::BatchTransition(b) => {
                 write!(f, "TRANSITION ALL {} TO {}", b.machine, b.to_state)
@@ -136,17 +144,11 @@ pub enum AlterOperation {
     /// ADD STATE state_name
     AddState(String),
     /// REMOVE STATE state_name MIGRATE TO target_state
-    RemoveState {
-        state: String,
-        migrate_to: String,
-    },
+    RemoveState { state: String, migrate_to: String },
     /// ADD TRANSITION from -> to { ... }
     AddTransition(crate::machine::TransitionDefinition),
     /// REMOVE TRANSITION from -> to
-    RemoveTransition {
-        from: String,
-        to: String,
-    },
+    RemoveTransition { from: String, to: String },
     /// MODIFY TRANSITION from -> to { ... }
     ModifyTransition(crate::machine::TransitionDefinition),
     /// ADD DATA field_definition
@@ -157,8 +159,5 @@ pub enum AlterOperation {
     /// REMOVE DATA field_name
     RemoveData(String),
     /// BACKFILL field = expression
-    Backfill {
-        field: String,
-        value: Expression,
-    },
+    Backfill { field: String, value: Expression },
 }

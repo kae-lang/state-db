@@ -197,7 +197,9 @@ mod validation_tests {
             "open".into(),
         ));
         let warnings = catalog.register(m).unwrap();
-        assert!(warnings.iter().any(|w| w.message.contains("terminal state")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.message.contains("terminal state")));
     }
 
     #[test]
@@ -271,7 +273,9 @@ mod validation_tests {
             constraints: vec![],
         });
         let warnings = catalog.register(m).unwrap();
-        assert!(warnings.iter().any(|w| w.message.contains("UnknownMachine")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.message.contains("UnknownMachine")));
     }
 
     #[test]

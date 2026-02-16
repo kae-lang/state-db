@@ -20,13 +20,19 @@ impl SmqlMetrics {
         let registry = Registry::new();
 
         let instances_total = IntGaugeVec::new(
-            Opts::new("smql_instances_total", "Number of active instances by machine and state"),
+            Opts::new(
+                "smql_instances_total",
+                "Number of active instances by machine and state",
+            ),
             &["machine", "state"],
         )
         .unwrap();
 
         let transitions_total = IntCounterVec::new(
-            Opts::new("smql_transitions_total", "Total transitions by machine, from, to"),
+            Opts::new(
+                "smql_transitions_total",
+                "Total transitions by machine, from, to",
+            ),
             &["machine", "from", "to"],
         )
         .unwrap();
@@ -41,22 +47,25 @@ impl SmqlMetrics {
         .unwrap();
 
         let guard_failures_total = IntCounterVec::new(
-            Opts::new("smql_guard_failures_total", "Total guard failures by machine"),
+            Opts::new(
+                "smql_guard_failures_total",
+                "Total guard failures by machine",
+            ),
             &["machine"],
         )
         .unwrap();
 
         let timeout_fires_total = IntCounterVec::new(
-            Opts::new("smql_timeout_fires_total", "Total timeout transitions by machine and state"),
+            Opts::new(
+                "smql_timeout_fires_total",
+                "Total timeout transitions by machine and state",
+            ),
             &["machine", "state"],
         )
         .unwrap();
 
         let query_duration_seconds = HistogramVec::new(
-            HistogramOpts::new(
-                "smql_query_duration_seconds",
-                "Query duration in seconds",
-            ),
+            HistogramOpts::new("smql_query_duration_seconds", "Query duration in seconds"),
             &["query_type"],
         )
         .unwrap();
@@ -67,12 +76,24 @@ impl SmqlMetrics {
         )
         .unwrap();
 
-        registry.register(Box::new(instances_total.clone())).unwrap();
-        registry.register(Box::new(transitions_total.clone())).unwrap();
-        registry.register(Box::new(transition_duration_seconds.clone())).unwrap();
-        registry.register(Box::new(guard_failures_total.clone())).unwrap();
-        registry.register(Box::new(timeout_fires_total.clone())).unwrap();
-        registry.register(Box::new(query_duration_seconds.clone())).unwrap();
+        registry
+            .register(Box::new(instances_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(transitions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(transition_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(guard_failures_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(timeout_fires_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(query_duration_seconds.clone()))
+            .unwrap();
         registry.register(Box::new(spawns_total.clone())).unwrap();
 
         Self {

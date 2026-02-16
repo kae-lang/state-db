@@ -4,9 +4,8 @@ use futures_util::StreamExt;
 use tokio::sync::oneshot;
 use tokio_tungstenite::tungstenite::Message;
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// A WebSocket subscription to server events.
 pub struct Subscription {
@@ -69,7 +68,9 @@ impl Subscription {
             }
         });
 
-        SubscriptionHandle { cancel_tx: Some(cancel_tx) }
+        SubscriptionHandle {
+            cancel_tx: Some(cancel_tx),
+        }
     }
 }
 

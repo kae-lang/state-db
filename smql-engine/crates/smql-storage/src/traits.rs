@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use smql_ast::SmqlResult;
 use std::collections::HashMap;
 
-use crate::instance::{Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter};
+use crate::instance::{
+    Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter,
+};
 
 /// Pluggable storage backend trait.
 /// All storage implementations must be Send + Sync for concurrent access.
@@ -54,12 +56,20 @@ pub trait Storage: Send + Sync {
     async fn get_trail(&self, id: &InstanceId) -> SmqlResult<Vec<TrailEntry>>;
 
     /// Query trail entries across instances of a machine.
-    async fn query_trails(&self, machine: &str, filter: &TrailFilter) -> SmqlResult<Vec<TrailEntry>>;
+    async fn query_trails(
+        &self,
+        machine: &str,
+        filter: &TrailFilter,
+    ) -> SmqlResult<Vec<TrailEntry>>;
 
     // --- Parent-child composition operations ---
 
     /// Find child instances of a parent, optionally filtered by child machine type.
-    async fn find_children(&self, parent_id: &InstanceId, child_machine: Option<&str>) -> SmqlResult<Vec<Instance>>;
+    async fn find_children(
+        &self,
+        parent_id: &InstanceId,
+        child_machine: Option<&str>,
+    ) -> SmqlResult<Vec<Instance>>;
 
     /// Get the parent instance of a child (reads child's parent_id, then fetches parent).
     async fn get_parent(&self, child_id: &InstanceId) -> SmqlResult<Option<Instance>>;
@@ -79,11 +89,8 @@ pub trait Storage: Send + Sync {
     /// Apply mutations to all instances of a machine.
     /// Skips version checks (schema migration operation).
     /// Returns the number of updated instances.
-    async fn bulk_update_instances(
-        &self,
-        machine: &str,
-        mutations: &[Mutation],
-    ) -> SmqlResult<u64>;
+    async fn bulk_update_instances(&self, machine: &str, mutations: &[Mutation])
+        -> SmqlResult<u64>;
 
     // --- Timer persistence ---
 

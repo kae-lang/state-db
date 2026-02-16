@@ -23,23 +23,124 @@ pub enum TokenKind {
 
 /// All SMQL keywords (case-insensitive).
 const KEYWORDS: &[&str] = &[
-    "DEFINE", "MACHINE", "DATA", "STATES", "INITIAL", "STATE", "TERMINAL",
-    "TRANSITIONS", "TRANSITION", "GUARD", "ACTION", "TIMEOUT", "MUTATE",
-    "CHILDREN", "PARENT", "HOOKS", "ROLES", "SPAWN", "FIND", "GET",
-    "AGGREGATE", "TRAIL", "PATHS", "FUNNEL", "COMPARE", "WHERE", "SORT",
-    "LIMIT", "OFFSET", "GROUP", "BY", "MEASURE", "OF", "FROM", "TO",
-    "AS", "WITH", "MEMO", "THROUGH", "TRY", "BATCH", "ALTER", "ADD",
-    "REMOVE", "MODIFY", "BACKFILL", "MIGRATE", "ANY", "ALL", "EXCEPT",
-    "AND", "OR", "NOT", "IN", "IS", "SET", "NULL", "REQUIRED", "OPTIONAL",
-    "DEFAULT", "MAX", "MIN", "RANGE", "UNIQUE", "PATTERN", "ENUM", "REF",
-    "LIST", "MAP", "THEN", "ON", "BEFORE", "AFTER", "EACH", "ENTER",
-    "EXIT", "DWELL", "SIGNAL", "EMIT", "NOTIFY", "LOG", "WEBHOOK",
-    "CASCADE", "SUBSCRIBE", "DELIVER", "SEGMENT", "STUCK_IN",
-    "TIMEOUT_REMAINING", "HAS_VISITED", "NEVER_VISITED", "ALIVE",
-    "TERMINATED", "CONTAINS", "SELF", "ACTOR", "MONEY", "UUID", "TEXT",
-    "INT", "FLOAT", "BOOL", "DATE", "DATETIME", "DURATION", "BLOB",
-    "JSON", "TRUE", "FALSE", "ASC", "DESC", "COUNT", "SUM", "AVG",
-    "PERCENTILE", "NOW", "TODAY", "OR_STAY", "DELETED",
+    "DEFINE",
+    "MACHINE",
+    "DATA",
+    "STATES",
+    "INITIAL",
+    "STATE",
+    "TERMINAL",
+    "TRANSITIONS",
+    "TRANSITION",
+    "GUARD",
+    "ACTION",
+    "TIMEOUT",
+    "MUTATE",
+    "CHILDREN",
+    "PARENT",
+    "HOOKS",
+    "ROLES",
+    "SPAWN",
+    "FIND",
+    "GET",
+    "AGGREGATE",
+    "TRAIL",
+    "PATHS",
+    "FUNNEL",
+    "COMPARE",
+    "WHERE",
+    "SORT",
+    "LIMIT",
+    "OFFSET",
+    "GROUP",
+    "BY",
+    "MEASURE",
+    "OF",
+    "FROM",
+    "TO",
+    "AS",
+    "WITH",
+    "MEMO",
+    "THROUGH",
+    "TRY",
+    "BATCH",
+    "ALTER",
+    "ADD",
+    "REMOVE",
+    "MODIFY",
+    "BACKFILL",
+    "MIGRATE",
+    "ANY",
+    "ALL",
+    "EXCEPT",
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "IS",
+    "SET",
+    "NULL",
+    "REQUIRED",
+    "OPTIONAL",
+    "DEFAULT",
+    "MAX",
+    "MIN",
+    "RANGE",
+    "UNIQUE",
+    "PATTERN",
+    "ENUM",
+    "REF",
+    "LIST",
+    "MAP",
+    "THEN",
+    "ON",
+    "BEFORE",
+    "AFTER",
+    "EACH",
+    "ENTER",
+    "EXIT",
+    "DWELL",
+    "SIGNAL",
+    "EMIT",
+    "NOTIFY",
+    "LOG",
+    "WEBHOOK",
+    "CASCADE",
+    "SUBSCRIBE",
+    "DELIVER",
+    "SEGMENT",
+    "STUCK_IN",
+    "TIMEOUT_REMAINING",
+    "HAS_VISITED",
+    "NEVER_VISITED",
+    "ALIVE",
+    "TERMINATED",
+    "CONTAINS",
+    "SELF",
+    "ACTOR",
+    "MONEY",
+    "UUID",
+    "TEXT",
+    "INT",
+    "FLOAT",
+    "BOOL",
+    "DATE",
+    "DATETIME",
+    "DURATION",
+    "BLOB",
+    "JSON",
+    "TRUE",
+    "FALSE",
+    "ASC",
+    "DESC",
+    "COUNT",
+    "SUM",
+    "AVG",
+    "PERCENTILE",
+    "NOW",
+    "TODAY",
+    "OR_STAY",
+    "DELETED",
 ];
 
 /// Tokenize SMQL input into a token stream.
@@ -157,7 +258,9 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
         }
 
         // Numbers and duration literals
-        if chars[pos].is_ascii_digit() || (chars[pos] == '-' && pos + 1 < chars.len() && chars[pos + 1].is_ascii_digit()) {
+        if chars[pos].is_ascii_digit()
+            || (chars[pos] == '-' && pos + 1 < chars.len() && chars[pos + 1].is_ascii_digit())
+        {
             let negative = chars[pos] == '-';
             if negative {
                 pos += 1;
@@ -168,13 +271,22 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
             }
 
             // Check for duration suffix
-            if pos < chars.len() && (chars[pos] == 's' || chars[pos] == 'm' || chars[pos] == 'h' || chars[pos] == 'd') {
+            if pos < chars.len()
+                && (chars[pos] == 's'
+                    || chars[pos] == 'm'
+                    || chars[pos] == 'h'
+                    || chars[pos] == 'd')
+            {
                 // Check it's not part of an identifier
-                let next_after = if pos + 1 < chars.len() { chars[pos + 1] } else { ' ' };
+                let next_after = if pos + 1 < chars.len() {
+                    chars[pos + 1]
+                } else {
+                    ' '
+                };
                 if !next_after.is_alphanumeric() && next_after != '_' {
-                    let num: u64 = input[num_start..pos].parse().map_err(|_| {
-                        SmqlError::parse("Invalid number in duration")
-                    })?;
+                    let num: u64 = input[num_start..pos]
+                        .parse()
+                        .map_err(|_| SmqlError::parse("Invalid number in duration"))?;
                     let suffix = chars[pos];
                     pos += 1;
                     let seconds = match suffix {
@@ -195,13 +307,19 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
             }
 
             // Check for float
-            if pos < chars.len() && chars[pos] == '.' && pos + 1 < chars.len() && chars[pos + 1].is_ascii_digit() {
+            if pos < chars.len()
+                && chars[pos] == '.'
+                && pos + 1 < chars.len()
+                && chars[pos + 1].is_ascii_digit()
+            {
                 pos += 1;
                 while pos < chars.len() && chars[pos].is_ascii_digit() {
                     pos += 1;
                 }
                 let text = input[start..pos].to_string();
-                let val: f64 = text.parse().map_err(|_| SmqlError::parse("Invalid float literal"))?;
+                let val: f64 = text
+                    .parse()
+                    .map_err(|_| SmqlError::parse("Invalid float literal"))?;
                 tokens.push(Token {
                     kind: TokenKind::FloatLiteral(val),
                     text,
@@ -212,7 +330,9 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
 
             // Integer
             let text = input[start..pos].to_string();
-            let val: i64 = text.parse().map_err(|_| SmqlError::parse("Invalid integer literal"))?;
+            let val: i64 = text
+                .parse()
+                .map_err(|_| SmqlError::parse("Invalid integer literal"))?;
             tokens.push(Token {
                 kind: TokenKind::IntLiteral(val),
                 text,
@@ -300,8 +420,14 @@ mod tests {
     fn tokenize_string_literals() {
         let tokens = tokenize("\"hello world\" \"escape \\\"quote\\\"\"").unwrap();
         assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].kind, TokenKind::StringLiteral("hello world".into()));
-        assert_eq!(tokens[1].kind, TokenKind::StringLiteral("escape \"quote\"".into()));
+        assert_eq!(
+            tokens[0].kind,
+            TokenKind::StringLiteral("hello world".into())
+        );
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::StringLiteral("escape \"quote\"".into())
+        );
     }
 
     #[test]

@@ -18,8 +18,8 @@ pub struct CodeGenerator {
 impl CodeGenerator {
     /// Create a generator from raw SMQL source text.
     pub fn from_source(source: &str) -> CodegenResult<Self> {
-        let machines = smql_parser::parse_machines(source)
-            .map_err(|e| CodegenError::Parse(e.to_string()))?;
+        let machines =
+            smql_parser::parse_machines(source).map_err(|e| CodegenError::Parse(e.to_string()))?;
         if machines.is_empty() {
             return Err(CodegenError::NoMachines);
         }

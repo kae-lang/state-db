@@ -65,7 +65,11 @@ fn spawn_child_cmd(
 }
 
 fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-    TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
+    TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    )
 }
 
 fn transition_with(
@@ -74,7 +78,11 @@ fn transition_with(
     to_state: &str,
     data: Vec<(&str, Value)>,
 ) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
+    let mut cmd = TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    );
     cmd.with_data = data
         .into_iter()
         .map(|(k, v)| (k.to_string(), lit(v)))
@@ -83,7 +91,11 @@ fn transition_with(
 }
 
 fn cascade_transition(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
+    let mut cmd = TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    );
     cmd.cascade = true;
     cmd
 }
@@ -366,19 +378,36 @@ async fn paid_to_fulfilled_requires_all_items_confirmed() {
     let item2 = spawn_line_item(&engine, &order_id, "Widget B", 1, 4999).await;
 
     // draft → placed → paid
-    engine.transition(&transition_cmd("Order", &order_id, "placed")).await.unwrap();
-    engine.transition(&transition_cmd("Order", &order_id, "paid")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "placed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "paid"))
+        .await
+        .unwrap();
 
     // Try fulfilled with only one item confirmed — should fail
-    engine.transition(&transition_cmd("LineItem", &item1, "confirmed")).await.unwrap();
-    let result = engine.transition(&transition_cmd("Order", &order_id, "fulfilled")).await;
+    engine
+        .transition(&transition_cmd("LineItem", &item1, "confirmed"))
+        .await
+        .unwrap();
+    let result = engine
+        .transition(&transition_cmd("Order", &order_id, "fulfilled"))
+        .await;
     assert!(result.is_err(), "not all items confirmed yet");
 
     // Confirm second item
-    engine.transition(&transition_cmd("LineItem", &item2, "confirmed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("LineItem", &item2, "confirmed"))
+        .await
+        .unwrap();
 
     // Now fulfilled should succeed
-    let r = engine.transition(&transition_cmd("Order", &order_id, "fulfilled")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Order", &order_id, "fulfilled"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "fulfilled");
 }
 
@@ -389,10 +418,16 @@ async fn order_placed_to_paid() {
     let order_id = spawn_order(&engine).await;
     let _item = spawn_line_item(&engine, &order_id, "Widget", 1, 5000).await;
 
-    engine.transition(&transition_cmd("Order", &order_id, "placed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "placed"))
+        .await
+        .unwrap();
 
     // placed → paid has no guard in our simplified def, so it should work
-    let r = engine.transition(&transition_cmd("Order", &order_id, "paid")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Order", &order_id, "paid"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "paid");
 }
 
@@ -403,7 +438,10 @@ async fn order_trail() {
     let order_id = spawn_order(&engine).await;
     let _item = spawn_line_item(&engine, &order_id, "Widget", 1, 5000).await;
 
-    engine.transition(&transition_cmd("Order", &order_id, "placed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "placed"))
+        .await
+        .unwrap();
 
     let q = Query::Trail(TrailQuery {
         machine: Some("Order".into()),
@@ -426,7 +464,10 @@ async fn find_line_items_by_state() {
     let item1 = spawn_line_item(&engine, &order_id, "Widget A", 2, 2500).await;
     let _item2 = spawn_line_item(&engine, &order_id, "Widget B", 1, 4999).await;
 
-    engine.transition(&transition_cmd("LineItem", &item1, "confirmed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("LineItem", &item1, "confirmed"))
+        .await
+        .unwrap();
 
     // Find pending
     let q = Query::Find(FindQuery {
@@ -470,7 +511,10 @@ async fn aggregate_line_items() {
     let _item2 = spawn_line_item(&engine, &order_id, "Widget B", 1, 4999).await;
     let _item3 = spawn_line_item(&engine, &order_id, "Widget C", 5, 999).await;
 
-    engine.transition(&transition_cmd("LineItem", &item1, "confirmed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("LineItem", &item1, "confirmed"))
+        .await
+        .unwrap();
 
     let q = Query::Aggregate(AggregateQuery {
         machine: "LineItem".into(),
@@ -498,7 +542,10 @@ async fn multiple_orders_lifecycle() {
     // Order 1: draft → placed
     let order1 = spawn_order(&engine).await;
     let _item1 = spawn_line_item(&engine, &order1, "Laptop", 1, 99900).await;
-    engine.transition(&transition_cmd("Order", &order1, "placed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order1, "placed"))
+        .await
+        .unwrap();
 
     // Order 2: stays in draft
     let _order2 = spawn_order(&engine).await;
@@ -506,8 +553,14 @@ async fn multiple_orders_lifecycle() {
     // Order 3: draft → placed → cancelled
     let order3 = spawn_order(&engine).await;
     let _item3 = spawn_line_item(&engine, &order3, "Keyboard", 1, 7500).await;
-    engine.transition(&transition_cmd("Order", &order3, "placed")).await.unwrap();
-    engine.transition(&cascade_transition("Order", &order3, "cancelled")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order3, "placed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&cascade_transition("Order", &order3, "cancelled"))
+        .await
+        .unwrap();
 
     // FIND placed orders
     let q = Query::Find(FindQuery {
@@ -568,11 +621,17 @@ async fn spawn_shipment_child() {
     assert_eq!(r.to_state, "dispatched");
 
     // dispatched → in_transit
-    let r = engine.transition(&transition_cmd("Shipment", &ship_id, "in_transit")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Shipment", &ship_id, "in_transit"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "in_transit");
 
     // in_transit → delivered
-    let r = engine.transition(&transition_cmd("Shipment", &ship_id, "delivered")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Shipment", &ship_id, "delivered"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "delivered");
 }
 
@@ -610,7 +669,10 @@ async fn confirmed_item_cannot_be_cancelled() {
     let order_id = spawn_order(&engine).await;
     let item_id = spawn_line_item(&engine, &order_id, "Widget", 1, 5000).await;
 
-    engine.transition(&transition_cmd("LineItem", &item_id, "confirmed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("LineItem", &item_id, "confirmed"))
+        .await
+        .unwrap();
 
     let cmd = transition_cmd("LineItem", &item_id, "cancelled");
     let result = engine.transition(&cmd).await;
@@ -626,21 +688,42 @@ async fn full_order_fulfillment_flow() {
     let item2 = spawn_line_item(&engine, &order_id, "Widget B", 1, 4999).await;
 
     // draft → placed
-    engine.transition(&transition_cmd("Order", &order_id, "placed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "placed"))
+        .await
+        .unwrap();
     // placed → paid
-    engine.transition(&transition_cmd("Order", &order_id, "paid")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "paid"))
+        .await
+        .unwrap();
 
     // Confirm all items
-    engine.transition(&transition_cmd("LineItem", &item1, "confirmed")).await.unwrap();
-    engine.transition(&transition_cmd("LineItem", &item2, "confirmed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("LineItem", &item1, "confirmed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("LineItem", &item2, "confirmed"))
+        .await
+        .unwrap();
 
     // paid → fulfilled
-    let r = engine.transition(&transition_cmd("Order", &order_id, "fulfilled")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Order", &order_id, "fulfilled"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "fulfilled");
 
     // fulfilled → shipped → delivered
-    engine.transition(&transition_cmd("Order", &order_id, "shipped")).await.unwrap();
-    let r = engine.transition(&transition_cmd("Order", &order_id, "delivered")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Order", &order_id, "shipped"))
+        .await
+        .unwrap();
+    let r = engine
+        .transition(&transition_cmd("Order", &order_id, "delivered"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "delivered");
 
     // Verify trail has full history
@@ -652,7 +735,11 @@ async fn full_order_fulfillment_flow() {
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Trail(entries) => {
             // spawn + draft→placed + placed→paid + paid→fulfilled + fulfilled→shipped + shipped→delivered = 6
-            assert!(entries.len() >= 6, "trail should have at least 6 entries, got {}", entries.len());
+            assert!(
+                entries.len() >= 6,
+                "trail should have at least 6 entries, got {}",
+                entries.len()
+            );
         }
         _ => panic!("expected Trail"),
     }
@@ -719,7 +806,8 @@ DEFINE MACHINE SigShipment (
 /// signals the parent Order to transition to "shipped".
 #[tokio::test]
 async fn signal_parent_from_shipment_delivery() {
-    let machines = smql_parser::parse_machines(SIGNAL_PARENT_SMQL).expect("parse signal parent defs");
+    let machines =
+        smql_parser::parse_machines(SIGNAL_PARENT_SMQL).expect("parse signal parent defs");
     let catalog = Arc::new(MachineCatalog::new());
     for m in machines {
         catalog.register(m).expect("register machine");
@@ -733,21 +821,38 @@ async fn signal_parent_from_shipment_delivery() {
 
     // Spawn order, transition to fulfilled
     let order = engine
-        .spawn(&spawn_cmd("SigOrder", vec![
-            ("customer", Value::Text("cust_001".into())),
-            ("total", Value::Int(5000)),
-        ]))
+        .spawn(&spawn_cmd(
+            "SigOrder",
+            vec![
+                ("customer", Value::Text("cust_001".into())),
+                ("total", Value::Int(5000)),
+            ],
+        ))
         .await
         .unwrap();
     let order_id = order.instance.id.as_str();
 
-    engine.transition(&transition_cmd("SigOrder", &order_id, "placed")).await.unwrap();
-    engine.transition(&transition_cmd("SigOrder", &order_id, "paid")).await.unwrap();
-    engine.transition(&transition_cmd("SigOrder", &order_id, "fulfilled")).await.unwrap();
+    engine
+        .transition(&transition_cmd("SigOrder", &order_id, "placed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("SigOrder", &order_id, "paid"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("SigOrder", &order_id, "fulfilled"))
+        .await
+        .unwrap();
 
     // Spawn shipment as child of order
     let ship = engine
-        .spawn(&spawn_child_cmd("SigShipment", vec![], &order_id, "SigOrder"))
+        .spawn(&spawn_child_cmd(
+            "SigShipment",
+            vec![],
+            &order_id,
+            "SigOrder",
+        ))
         .await
         .unwrap();
     let ship_id = ship.instance.id.as_str();
@@ -765,7 +870,10 @@ async fn signal_parent_from_shipment_delivery() {
     engine.transition(&cmd).await.unwrap();
 
     // Transition shipment: dispatched → in_transit (fires SIGNAL PARENT TO shipped)
-    engine.transition(&transition_cmd("SigShipment", &ship_id, "in_transit")).await.unwrap();
+    engine
+        .transition(&transition_cmd("SigShipment", &ship_id, "in_transit"))
+        .await
+        .unwrap();
 
     // Assert: order should now be in "shipped" state
     let q = Query::Get(GetQuery {
@@ -774,7 +882,10 @@ async fn signal_parent_from_shipment_delivery() {
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
-            assert_eq!(inst.state, "shipped", "SIGNAL PARENT should have moved order to shipped");
+            assert_eq!(
+                inst.state, "shipped",
+                "SIGNAL PARENT should have moved order to shipped"
+            );
         }
         _ => panic!("expected Instance"),
     }

@@ -87,7 +87,10 @@ async fn test_spawn_and_get_instance() {
     let client = SmqlClient::new(&url).unwrap();
     client.define_machine(simple_machine()).await.unwrap();
 
-    let inst = client.spawn("counter", serde_json::json!({})).await.unwrap();
+    let inst = client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
     assert_eq!(inst.machine, "counter");
     assert_eq!(inst.state, "idle");
     assert_eq!(inst.id.len(), 26); // ULID format
@@ -105,7 +108,10 @@ async fn test_transition() {
     let client = SmqlClient::new(&url).unwrap();
     client.define_machine(simple_machine()).await.unwrap();
 
-    let inst = client.spawn("counter", serde_json::json!({})).await.unwrap();
+    let inst = client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
     let tr = client
         .transition("counter", &inst.id, "running", TransitionOptions::default())
         .await
@@ -143,18 +149,37 @@ async fn test_find_instances() {
     client.define_machine(simple_machine()).await.unwrap();
 
     // Spawn 3 instances
-    client.spawn("counter", serde_json::json!({})).await.unwrap();
-    client.spawn("counter", serde_json::json!({})).await.unwrap();
-    let inst3 = client.spawn("counter", serde_json::json!({})).await.unwrap();
+    client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
+    client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
+    let inst3 = client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
 
     // Transition one to running
     client
-        .transition("counter", &inst3.id, "running", TransitionOptions::default())
+        .transition(
+            "counter",
+            &inst3.id,
+            "running",
+            TransitionOptions::default(),
+        )
         .await
         .unwrap();
 
     // Find all idle
-    let idle = client.find("counter").in_state("idle").execute().await.unwrap();
+    let idle = client
+        .find("counter")
+        .in_state("idle")
+        .execute()
+        .await
+        .unwrap();
     assert_eq!(idle.len(), 2);
 
     // Find with limit
@@ -173,8 +198,14 @@ async fn test_aggregate() {
     let client = SmqlClient::new(&url).unwrap();
     client.define_machine(simple_machine()).await.unwrap();
 
-    client.spawn("counter", serde_json::json!({})).await.unwrap();
-    client.spawn("counter", serde_json::json!({})).await.unwrap();
+    client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
+    client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
 
     let result = client
         .aggregate("counter")
@@ -194,7 +225,10 @@ async fn test_trail() {
     let client = SmqlClient::new(&url).unwrap();
     client.define_machine(simple_machine()).await.unwrap();
 
-    let inst = client.spawn("counter", serde_json::json!({})).await.unwrap();
+    let inst = client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
     client
         .transition("counter", &inst.id, "running", TransitionOptions::default())
         .await
@@ -269,13 +303,19 @@ async fn test_transition_with_memo() {
     let client = SmqlClient::new(&url).unwrap();
     client.define_machine(simple_machine()).await.unwrap();
 
-    let inst = client.spawn("counter", serde_json::json!({})).await.unwrap();
+    let inst = client
+        .spawn("counter", serde_json::json!({}))
+        .await
+        .unwrap();
 
     let opts = TransitionOptions {
         memo: Some("starting up".to_string()),
         ..Default::default()
     };
-    let tr = client.transition("counter", &inst.id, "running", opts).await.unwrap();
+    let tr = client
+        .transition("counter", &inst.id, "running", opts)
+        .await
+        .unwrap();
     assert_eq!(tr.to_state, "running");
 
     // Verify memo in trail
@@ -430,16 +470,19 @@ DEFINE MACHINE SigChild (
     let timer = std::sync::Arc::new(smql_timer::TimerManager::new());
     let event_bus = std::sync::Arc::new(smql_hooks::EventBus::new(64));
     let hooks = std::sync::Arc::new(smql_hooks::HookExecutor::new(event_bus));
-    let engine = std::sync::Arc::new(
-        smql_engine_core::Engine::with_hooks(catalog, storage, timer, hooks),
-    );
+    let engine = std::sync::Arc::new(smql_engine_core::Engine::with_hooks(
+        catalog, storage, timer, hooks,
+    ));
     // wire_callback is called inside SmqlServer::with_engine()
 
     // Pre-spawn parent
     let parent = engine
         .spawn(&SpawnCommand {
             machine: "SigParent".into(),
-            data: vec![("label".into(), Expression::new(ExpressionKind::Literal(Value::Text("test".into()))))],
+            data: vec![(
+                "label".into(),
+                Expression::new(ExpressionKind::Literal(Value::Text("test".into()))),
+            )],
             then_transition: None,
             batch: false,
             batch_data: vec![],

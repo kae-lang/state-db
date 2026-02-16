@@ -7,7 +7,12 @@ pub fn format_spawn(machine: &str, data: &serde_json::Value) -> String {
 }
 
 /// Format a TRANSITION command.
-pub fn format_transition(machine: &str, instance_id: &str, to_state: &str, opts: &TransitionOptions) -> String {
+pub fn format_transition(
+    machine: &str,
+    instance_id: &str,
+    to_state: &str,
+    opts: &TransitionOptions,
+) -> String {
     let mut s = format!("TRANSITION {} \"{}\" TO {}", machine, instance_id, to_state);
     if !opts.with_data.is_empty() {
         let fields: Vec<String> = opts
@@ -76,11 +81,7 @@ pub fn format_trail(instance_id: &str) -> String {
 }
 
 /// Format an AGGREGATE query.
-pub fn format_aggregate(
-    machine: &str,
-    measure: Option<&str>,
-    group_by: Option<&str>,
-) -> String {
+pub fn format_aggregate(machine: &str, measure: Option<&str>, group_by: Option<&str>) -> String {
     let mut s = format!("AGGREGATE {}", machine);
     if let Some(m) = measure {
         s.push_str(&format!(" MEASURE {}", m));
@@ -146,10 +147,7 @@ mod tests {
 
     #[test]
     fn test_value_to_smql_array() {
-        assert_eq!(
-            value_to_smql(&serde_json::json!([1, 2, 3])),
-            "[1, 2, 3]"
-        );
+        assert_eq!(value_to_smql(&serde_json::json!([1, 2, 3])), "[1, 2, 3]");
     }
 
     #[test]

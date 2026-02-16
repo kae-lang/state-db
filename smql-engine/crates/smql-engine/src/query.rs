@@ -114,10 +114,7 @@ impl Engine {
             ..Default::default()
         };
 
-        let mut instances = self
-            .storage
-            .find_instances(&query.machine, &filter)
-            .await?;
+        let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         // Apply WHERE filter using expression evaluator
         if let Some(filter_expr) = &query.filter {
@@ -167,10 +164,7 @@ impl Engine {
     /// AGGREGATE Machine MEASURE ... GROUP BY ...
     async fn execute_aggregate(&self, query: &AggregateQuery) -> SmqlResult<QueryResult> {
         let filter = Filter::default();
-        let mut instances = self
-            .storage
-            .find_instances(&query.machine, &filter)
-            .await?;
+        let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         // Apply WHERE filter
         if let Some(filter_expr) = &query.filter {
@@ -237,10 +231,7 @@ impl Engine {
     /// PATHS FROM Machine — analyze state sequences.
     async fn execute_paths(&self, query: &PathsQuery) -> SmqlResult<QueryResult> {
         let filter = Filter::default();
-        let instances = self
-            .storage
-            .find_instances(&query.machine, &filter)
-            .await?;
+        let instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         let mut path_counts: HashMap<Vec<String>, usize> = HashMap::new();
 
@@ -280,10 +271,7 @@ impl Engine {
     /// FUNNEL Machine THROUGH [states] — conversion analysis.
     async fn execute_funnel(&self, query: &FunnelQuery) -> SmqlResult<QueryResult> {
         let filter = Filter::default();
-        let mut instances = self
-            .storage
-            .find_instances(&query.machine, &filter)
-            .await?;
+        let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         if let Some(filter_expr) = &query.filter {
             instances.retain(|inst| {
@@ -321,10 +309,7 @@ fn group_instances<'a>(
 ) -> Vec<(BTreeMap<String, Value>, Vec<&'a Instance>)> {
     if group_by.is_empty() {
         // No grouping — single group with all instances
-        return vec![(
-            BTreeMap::new(),
-            instances.iter().collect(),
-        )];
+        return vec![(BTreeMap::new(), instances.iter().collect())];
     }
 
     let mut groups: HashMap<String, (BTreeMap<String, Value>, Vec<&'a Instance>)> = HashMap::new();
@@ -342,8 +327,7 @@ fn group_instances<'a>(
                 }
                 GroupByClause::State => {
                     key_parts.push(format!("state={}", inst.state));
-                    key_map
-                        .insert("state".to_string(), Value::Text(inst.state.clone()));
+                    key_map.insert("state".to_string(), Value::Text(inst.state.clone()));
                 }
                 GroupByClause::TimeBucket { field, interval } => {
                     let val = inst.data.get(field).cloned().unwrap_or(Value::Null);
@@ -488,9 +472,7 @@ fn compute_aggregate(
 fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
     match (a, b) {
         (Value::Int(a), Value::Int(b)) => a.cmp(b),
-        (Value::Float(a), Value::Float(b)) => {
-            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-        }
+        (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
         (Value::Text(a), Value::Text(b)) => a.cmp(b),
         (Value::DateTime(a), Value::DateTime(b)) => a.cmp(b),
         (Value::Date(a), Value::Date(b)) => a.cmp(b),

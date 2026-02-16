@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use rocksdb::{
-    ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded, Options,
-    ReadOptions, WriteBatchWithTransaction,
+    ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded, Options, ReadOptions,
+    WriteBatchWithTransaction,
 };
 use smql_ast::value::Value;
 use smql_ast::{SmqlError, SmqlResult};
@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::instance::{Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter};
+use crate::instance::{
+    Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter,
+};
 use crate::traits::Storage;
 
 type DB = DBWithThreadMode<MultiThreaded>;
@@ -77,7 +79,8 @@ impl RocksDBStorage {
     // --- Key helpers ---
 
     fn make_key(parts: &[&[u8]]) -> Vec<u8> {
-        let total_len: usize = parts.iter().map(|p| p.len()).sum::<usize>() + parts.len().saturating_sub(1);
+        let total_len: usize =
+            parts.iter().map(|p| p.len()).sum::<usize>() + parts.len().saturating_sub(1);
         let mut key = Vec::with_capacity(total_len);
         for (i, part) in parts.iter().enumerate() {
             if i > 0 {
@@ -182,9 +185,11 @@ impl RocksDBStorage {
             read_opts.set_iterate_upper_bound(ub.clone());
         }
 
-        let iter = self
-            .db
-            .iterator_cf_opt(&cf, read_opts, IteratorMode::From(prefix, rocksdb::Direction::Forward));
+        let iter = self.db.iterator_cf_opt(
+            &cf,
+            read_opts,
+            IteratorMode::From(prefix, rocksdb::Direction::Forward),
+        );
 
         let mut results = Vec::new();
         for item in iter {
@@ -292,7 +297,11 @@ impl Storage for RocksDBStorage {
         let bytes = Self::serialize_instance(instance)?;
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
-        batch.put_cf(&cf_inst, Self::instance_key(&instance.machine, &id_str), &bytes);
+        batch.put_cf(
+            &cf_inst,
+            Self::instance_key(&instance.machine, &id_str),
+            &bytes,
+        );
         batch.put_cf(
             &cf_state,
             Self::state_index_key(&instance.machine, &instance.state, &id_str),
@@ -719,15 +728,8 @@ impl Storage for RocksDBStorage {
 
                     let new_bytes = Self::serialize_instance(&inst)?;
                     batch.put_cf(&cf_inst, &key, &new_bytes);
-                    batch.delete_cf(
-                        &cf_state,
-                        Self::state_index_key(machine, from_state, id),
-                    );
-                    batch.put_cf(
-                        &cf_state,
-                        Self::state_index_key(machine, to_state, id),
-                        b"",
-                    );
+                    batch.delete_cf(&cf_state, Self::state_index_key(machine, from_state, id));
+                    batch.put_cf(&cf_state, Self::state_index_key(machine, to_state, id), b"");
                     count += 1;
                 }
             }

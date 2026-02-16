@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::value::{SmqlDuration, Value};
 use crate::span::Span;
+use crate::value::{SmqlDuration, Value};
 
 /// Expressions used in guards, WHERE clauses, and MUTATE clauses.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,10 +211,9 @@ impl fmt::Display for Expression {
                 Some(e) => write!(f, "COUNT({})", e),
                 None => write!(f, "COUNT()"),
             },
-            ExpressionKind::SignalFrom {
-                machine,
-                condition,
-            } => write!(f, "SIGNAL FROM {} WHERE {}", machine, condition),
+            ExpressionKind::SignalFrom { machine, condition } => {
+                write!(f, "SIGNAL FROM {} WHERE {}", machine, condition)
+            }
             ExpressionKind::Pattern(regex) => write!(f, "PATTERN({})", regex),
         }
     }

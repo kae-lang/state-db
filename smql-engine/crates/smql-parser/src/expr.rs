@@ -1,9 +1,9 @@
-use smql_ast::{SmqlError, SmqlResult};
+use crate::common;
+use crate::lexer::TokenKind;
+use crate::Parser;
 use smql_ast::expression::*;
 use smql_ast::value::Value;
-use crate::lexer::TokenKind;
-use crate::common;
-use crate::Parser;
+use smql_ast::{SmqlError, SmqlResult};
 
 /// Parse a full expression (entry point for guards and WHERE clauses).
 pub fn parse_expression(parser: &mut Parser) -> SmqlResult<Expression> {
@@ -119,12 +119,24 @@ fn parse_comparison(parser: &mut Parser) -> SmqlResult<Expression> {
 }
 
 fn try_parse_comparison_op(parser: &mut Parser) -> Option<BinaryOperator> {
-    if parser.try_operator("==") { return Some(BinaryOperator::Eq); }
-    if parser.try_operator("!=") { return Some(BinaryOperator::NotEq); }
-    if parser.try_operator(">=") { return Some(BinaryOperator::GtEq); }
-    if parser.try_operator("<=") { return Some(BinaryOperator::LtEq); }
-    if parser.try_operator(">") { return Some(BinaryOperator::Gt); }
-    if parser.try_operator("<") { return Some(BinaryOperator::Lt); }
+    if parser.try_operator("==") {
+        return Some(BinaryOperator::Eq);
+    }
+    if parser.try_operator("!=") {
+        return Some(BinaryOperator::NotEq);
+    }
+    if parser.try_operator(">=") {
+        return Some(BinaryOperator::GtEq);
+    }
+    if parser.try_operator("<=") {
+        return Some(BinaryOperator::LtEq);
+    }
+    if parser.try_operator(">") {
+        return Some(BinaryOperator::Gt);
+    }
+    if parser.try_operator("<") {
+        return Some(BinaryOperator::Lt);
+    }
     None
 }
 
@@ -248,12 +260,7 @@ fn parse_primary(parser: &mut Parser) -> SmqlResult<Expression> {
         // For AST purposes, represent as a function-call-like construct
         let args: Vec<Expression> = entries
             .into_iter()
-            .flat_map(|(k, v)| {
-                vec![
-                    Expression::new(ExpressionKind::Literal(Value::Text(k))),
-                    v,
-                ]
-            })
+            .flat_map(|(k, v)| vec![Expression::new(ExpressionKind::Literal(Value::Text(k))), v])
             .collect();
         return Ok(Expression::new(ExpressionKind::FunctionCall {
             name: "__map".into(),
@@ -325,7 +332,9 @@ fn parse_primary(parser: &mut Parser) -> SmqlResult<Expression> {
                         Ok(Expression::new(ExpressionKind::StateIn(states)))
                     } else {
                         // Just "STATE" as a field reference
-                        Ok(Expression::new(ExpressionKind::FieldAccess(vec!["STATE".into()])))
+                        Ok(Expression::new(ExpressionKind::FieldAccess(vec![
+                            "STATE".into()
+                        ])))
                     }
                 }
                 "ALL" => {

@@ -1,7 +1,7 @@
-use smql_ast::{SmqlError, SmqlResult, Span};
-use smql_ast::value::{SmqlDuration, Value};
 use crate::lexer::TokenKind;
 use crate::Parser;
+use smql_ast::value::{SmqlDuration, Value};
+use smql_ast::{SmqlError, SmqlResult, Span};
 
 /// Parse a string literal, returning its contents.
 pub fn parse_string_literal(parser: &mut Parser) -> SmqlResult<String> {
@@ -37,7 +37,9 @@ pub fn parse_duration(parser: &mut Parser) -> SmqlResult<SmqlDuration> {
         _ => Err(SmqlError::ParseError {
             message: format!("Expected duration (e.g. 24h, 7d), found '{}'", tok.text),
             span: Some(Span::new(tok.offset, tok.offset + tok.text.len())),
-            hint: Some("Durations use suffixes: s (seconds), m (minutes), h (hours), d (days)".into()),
+            hint: Some(
+                "Durations use suffixes: s (seconds), m (minutes), h (hours), d (days)".into(),
+            ),
         }),
     }
 }

@@ -64,11 +64,19 @@ fn spawn_child_cmd(
 }
 
 fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-    TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
+    TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    )
 }
 
 fn cascade_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
+    let mut cmd = TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    );
     cmd.cascade = true;
     cmd
 }
@@ -182,10 +190,16 @@ async fn job_lifecycle_pass() {
     let sid = spawn_stage(&engine, &pid, "test", 1).await;
     let jid = spawn_job(&engine, &sid, "unit-tests", "cargo test").await;
 
-    let r = engine.transition(&transition_cmd("Job", &jid, "running")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Job", &jid, "running"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "running");
 
-    let r = engine.transition(&transition_cmd("Job", &jid, "passed")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Job", &jid, "passed"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "passed");
 }
 
@@ -197,8 +211,14 @@ async fn job_lifecycle_fail() {
     let sid = spawn_stage(&engine, &pid, "test", 1).await;
     let jid = spawn_job(&engine, &sid, "lint", "cargo clippy").await;
 
-    engine.transition(&transition_cmd("Job", &jid, "running")).await.unwrap();
-    let r = engine.transition(&transition_cmd("Job", &jid, "failed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Job", &jid, "running"))
+        .await
+        .unwrap();
+    let r = engine
+        .transition(&transition_cmd("Job", &jid, "failed"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "failed");
 }
 
@@ -209,25 +229,54 @@ async fn stage_passes_when_all_jobs_pass() {
     let pid = spawn_pipeline(&engine).await;
     let sid = spawn_stage(&engine, &pid, "test", 1).await;
     let j1 = spawn_job(&engine, &sid, "unit", "cargo test").await;
-    let j2 = spawn_job(&engine, &sid, "integration", "cargo test --test integration").await;
+    let j2 = spawn_job(
+        &engine,
+        &sid,
+        "integration",
+        "cargo test --test integration",
+    )
+    .await;
 
     // Start stage
-    engine.transition(&transition_cmd("Stage", &sid, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &sid, "running"))
+        .await
+        .unwrap();
 
     // Run jobs
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j2, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "running"))
+        .await
+        .unwrap();
 
     // Pass only one job — stage should NOT pass
-    engine.transition(&transition_cmd("Job", &j1, "passed")).await.unwrap();
-    let result = engine.transition(&transition_cmd("Stage", &sid, "passed")).await;
-    assert!(result.is_err(), "stage should not pass: not ALL jobs passed");
+    engine
+        .transition(&transition_cmd("Job", &j1, "passed"))
+        .await
+        .unwrap();
+    let result = engine
+        .transition(&transition_cmd("Stage", &sid, "passed"))
+        .await;
+    assert!(
+        result.is_err(),
+        "stage should not pass: not ALL jobs passed"
+    );
 
     // Pass second job
-    engine.transition(&transition_cmd("Job", &j2, "passed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "passed"))
+        .await
+        .unwrap();
 
     // Now stage should pass
-    let r = engine.transition(&transition_cmd("Stage", &sid, "passed")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Stage", &sid, "passed"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "passed");
 }
 
@@ -238,16 +287,28 @@ async fn stage_fails_when_any_job_fails() {
     let pid = spawn_pipeline(&engine).await;
     let sid = spawn_stage(&engine, &pid, "test", 1).await;
     let j1 = spawn_job(&engine, &sid, "unit", "cargo test").await;
-    let j2 = spawn_job(&engine, &sid, "lint", "cargo clippy").await;
+    let _j2 = spawn_job(&engine, &sid, "lint", "cargo clippy").await;
 
-    engine.transition(&transition_cmd("Stage", &sid, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &sid, "running"))
+        .await
+        .unwrap();
 
     // Run and fail one job
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "failed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "failed"))
+        .await
+        .unwrap();
 
     // Stage should fail because ANY(jobs, STATE IS failed)
-    let r = engine.transition(&transition_cmd("Stage", &sid, "failed")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Stage", &sid, "failed"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "failed");
 }
 
@@ -264,21 +325,51 @@ async fn pipeline_passes_when_all_stages_pass() {
     let j2 = spawn_job(&engine, &s2, "test", "cargo test").await;
 
     // Start pipeline
-    engine.transition(&transition_cmd("Pipeline", &pid, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Pipeline", &pid, "running"))
+        .await
+        .unwrap();
 
     // Run and pass all stages
-    engine.transition(&transition_cmd("Stage", &s1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "passed")).await.unwrap();
-    engine.transition(&transition_cmd("Stage", &s1, "passed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "passed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "passed"))
+        .await
+        .unwrap();
 
-    engine.transition(&transition_cmd("Stage", &s2, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j2, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j2, "passed")).await.unwrap();
-    engine.transition(&transition_cmd("Stage", &s2, "passed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s2, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "passed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s2, "passed"))
+        .await
+        .unwrap();
 
     // Pipeline should pass
-    let r = engine.transition(&transition_cmd("Pipeline", &pid, "passed")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Pipeline", &pid, "passed"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "passed");
 }
 
@@ -293,22 +384,52 @@ async fn pipeline_fails_when_any_stage_fails() {
     let j1 = spawn_job(&engine, &s1, "compile", "cargo build").await;
     let j2 = spawn_job(&engine, &s2, "test", "cargo test").await;
 
-    engine.transition(&transition_cmd("Pipeline", &pid, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Pipeline", &pid, "running"))
+        .await
+        .unwrap();
 
     // Pass first stage
-    engine.transition(&transition_cmd("Stage", &s1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "passed")).await.unwrap();
-    engine.transition(&transition_cmd("Stage", &s1, "passed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "passed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "passed"))
+        .await
+        .unwrap();
 
     // Fail second stage
-    engine.transition(&transition_cmd("Stage", &s2, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j2, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j2, "failed")).await.unwrap();
-    engine.transition(&transition_cmd("Stage", &s2, "failed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s2, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "failed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s2, "failed"))
+        .await
+        .unwrap();
 
     // Pipeline should fail
-    let r = engine.transition(&transition_cmd("Pipeline", &pid, "failed")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Pipeline", &pid, "failed"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "failed");
 }
 
@@ -319,17 +440,29 @@ async fn cascade_cancel_three_levels() {
     let pid = spawn_pipeline(&engine).await;
     let s1 = spawn_stage(&engine, &pid, "build", 1).await;
     let j1 = spawn_job(&engine, &s1, "compile", "cargo build").await;
-    let j2 = spawn_job(&engine, &s1, "lint", "cargo clippy").await;
+    let _j2 = spawn_job(&engine, &s1, "lint", "cargo clippy").await;
     let s2 = spawn_stage(&engine, &pid, "test", 2).await;
-    let j3 = spawn_job(&engine, &s2, "test", "cargo test").await;
+    let _j3 = spawn_job(&engine, &s2, "test", "cargo test").await;
 
     // Start some work
-    engine.transition(&transition_cmd("Pipeline", &pid, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Stage", &s1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Pipeline", &pid, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
 
     // CASCADE cancel pipeline
-    let r = engine.transition(&cascade_cmd("Pipeline", &pid, "cancelled")).await.unwrap();
+    let r = engine
+        .transition(&cascade_cmd("Pipeline", &pid, "cancelled"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "cancelled");
 
     // CASCADE tries only the FIRST terminal state via try_transition.
@@ -367,12 +500,24 @@ async fn find_jobs_by_state() {
     let _j3 = spawn_job(&engine, &s1, "format", "cargo fmt").await;
 
     // Run and pass j1
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "passed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "passed"))
+        .await
+        .unwrap();
 
     // Run and fail j2
-    engine.transition(&transition_cmd("Job", &j2, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j2, "failed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j2, "failed"))
+        .await
+        .unwrap();
 
     // j3 stays pending
 
@@ -418,7 +563,10 @@ async fn stage_skip() {
     let pid = spawn_pipeline(&engine).await;
     let sid = spawn_stage(&engine, &pid, "optional-deploy", 3).await;
 
-    let r = engine.transition(&transition_cmd("Stage", &sid, "skipped")).await.unwrap();
+    let r = engine
+        .transition(&transition_cmd("Stage", &sid, "skipped"))
+        .await
+        .unwrap();
     assert_eq!(r.to_state, "skipped");
 }
 
@@ -428,7 +576,10 @@ async fn pipeline_trail() {
     let engine = make_engine();
     let pid = spawn_pipeline(&engine).await;
 
-    engine.transition(&transition_cmd("Pipeline", &pid, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Pipeline", &pid, "running"))
+        .await
+        .unwrap();
 
     let q = Query::Trail(TrailQuery {
         machine: Some("Pipeline".into()),
@@ -454,16 +605,33 @@ async fn pipeline_cannot_pass_without_all_stages() {
     let j1 = spawn_job(&engine, &s1, "compile", "cargo build").await;
     let _j2 = spawn_job(&engine, &s2, "test", "cargo test").await;
 
-    engine.transition(&transition_cmd("Pipeline", &pid, "running")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Pipeline", &pid, "running"))
+        .await
+        .unwrap();
 
     // Only pass first stage
-    engine.transition(&transition_cmd("Stage", &s1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "running")).await.unwrap();
-    engine.transition(&transition_cmd("Job", &j1, "passed")).await.unwrap();
-    engine.transition(&transition_cmd("Stage", &s1, "passed")).await.unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "running"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Job", &j1, "passed"))
+        .await
+        .unwrap();
+    engine
+        .transition(&transition_cmd("Stage", &s1, "passed"))
+        .await
+        .unwrap();
 
     // Pipeline should not pass — stage 2 still pending
-    let result = engine.transition(&transition_cmd("Pipeline", &pid, "passed")).await;
+    let result = engine
+        .transition(&transition_cmd("Pipeline", &pid, "passed"))
+        .await;
     assert!(result.is_err(), "pipeline needs ALL stages passed");
 }
 

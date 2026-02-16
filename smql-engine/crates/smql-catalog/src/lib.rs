@@ -107,13 +107,12 @@ impl MachineCatalog {
 
         let warnings = validate_machine(&definition, self)?;
 
-        self.machines
-            .alter(&name, |_, mut entry| {
-                entry.history.push(entry.definition.clone());
-                entry.version += 1;
-                entry.definition = definition.clone();
-                entry
-            });
+        self.machines.alter(&name, |_, mut entry| {
+            entry.history.push(entry.definition.clone());
+            entry.version += 1;
+            entry.definition = definition.clone();
+            entry
+        });
 
         if !self.machines.contains_key(&name) {
             return Err(SmqlError::not_found("Machine", &name));
@@ -124,11 +123,7 @@ impl MachineCatalog {
 
     /// Serialize the catalog to JSON for persistence.
     pub fn serialize(&self) -> SmqlResult<String> {
-        let entries: Vec<MachineEntry> = self
-            .machines
-            .iter()
-            .map(|e| e.value().clone())
-            .collect();
+        let entries: Vec<MachineEntry> = self.machines.iter().map(|e| e.value().clone()).collect();
         serde_json::to_string_pretty(&entries).map_err(|e| SmqlError::internal(e.to_string()))
     }
 
@@ -138,7 +133,9 @@ impl MachineCatalog {
             serde_json::from_str(json).map_err(|e| SmqlError::internal(e.to_string()))?;
         let catalog = Self::new();
         for entry in entries {
-            catalog.machines.insert(entry.definition.name.clone(), entry);
+            catalog
+                .machines
+                .insert(entry.definition.name.clone(), entry);
         }
         Ok(catalog)
     }

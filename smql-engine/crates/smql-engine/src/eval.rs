@@ -80,7 +80,8 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
                     let field = &path[1];
                     if field.to_uppercase() == "STATE" {
                         // child_ref.STATE — returns the state of the first child (or Null)
-                        return Ok(children.first()
+                        return Ok(children
+                            .first()
                             .map(|c| Value::Text(c.state.clone()))
                             .unwrap_or(Value::Null));
                     }
@@ -101,7 +102,9 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
                 if path[0].to_uppercase() == "PARENT" {
                     let field = &path[1];
                     if field.to_uppercase() == "STATE" {
-                        return Ok(ctx.parent_state.as_ref()
+                        return Ok(ctx
+                            .parent_state
+                            .as_ref()
                             .map(|s| Value::Text(s.clone()))
                             .unwrap_or(Value::Null));
                     }
@@ -168,17 +171,11 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
             eval_unary_op(*op, &val)
         }
 
-        ExpressionKind::FunctionCall { name, args } => {
-            eval_function(name, args, ctx)
-        }
+        ExpressionKind::FunctionCall { name, args } => eval_function(name, args, ctx),
 
-        ExpressionKind::StateIs(state_name) => {
-            Ok(Value::Bool(ctx.state == *state_name))
-        }
+        ExpressionKind::StateIs(state_name) => Ok(Value::Bool(ctx.state == *state_name)),
 
-        ExpressionKind::StateIn(states) => {
-            Ok(Value::Bool(states.contains(&ctx.state)))
-        }
+        ExpressionKind::StateIn(states) => Ok(Value::Bool(states.contains(&ctx.state))),
 
         ExpressionKind::IsSet(inner) => {
             let val = eval_expr(inner, ctx)?;
@@ -216,7 +213,10 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
             Ok(Value::Bool(found))
         }
 
-        ExpressionKind::All { collection, predicate } => {
+        ExpressionKind::All {
+            collection,
+            predicate,
+        } => {
             let children = resolve_children_from_expr(collection, ctx);
             if children.is_empty() {
                 // ALL over empty collection is vacuously true
@@ -232,7 +232,10 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
             Ok(Value::Bool(true))
         }
 
-        ExpressionKind::Any { collection, predicate } => {
+        ExpressionKind::Any {
+            collection,
+            predicate,
+        } => {
             let children = resolve_children_from_expr(collection, ctx);
             for child in &children {
                 let child_ctx = make_child_eval_context(child, ctx);
@@ -300,36 +303,24 @@ fn access_field(value: &Value, field: &str) -> Value {
 /// Evaluate a binary operation.
 fn eval_binary_op(left: &Value, op: BinaryOperator, right: &Value) -> SmqlResult<Value> {
     match op {
-        BinaryOperator::And => {
-            Ok(Value::Bool(is_truthy(left) && is_truthy(right)))
-        }
-        BinaryOperator::Or => {
-            Ok(Value::Bool(is_truthy(left) || is_truthy(right)))
-        }
+        BinaryOperator::And => Ok(Value::Bool(is_truthy(left) && is_truthy(right))),
+        BinaryOperator::Or => Ok(Value::Bool(is_truthy(left) || is_truthy(right))),
         BinaryOperator::Eq => Ok(Value::Bool(values_equal(left, right))),
         BinaryOperator::NotEq => Ok(Value::Bool(!values_equal(left, right))),
-        BinaryOperator::Lt => {
-            Ok(Value::Bool(
-                compare_values(left, right) == Some(std::cmp::Ordering::Less),
-            ))
-        }
-        BinaryOperator::Gt => {
-            Ok(Value::Bool(
-                compare_values(left, right) == Some(std::cmp::Ordering::Greater),
-            ))
-        }
-        BinaryOperator::LtEq => {
-            Ok(Value::Bool(matches!(
-                compare_values(left, right),
-                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-            )))
-        }
-        BinaryOperator::GtEq => {
-            Ok(Value::Bool(matches!(
-                compare_values(left, right),
-                Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
-            )))
-        }
+        BinaryOperator::Lt => Ok(Value::Bool(
+            compare_values(left, right) == Some(std::cmp::Ordering::Less),
+        )),
+        BinaryOperator::Gt => Ok(Value::Bool(
+            compare_values(left, right) == Some(std::cmp::Ordering::Greater),
+        )),
+        BinaryOperator::LtEq => Ok(Value::Bool(matches!(
+            compare_values(left, right),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        ))),
+        BinaryOperator::GtEq => Ok(Value::Bool(matches!(
+            compare_values(left, right),
+            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+        ))),
         BinaryOperator::Add => eval_arithmetic_add(left, right),
         BinaryOperator::Sub => eval_arithmetic_sub(left, right),
         BinaryOperator::Mul => eval_arithmetic_mul(left, right),
@@ -406,9 +397,9 @@ fn eval_arithmetic_add(left: &Value, right: &Value) -> SmqlResult<Value> {
         (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
         (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
         (Value::Text(a), Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
-        (Value::Duration(a), Value::Duration(b)) => {
-            Ok(Value::Duration(SmqlDuration::from_seconds(a.seconds + b.seconds)))
-        }
+        (Value::Duration(a), Value::Duration(b)) => Ok(Value::Duration(
+            SmqlDuration::from_seconds(a.seconds + b.seconds),
+        )),
         _ => Err(SmqlError::GuardFailed {
             message: format!("Cannot add {} + {}", left, right),
             guard_expr: format!("{} + {}", left, right),
@@ -424,9 +415,9 @@ fn eval_arithmetic_sub(left: &Value, right: &Value) -> SmqlResult<Value> {
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
         (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
         (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
-        (Value::Duration(a), Value::Duration(b)) => {
-            Ok(Value::Duration(SmqlDuration::from_seconds(a.seconds.saturating_sub(b.seconds))))
-        }
+        (Value::Duration(a), Value::Duration(b)) => Ok(Value::Duration(
+            SmqlDuration::from_seconds(a.seconds.saturating_sub(b.seconds)),
+        )),
         _ => Err(SmqlError::GuardFailed {
             message: format!("Cannot subtract {} - {}", left, right),
             guard_expr: format!("{} - {}", left, right),
@@ -517,15 +508,13 @@ fn eval_function(name: &str, args: &[Expression], ctx: &EvalContext) -> SmqlResu
 
         "today" => Ok(Value::Date(ctx.now.date_naive())),
 
-        "timeout_remaining" => {
-            match &ctx.timeout_remaining {
-                Some(remaining) => {
-                    let seconds = remaining.num_seconds().max(0) as u64;
-                    Ok(Value::Duration(SmqlDuration::from_seconds(seconds)))
-                }
-                None => Ok(Value::Null),
+        "timeout_remaining" => match &ctx.timeout_remaining {
+            Some(remaining) => {
+                let seconds = remaining.num_seconds().max(0) as u64;
+                Ok(Value::Duration(SmqlDuration::from_seconds(seconds)))
             }
-        }
+            None => Ok(Value::Null),
+        },
 
         "count" => {
             if args.is_empty() {
@@ -600,7 +589,10 @@ fn eval_function(name: &str, args: &[Expression], ctx: &EvalContext) -> SmqlResu
 
 /// Resolve a collection expression to a list of child instances.
 /// The collection is typically a FieldAccess like `items` referring to a child ref name.
-fn resolve_children_from_expr<'a>(collection: &Expression, ctx: &'a EvalContext) -> Vec<&'a ChildInfo> {
+fn resolve_children_from_expr<'a>(
+    collection: &Expression,
+    ctx: &'a EvalContext,
+) -> Vec<&'a ChildInfo> {
     match &collection.kind {
         ExpressionKind::FieldAccess(path) if path.len() == 1 => {
             if let Some(children) = ctx.children.get(&path[0]) {

@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::eval::*;
+    use chrono::{TimeZone, Utc};
     use smql_ast::expression::{BinaryOperator, Expression, ExpressionKind, UnaryOperator};
     use smql_ast::value::{SmqlDuration, Value};
-    use chrono::{TimeZone, Utc};
     use std::collections::{BTreeMap, HashMap};
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -41,10 +41,8 @@ mod tests {
     }
 
     fn ctx_with_data(data: Vec<(&str, Value)>) -> EvalContext {
-        let map: HashMap<String, Value> = data
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let map: HashMap<String, Value> =
+            data.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         EvalContext::new(map, "open".to_string())
     }
 
@@ -53,10 +51,7 @@ mod tests {
             id: id.to_string(),
             machine: machine.to_string(),
             state: state.to_string(),
-            data: data
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
+            data: data.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
         }
     }
 
@@ -241,7 +236,10 @@ mod tests {
     fn actor_ref_with_custom_fields() {
         let mut ctx = ctx_with_data(vec![]);
         let mut fields = HashMap::new();
-        fields.insert("department".to_string(), Value::Text("engineering".to_string()));
+        fields.insert(
+            "department".to_string(),
+            Value::Text("engineering".to_string()),
+        );
         fields.insert("level".to_string(), Value::Int(5));
         ctx.actor = Some(ActorInfo {
             id: "user-123".to_string(),
@@ -428,7 +426,11 @@ mod tests {
     #[test]
     fn not_eq_different_values() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(1)), BinaryOperator::NotEq, lit(Value::Int(2)));
+        let expr = binop(
+            lit(Value::Int(1)),
+            BinaryOperator::NotEq,
+            lit(Value::Int(2)),
+        );
         let result = eval_expr(&expr, &ctx).unwrap();
         assert_eq!(result, Value::Bool(true));
     }
@@ -436,7 +438,11 @@ mod tests {
     #[test]
     fn not_eq_same_values() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(5)), BinaryOperator::NotEq, lit(Value::Int(5)));
+        let expr = binop(
+            lit(Value::Int(5)),
+            BinaryOperator::NotEq,
+            lit(Value::Int(5)),
+        );
         let result = eval_expr(&expr, &ctx).unwrap();
         assert_eq!(result, Value::Bool(false));
     }
@@ -522,14 +528,22 @@ mod tests {
     #[test]
     fn mul_int_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(3)), BinaryOperator::Mul, lit(Value::Float(2.5)));
+        let expr = binop(
+            lit(Value::Int(3)),
+            BinaryOperator::Mul,
+            lit(Value::Float(2.5)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(7.5));
     }
 
     #[test]
     fn mul_float_int() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Float(2.5)), BinaryOperator::Mul, lit(Value::Int(4)));
+        let expr = binop(
+            lit(Value::Float(2.5)),
+            BinaryOperator::Mul,
+            lit(Value::Int(4)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(10.0));
     }
 
@@ -690,7 +704,11 @@ mod tests {
     fn values_equal_int_float_cross_coercion() {
         let ctx = ctx_with_data(vec![]);
         // Int(5) == Float(5.0) should be true
-        let expr = binop(lit(Value::Int(5)), BinaryOperator::Eq, lit(Value::Float(5.0)));
+        let expr = binop(
+            lit(Value::Int(5)),
+            BinaryOperator::Eq,
+            lit(Value::Float(5.0)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
 
@@ -698,14 +716,22 @@ mod tests {
     fn values_equal_float_int_cross_coercion() {
         let ctx = ctx_with_data(vec![]);
         // Float(5.0) == Int(5) should be true
-        let expr = binop(lit(Value::Float(5.0)), BinaryOperator::Eq, lit(Value::Int(5)));
+        let expr = binop(
+            lit(Value::Float(5.0)),
+            BinaryOperator::Eq,
+            lit(Value::Int(5)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
 
     #[test]
     fn values_equal_int_float_not_equal() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(5)), BinaryOperator::Eq, lit(Value::Float(5.1)));
+        let expr = binop(
+            lit(Value::Int(5)),
+            BinaryOperator::Eq,
+            lit(Value::Float(5.1)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
     }
 
@@ -811,11 +837,19 @@ mod tests {
     fn compare_int_float_cross_ordering() {
         let ctx = ctx_with_data(vec![]);
         // Int(3) < Float(3.5)
-        let expr = binop(lit(Value::Int(3)), BinaryOperator::Lt, lit(Value::Float(3.5)));
+        let expr = binop(
+            lit(Value::Int(3)),
+            BinaryOperator::Lt,
+            lit(Value::Float(3.5)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
 
         // Float(2.5) < Int(3)
-        let expr2 = binop(lit(Value::Float(2.5)), BinaryOperator::Lt, lit(Value::Int(3)));
+        let expr2 = binop(
+            lit(Value::Float(2.5)),
+            BinaryOperator::Lt,
+            lit(Value::Int(3)),
+        );
         assert_eq!(eval_expr(&expr2, &ctx).unwrap(), Value::Bool(true));
     }
 
@@ -824,14 +858,22 @@ mod tests {
     #[test]
     fn add_int_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(3)), BinaryOperator::Add, lit(Value::Float(1.5)));
+        let expr = binop(
+            lit(Value::Int(3)),
+            BinaryOperator::Add,
+            lit(Value::Float(1.5)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(4.5));
     }
 
     #[test]
     fn add_float_int() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Float(1.5)), BinaryOperator::Add, lit(Value::Int(3)));
+        let expr = binop(
+            lit(Value::Float(1.5)),
+            BinaryOperator::Add,
+            lit(Value::Int(3)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(4.5));
     }
 
@@ -906,14 +948,22 @@ mod tests {
     #[test]
     fn sub_int_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(5)), BinaryOperator::Sub, lit(Value::Float(1.5)));
+        let expr = binop(
+            lit(Value::Int(5)),
+            BinaryOperator::Sub,
+            lit(Value::Float(1.5)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(3.5));
     }
 
     #[test]
     fn sub_float_int() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Float(5.5)), BinaryOperator::Sub, lit(Value::Int(2)));
+        let expr = binop(
+            lit(Value::Float(5.5)),
+            BinaryOperator::Sub,
+            lit(Value::Int(2)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(3.5));
     }
 
@@ -976,14 +1026,22 @@ mod tests {
     #[test]
     fn mul_arithmetic_int_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(2)), BinaryOperator::Mul, lit(Value::Float(3.5)));
+        let expr = binop(
+            lit(Value::Int(2)),
+            BinaryOperator::Mul,
+            lit(Value::Float(3.5)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(7.0));
     }
 
     #[test]
     fn mul_arithmetic_float_int() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Float(3.5)), BinaryOperator::Mul, lit(Value::Int(2)));
+        let expr = binop(
+            lit(Value::Float(3.5)),
+            BinaryOperator::Mul,
+            lit(Value::Int(2)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(7.0));
     }
 
@@ -1021,14 +1079,22 @@ mod tests {
     #[test]
     fn div_int_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(7)), BinaryOperator::Div, lit(Value::Float(2.0)));
+        let expr = binop(
+            lit(Value::Int(7)),
+            BinaryOperator::Div,
+            lit(Value::Float(2.0)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(3.5));
     }
 
     #[test]
     fn div_float_int() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Float(7.0)), BinaryOperator::Div, lit(Value::Int(2)));
+        let expr = binop(
+            lit(Value::Float(7.0)),
+            BinaryOperator::Div,
+            lit(Value::Int(2)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(3.5));
     }
 
@@ -1067,7 +1133,11 @@ mod tests {
     #[test]
     fn div_int_by_zero_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(10)), BinaryOperator::Div, lit(Value::Float(0.0)));
+        let expr = binop(
+            lit(Value::Int(10)),
+            BinaryOperator::Div,
+            lit(Value::Float(0.0)),
+        );
         let result = eval_expr(&expr, &ctx);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1081,7 +1151,11 @@ mod tests {
     #[test]
     fn div_float_by_int_zero() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Float(10.0)), BinaryOperator::Div, lit(Value::Int(0)));
+        let expr = binop(
+            lit(Value::Float(10.0)),
+            BinaryOperator::Div,
+            lit(Value::Int(0)),
+        );
         let result = eval_expr(&expr, &ctx);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1527,8 +1601,7 @@ mod tests {
         let c1 = make_child("c1", "Item", "active", vec![]);
         let c2 = make_child("c2", "Item", "pending", vec![]);
         let c3 = make_child("c3", "Item", "active", vec![]);
-        ctx.children
-            .insert("items".to_string(), vec![c1, c2, c3]);
+        ctx.children.insert("items".to_string(), vec![c1, c2, c3]);
 
         let expr = Expression::new(ExpressionKind::Count(Some(Box::new(field(vec!["items"])))));
         let result = eval_expr(&expr, &ctx).unwrap();
@@ -1680,33 +1753,21 @@ mod tests {
     #[test]
     fn and_one_falsy() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(
-            lit(Value::Int(1)),
-            BinaryOperator::And,
-            lit(Value::Int(0)),
-        );
+        let expr = binop(lit(Value::Int(1)), BinaryOperator::And, lit(Value::Int(0)));
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn or_both_falsy() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(
-            lit(Value::Int(0)),
-            BinaryOperator::Or,
-            lit(Value::Null),
-        );
+        let expr = binop(lit(Value::Int(0)), BinaryOperator::Or, lit(Value::Null));
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
     }
 
     #[test]
     fn or_one_truthy() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(
-            lit(Value::Int(0)),
-            BinaryOperator::Or,
-            lit(Value::Int(1)),
-        );
+        let expr = binop(lit(Value::Int(0)), BinaryOperator::Or, lit(Value::Int(1)));
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
 

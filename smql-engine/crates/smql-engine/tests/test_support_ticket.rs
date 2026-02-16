@@ -15,8 +15,7 @@ use std::sync::Arc;
 use smql_ast::command::{SpawnCommand, TransitionCommand};
 use smql_ast::expression::{Expression, ExpressionKind};
 use smql_ast::query::{
-    AggregateQuery, FindQuery, FunnelQuery, GetQuery, MeasureClause, PathsQuery, Query,
-    TrailQuery,
+    AggregateQuery, FindQuery, FunnelQuery, GetQuery, MeasureClause, PathsQuery, Query, TrailQuery,
 };
 use smql_ast::types::AggregateFunction;
 use smql_ast::value::Value;
@@ -59,11 +58,24 @@ fn spawn_ticket(data: Vec<(&str, Value)>) -> SpawnCommand {
 }
 
 fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-    TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
+    TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    )
 }
 
-fn transition_as(machine: &str, instance_id: &str, to_state: &str, actor: &str) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
+fn transition_as(
+    machine: &str,
+    instance_id: &str,
+    to_state: &str,
+    actor: &str,
+) -> TransitionCommand {
+    let mut cmd = TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    );
     cmd.as_actor = Some(actor.to_string());
     cmd
 }
@@ -75,7 +87,11 @@ fn transition_with(
     actor: &str,
     data: Vec<(&str, Value)>,
 ) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
+    let mut cmd = TransitionCommand::new(
+        machine.to_string(),
+        instance_id.to_string(),
+        to_state.to_string(),
+    );
     cmd.as_actor = Some(actor.to_string());
     cmd.with_data = data
         .into_iter()
@@ -105,7 +121,10 @@ async fn spawn_one(engine: &Engine) -> String {
     let cmd = spawn_ticket(vec![
         ("customer_id", Value::Uuid(cid)),
         ("subject", Value::Text("Login broken".into())),
-        ("description", Value::Text("Cannot log in since update".into())),
+        (
+            "description",
+            Value::Text("Cannot log in since update".into()),
+        ),
     ]);
     let result = engine.spawn(&cmd).await.expect("spawn ticket");
     assert_eq!(result.instance.state, "open");
@@ -128,7 +147,10 @@ async fn to_triaged(engine: &Engine, id: &str, agent: &str) {
 /// Move ticket from triaged → in_progress.
 async fn to_in_progress(engine: &Engine, id: &str, agent: &str) {
     let cmd = transition_as("SupportTicket", id, "in_progress", agent);
-    let r = engine.transition(&cmd).await.expect("triaged → in_progress");
+    let r = engine
+        .transition(&cmd)
+        .await
+        .expect("triaged → in_progress");
     assert_eq!(r.to_state, "in_progress");
 }
 
@@ -165,7 +187,10 @@ async fn spawn_ticket_missing_required_field() {
     let engine = make_engine();
     let cmd = spawn_ticket(vec![]);
     let result = engine.spawn(&cmd).await;
-    assert!(result.is_err(), "spawn with missing required fields should fail");
+    assert!(
+        result.is_err(),
+        "spawn with missing required fields should fail"
+    );
 }
 
 /// open → triaged requires assignee IS SET.
@@ -197,7 +222,10 @@ async fn full_lifecycle_happy_path() {
         &id,
         "resolved",
         "agent_1",
-        vec![("resolution_note", Value::Text("Cleared cache, fixed.".into()))],
+        vec![(
+            "resolution_note",
+            Value::Text("Cleared cache, fixed.".into()),
+        )],
     );
     let r = engine.transition(&cmd).await.unwrap();
     assert_eq!(r.to_state, "resolved");
@@ -477,7 +505,11 @@ async fn multiple_tickets_diverse_paths() {
     let result = engine.execute_query(&q).await.unwrap();
     match result {
         QueryResult::Aggregate(rows) => {
-            assert_eq!(rows.len(), 3, "3 state groups: open, resolved, waiting_on_customer");
+            assert_eq!(
+                rows.len(),
+                3,
+                "3 state groups: open, resolved, waiting_on_customer"
+            );
         }
         _ => panic!("expected Aggregate"),
     }

@@ -209,10 +209,18 @@ mod coverage_tests {
     fn predicate_incompatible_types_returns_false() {
         // Int vs Text — compare_values returns None, so Gt returns false
         let data = data_with("x", Value::Int(10));
-        assert!(!FilterPredicate::Gt("x".to_string(), Value::Text("hello".to_string())).matches(&data));
-        assert!(!FilterPredicate::Lt("x".to_string(), Value::Text("hello".to_string())).matches(&data));
-        assert!(!FilterPredicate::Gte("x".to_string(), Value::Text("hello".to_string())).matches(&data));
-        assert!(!FilterPredicate::Lte("x".to_string(), Value::Text("hello".to_string())).matches(&data));
+        assert!(
+            !FilterPredicate::Gt("x".to_string(), Value::Text("hello".to_string())).matches(&data)
+        );
+        assert!(
+            !FilterPredicate::Lt("x".to_string(), Value::Text("hello".to_string())).matches(&data)
+        );
+        assert!(
+            !FilterPredicate::Gte("x".to_string(), Value::Text("hello".to_string())).matches(&data)
+        );
+        assert!(
+            !FilterPredicate::Lte("x".to_string(), Value::Text("hello".to_string())).matches(&data)
+        );
     }
 
     #[test]
@@ -235,7 +243,8 @@ mod coverage_tests {
     async fn mutation_remove_field() {
         let storage = MemoryStorage::new();
         let mut inst = make_instance("Order", "open");
-        inst.data.insert("extra".to_string(), Value::Text("val".to_string()));
+        inst.data
+            .insert("extra".to_string(), Value::Text("val".to_string()));
         let id = inst.id.clone();
         storage.store_instance(&inst).await.unwrap();
 
@@ -318,8 +327,11 @@ mod coverage_tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         let err_str = format!("{}", err);
-        assert!(err_str.contains("not found") || err_str.contains("Not found"),
-            "Expected 'not found' error, got: {}", err_str);
+        assert!(
+            err_str.contains("not found") || err_str.contains("Not found"),
+            "Expected 'not found' error, got: {}",
+            err_str
+        );
     }
 
     // -----------------------------------------------------------------------

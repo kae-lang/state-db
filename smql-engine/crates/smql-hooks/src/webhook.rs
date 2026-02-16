@@ -115,10 +115,7 @@ pub enum WebhookError {
 }
 
 /// Build the JSON body for a webhook POST request.
-pub fn build_webhook_body(
-    ctx: &HookContext,
-    payload: Option<&Value>,
-) -> serde_json::Value {
+pub fn build_webhook_body(ctx: &HookContext, payload: Option<&Value>) -> serde_json::Value {
     let mut body = serde_json::json!({
         "event_type": "transition",
         "instance_id": ctx.instance_id,
@@ -147,9 +144,7 @@ pub fn value_to_json(value: &Value) -> serde_json::Value {
         Value::Int(i) => serde_json::json!(i),
         Value::Float(f) => serde_json::json!(f),
         Value::Text(s) => serde_json::Value::String(s.clone()),
-        Value::List(items) => {
-            serde_json::Value::Array(items.iter().map(value_to_json).collect())
-        }
+        Value::List(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
         Value::Map(map) => {
             let obj: serde_json::Map<String, serde_json::Value> = map
                 .iter()
@@ -157,9 +152,7 @@ pub fn value_to_json(value: &Value) -> serde_json::Value {
                 .collect();
             serde_json::Value::Object(obj)
         }
-        Value::Set(items) => {
-            serde_json::Value::Array(items.iter().map(value_to_json).collect())
-        }
+        Value::Set(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
         Value::Date(d) => serde_json::Value::String(d.to_string()),
         Value::DateTime(dt) => serde_json::Value::String(dt.to_rfc3339()),
         Value::Duration(d) => serde_json::Value::String(d.to_string()),
@@ -201,9 +194,10 @@ mod tests {
     #[test]
     fn webhook_body_structure() {
         let ctx = test_ctx();
-        let payload = Value::Map(BTreeMap::from([
-            ("key".to_string(), Value::Text("val".to_string())),
-        ]));
+        let payload = Value::Map(BTreeMap::from([(
+            "key".to_string(),
+            Value::Text("val".to_string()),
+        )]));
         let body = build_webhook_body(&ctx, Some(&payload));
 
         assert_eq!(body["event_type"], "transition");

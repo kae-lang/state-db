@@ -3,18 +3,15 @@
 //! These tests target code paths not already covered by the internal eval_tests module,
 //! focusing on edge cases, function variants, and less common expression kinds.
 
-use smql_engine_core::eval::{eval_expr, eval_guard, ActorInfo, ChildInfo, EvalContext};
 use smql_ast::expression::{BinaryOperator, Expression, ExpressionKind, UnaryOperator};
 use smql_ast::value::{SmqlDuration, Value};
+use smql_engine_core::eval::{eval_expr, eval_guard, ActorInfo, ChildInfo, EvalContext};
 use std::collections::{BTreeMap, HashMap};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn ctx_with_data(data: Vec<(&str, Value)>) -> EvalContext {
-    let map: HashMap<String, Value> = data
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect();
+    let map: HashMap<String, Value> = data.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
     EvalContext::new(map, "open".to_string())
 }
 
@@ -59,10 +56,7 @@ fn make_child(id: &str, machine: &str, state: &str, data: Vec<(&str, Value)>) ->
         id: id.to_string(),
         machine: machine.to_string(),
         state: state.to_string(),
-        data: data
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
+        data: data.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
     }
 }
 
@@ -146,7 +140,10 @@ fn func_elapsed_in_state_returns_duration() {
 #[test]
 fn func_elapsed_since_returns_duration() {
     let ctx = ctx_with_data(vec![]);
-    let expr = func("elapsed_since", vec![lit(Value::Text("some_state".to_string()))]);
+    let expr = func(
+        "elapsed_since",
+        vec![lit(Value::Text("some_state".to_string()))],
+    );
     let result = eval_expr(&expr, &ctx).unwrap();
     match result {
         Value::Duration(d) => assert!(d.seconds <= 1),
@@ -497,10 +494,7 @@ fn neg_null_error() {
 #[test]
 fn neg_list_error() {
     let ctx = ctx_with_data(vec![]);
-    let expr = unaryop(
-        UnaryOperator::Neg,
-        lit(Value::List(vec![Value::Int(1)])),
-    );
+    let expr = unaryop(UnaryOperator::Neg, lit(Value::List(vec![Value::Int(1)])));
     assert!(eval_expr(&expr, &ctx).is_err());
 }
 
@@ -760,10 +754,7 @@ fn duration_literal_evaluates() {
 
 #[test]
 fn complex_and_or_not_combination() {
-    let ctx = ctx_with_data(vec![
-        ("x", Value::Int(10)),
-        ("y", Value::Int(5)),
-    ]);
+    let ctx = ctx_with_data(vec![("x", Value::Int(10)), ("y", Value::Int(5))]);
 
     // (x > 5 AND y < 10) OR NOT(x == 0)
     let x_gt_5 = binop(field("x"), BinaryOperator::Gt, lit(Value::Int(5)));
@@ -809,7 +800,12 @@ fn child_deep_path_nested_map() {
 #[test]
 fn child_deep_path_missing_intermediate() {
     let mut ctx = ctx_with_data(vec![]);
-    let child = make_child("c1", "Order", "active", vec![("name", Value::Text("test".to_string()))]);
+    let child = make_child(
+        "c1",
+        "Order",
+        "active",
+        vec![("name", Value::Text("test".to_string()))],
+    );
     ctx.children.insert("orders".to_string(), vec![child]);
 
     // orders.name.nonexistent — name is Text, not Map, so returns Null

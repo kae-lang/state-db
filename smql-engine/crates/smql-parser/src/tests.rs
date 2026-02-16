@@ -5,8 +5,8 @@ mod lexer_tests {
 
 #[cfg(test)]
 mod expression_tests {
-    use crate::lexer;
     use crate::expr;
+    use crate::lexer;
     use crate::Parser;
     use smql_ast::expression::*;
     use smql_ast::value::Value;
@@ -48,7 +48,10 @@ mod expression_tests {
         let e = parse_expr("a.b.c");
         // This should be FieldAccess with ["a", "b", "c"] since `a` is an identifier
         // parsed as FieldAccess(["a"]), then dots extend it
-        assert_eq!(e.kind, ExpressionKind::FieldAccess(vec!["a".into(), "b".into(), "c".into()]));
+        assert_eq!(
+            e.kind,
+            ExpressionKind::FieldAccess(vec!["a".into(), "b".into(), "c".into()])
+        );
     }
 
     #[test]
@@ -460,9 +463,11 @@ DEFINE MACHINE WithMutate (
 
     #[test]
     fn parse_support_ticket_smql() {
-        let input = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/support_ticket.smql")
-        ).unwrap();
+        let input = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/support_ticket.smql"
+        ))
+        .unwrap();
         let m = parse_machine(&input).unwrap();
         assert_eq!(m.name, "SupportTicket");
         assert_eq!(m.states.len(), 7);
@@ -474,9 +479,11 @@ DEFINE MACHINE WithMutate (
 
     #[test]
     fn parse_order_smql() {
-        let input = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/order.smql")
-        ).unwrap();
+        let input = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/order.smql"
+        ))
+        .unwrap();
         let machines = parse_machines(&input).unwrap();
         assert_eq!(machines.len(), 3);
         assert_eq!(machines[0].name, "Order");
@@ -488,7 +495,7 @@ DEFINE MACHINE WithMutate (
 #[cfg(test)]
 mod command_tests {
     use crate::parse;
-    use smql_ast::command::{Statement, Command};
+    use smql_ast::command::{Command, Statement};
 
     #[test]
     fn parse_spawn_command() {

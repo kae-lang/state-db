@@ -1,8 +1,6 @@
 //! Coverage tests for uncovered parser code paths in machine.rs and commands.rs.
 
-use smql_ast::command::{
-    AlterOperation, Command, Statement,
-};
+use smql_ast::command::{AlterOperation, Command, Statement};
 use smql_ast::machine::*;
 use smql_ast::query::Query;
 use smql_ast::types::*;
@@ -102,7 +100,10 @@ DEFINE MACHINE WithRoles (
 )
 "#;
     let result = smql_parser::parse_machines(input);
-    assert!(result.is_err(), "Expected error because CAN is not a keyword");
+    assert!(
+        result.is_err(),
+        "Expected error because CAN is not a keyword"
+    );
 }
 
 // ---- 2. Invalid keyword in machine body (error) ----
@@ -121,7 +122,10 @@ DEFINE MACHINE Bad (
 )
 "#;
     let result = smql_parser::parse_machines(input);
-    assert!(result.is_err(), "Expected parse error for unknown token in machine body");
+    assert!(
+        result.is_err(),
+        "Expected parse error for unknown token in machine body"
+    );
 }
 
 // ---- 3. MAP type ----
@@ -141,7 +145,10 @@ DEFINE MACHINE WithMap (
     assert_eq!(m.data.len(), 1);
     assert_eq!(
         m.data[0].field_type,
-        TypeDefinition::Map(Box::new(TypeDefinition::Text), Box::new(TypeDefinition::Int))
+        TypeDefinition::Map(
+            Box::new(TypeDefinition::Text),
+            Box::new(TypeDefinition::Int)
+        )
     );
     assert_eq!(m.data[0].constraints, vec![Constraint::Required]);
 }
@@ -771,10 +778,7 @@ fn parse_alter_machine_add_transition() {
             assert_eq!(a.operations.len(), 1);
             match &a.operations[0] {
                 AlterOperation::AddTransition(t) => {
-                    assert_eq!(
-                        t.from,
-                        TransitionSource::State("draft".into())
-                    );
+                    assert_eq!(t.from, TransitionSource::State("draft".into()));
                     assert_eq!(t.to, "submitted");
                 }
                 other => panic!("Expected AddTransition, got {:?}", other),
@@ -836,7 +840,10 @@ fn parse_alter_machine_add_data_no_backfill() {
                 AlterOperation::AddData { field, backfill } => {
                     assert_eq!(field.name, "count");
                     assert_eq!(field.field_type, TypeDefinition::Int);
-                    assert_eq!(field.constraints, vec![Constraint::Default(DefaultValue::Int(0))]);
+                    assert_eq!(
+                        field.constraints,
+                        vec![Constraint::Default(DefaultValue::Int(0))]
+                    );
                     assert!(backfill.is_none());
                 }
                 other => panic!("Expected AddData, got {:?}", other),
@@ -1052,7 +1059,10 @@ DEFINE MACHINE WithAlterRole (
 )
 "#;
     let result = smql_parser::parse_machines(input);
-    assert!(result.is_err(), "Expected error because CAN is not a keyword");
+    assert!(
+        result.is_err(),
+        "Expected error because CAN is not a keyword"
+    );
 }
 
 // ---- ALTER MACHINE with REMOVE STATE (includes MIGRATE TO) ----
@@ -1206,10 +1216,7 @@ DEFINE MACHINE WithRange (
 )
 "#;
     let m = parse_one_machine(input);
-    assert_eq!(
-        m.data[0].constraints,
-        vec![Constraint::Range(1, 999)]
-    );
+    assert_eq!(m.data[0].constraints, vec![Constraint::Range(1, 999)]);
 }
 
 // ---- UNIQUE constraint ----
@@ -1465,7 +1472,10 @@ FIND Machine WHERE STATE IS open LIMIT 10
     assert_eq!(stmts.len(), 4);
     assert!(matches!(&stmts[0], Statement::Command(Command::Spawn(_))));
     assert!(matches!(&stmts[1], Statement::Query(Query::Get(_))));
-    assert!(matches!(&stmts[2], Statement::Command(Command::Transition(_))));
+    assert!(matches!(
+        &stmts[2],
+        Statement::Command(Command::Transition(_))
+    ));
     assert!(matches!(&stmts[3], Statement::Query(Query::Find(_))));
 }
 
@@ -1475,14 +1485,20 @@ FIND Machine WHERE STATE IS open LIMIT 10
 fn parse_error_unexpected_token_at_start() {
     let input = "FOOBAR something";
     let result = smql_parser::parse(input);
-    assert!(result.is_err(), "Expected parse error for unknown statement keyword");
+    assert!(
+        result.is_err(),
+        "Expected parse error for unknown statement keyword"
+    );
 }
 
 #[test]
 fn parse_error_incomplete_machine() {
     let input = "DEFINE MACHINE Broken (";
     let result = smql_parser::parse_machine(input);
-    assert!(result.is_err(), "Expected parse error for incomplete machine");
+    assert!(
+        result.is_err(),
+        "Expected parse error for incomplete machine"
+    );
 }
 
 // ---- BATCH TRANSITION with WITH / MEMO / AS clauses ----
@@ -1684,7 +1700,10 @@ DEFINE MACHINE AllTypes (
     assert_eq!(m.data[7].field_type, TypeDefinition::Duration);
     assert_eq!(m.data[8].field_type, TypeDefinition::Blob);
     assert_eq!(m.data[9].field_type, TypeDefinition::Json);
-    assert_eq!(m.data[10].field_type, TypeDefinition::Enum(vec!["a".into(), "b".into(), "c".into()]));
+    assert_eq!(
+        m.data[10].field_type,
+        TypeDefinition::Enum(vec!["a".into(), "b".into(), "c".into()])
+    );
 }
 
 // ---- LIST child with MIN only ----
@@ -1801,7 +1820,8 @@ fn parse_find_multiple_sort_fields() {
 
 #[test]
 fn parse_alter_machine_multiple_operations() {
-    let input = "ALTER MACHINE Ticket ADD STATE review ADD TRANSITION open -> review REMOVE DATA old_field";
+    let input =
+        "ALTER MACHINE Ticket ADD STATE review ADD TRANSITION open -> review REMOVE DATA old_field";
     let cmd = parse_one_command(input);
     match cmd {
         Command::AlterMachine(a) => {
@@ -1831,7 +1851,9 @@ DEFINE MACHINE Nested (
     let m = parse_one_machine(input);
     assert_eq!(
         m.data[0].field_type,
-        TypeDefinition::List(Box::new(TypeDefinition::List(Box::new(TypeDefinition::Int))))
+        TypeDefinition::List(Box::new(TypeDefinition::List(Box::new(
+            TypeDefinition::Int
+        ))))
     );
 }
 
@@ -1861,5 +1883,8 @@ fn parse_transition_without_machine_name_fails() {
     // When given `TRANSITION "id" TO state`, the parser reads the string as ident which fails.
     let input = r#"TRANSITION "01ABC" TO done"#;
     let result = smql_parser::parse(input);
-    assert!(result.is_err(), "Old syntax without machine name should fail");
+    assert!(
+        result.is_err(),
+        "Old syntax without machine name should fail"
+    );
 }

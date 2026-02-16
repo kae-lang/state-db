@@ -1,10 +1,10 @@
-use smql_ast::{SmqlError, SmqlResult};
-use smql_ast::machine::*;
-use smql_ast::types::*;
-use crate::lexer::TokenKind;
 use crate::common;
 use crate::expr;
+use crate::lexer::TokenKind;
 use crate::Parser;
+use smql_ast::machine::*;
+use smql_ast::types::*;
+use smql_ast::{SmqlError, SmqlResult};
 
 /// Parse DEFINE MACHINE Name ( ... ).
 pub fn parse_define_machine(parser: &mut Parser) -> SmqlResult<MachineDefinition> {
@@ -252,9 +252,18 @@ fn parse_default_value(parser: &mut Parser) -> SmqlResult<DefaultValue> {
         }
         Some(TokenKind::Keyword(k)) => {
             match k.as_str() {
-                "TRUE" => { parser.advance()?; Ok(DefaultValue::Bool(true)) }
-                "FALSE" => { parser.advance()?; Ok(DefaultValue::Bool(false)) }
-                "NULL" => { parser.advance()?; Ok(DefaultValue::Null) }
+                "TRUE" => {
+                    parser.advance()?;
+                    Ok(DefaultValue::Bool(true))
+                }
+                "FALSE" => {
+                    parser.advance()?;
+                    Ok(DefaultValue::Bool(false))
+                }
+                "NULL" => {
+                    parser.advance()?;
+                    Ok(DefaultValue::Null)
+                }
                 _ => {
                     // Could be an enum variant name
                     let name = parser.expect_ident()?;
@@ -391,18 +400,16 @@ fn parse_transition_def(parser: &mut Parser) -> SmqlResult<TransitionDefinition>
                                 parser.expect_punct("}")?;
                             }
                             // Represent as a function call: __spawn(machine, key1, val1, ...)
-                            let mut args = vec![
-                                smql_ast::expression::Expression::new(
-                                    smql_ast::expression::ExpressionKind::Literal(
-                                        smql_ast::value::Value::Text(machine)
-                                    )
-                                )
-                            ];
+                            let mut args = vec![smql_ast::expression::Expression::new(
+                                smql_ast::expression::ExpressionKind::Literal(
+                                    smql_ast::value::Value::Text(machine),
+                                ),
+                            )];
                             for (k, v) in data {
                                 args.push(smql_ast::expression::Expression::new(
                                     smql_ast::expression::ExpressionKind::Literal(
-                                        smql_ast::value::Value::Text(k)
-                                    )
+                                        smql_ast::value::Value::Text(k),
+                                    ),
                                 ));
                                 args.push(v);
                             }
@@ -410,7 +417,7 @@ fn parse_transition_def(parser: &mut Parser) -> SmqlResult<TransitionDefinition>
                                 smql_ast::expression::ExpressionKind::FunctionCall {
                                     name: "__spawn".into(),
                                     args,
-                                }
+                                },
                             );
                             transition.mutates.push(MutateClause { field, value });
                         } else {
@@ -432,7 +439,9 @@ fn parse_transition_def(parser: &mut Parser) -> SmqlResult<TransitionDefinition>
                         parser.expect_keyword("PARENT")?;
                         parser.expect_keyword("TO")?;
                         let target_state = parser.expect_ident()?;
-                        transition.actions.push(Action::SignalParent { target_state });
+                        transition
+                            .actions
+                            .push(Action::SignalParent { target_state });
                     }
                     _ => {
                         // Skip unknown tokens in transition body
@@ -522,7 +531,9 @@ fn parse_action(parser: &mut Parser) -> SmqlResult<Action> {
                 _ => Err(SmqlError::ParseError {
                     message: format!("Unknown action '{}'", kw),
                     span: None,
-                    hint: Some("Valid actions: NOTIFY, LOG, EMIT, WEBHOOK, SPAWN, SIGNAL PARENT TO".into()),
+                    hint: Some(
+                        "Valid actions: NOTIFY, LOG, EMIT, WEBHOOK, SPAWN, SIGNAL PARENT TO".into(),
+                    ),
                 }),
             }
         }
@@ -556,7 +567,11 @@ fn parse_children_block(parser: &mut Parser) -> SmqlResult<Vec<ChildDefinition>>
                         parser.expect_punct("(")?;
                         let min = common::parse_int_literal(parser)?;
                         parser.expect_punct(")")?;
-                        if let ChildCardinality::List { min: ref mut min_val, .. } = child.cardinality {
+                        if let ChildCardinality::List {
+                            min: ref mut min_val,
+                            ..
+                        } = child.cardinality
+                        {
                             *min_val = Some(min as u64);
                         }
                     }
@@ -565,7 +580,11 @@ fn parse_children_block(parser: &mut Parser) -> SmqlResult<Vec<ChildDefinition>>
                         parser.expect_punct("(")?;
                         let max = common::parse_int_literal(parser)?;
                         parser.expect_punct(")")?;
-                        if let ChildCardinality::List { max: ref mut max_val, .. } = child.cardinality {
+                        if let ChildCardinality::List {
+                            max: ref mut max_val,
+                            ..
+                        } = child.cardinality
+                        {
                             *max_val = Some(max as u64);
                         }
                     }
@@ -586,30 +605,32 @@ fn parse_children_block(parser: &mut Parser) -> SmqlResult<Vec<ChildDefinition>>
 fn parse_child_type(parser: &mut Parser) -> SmqlResult<(String, ChildCardinality)> {
     let tok = parser.advance()?;
     match &tok.kind {
-        TokenKind::Keyword(k) => {
-            match k.as_str() {
-                "LIST" => {
-                    parser.expect_punct("(")?;
-                    let machine = parser.expect_ident()?;
-                    parser.expect_punct(")")?;
-                    Ok((machine, ChildCardinality::List { min: None, max: None }))
-                }
-                "OPTIONAL" => {
-                    parser.expect_punct("(")?;
-                    let machine = parser.expect_ident()?;
-                    parser.expect_punct(")")?;
-                    Ok((machine, ChildCardinality::Optional))
-                }
-                _ => Err(SmqlError::ParseError {
-                    message: format!("Expected LIST or OPTIONAL, found '{}'", k),
-                    span: None,
-                    hint: None,
-                }),
+        TokenKind::Keyword(k) => match k.as_str() {
+            "LIST" => {
+                parser.expect_punct("(")?;
+                let machine = parser.expect_ident()?;
+                parser.expect_punct(")")?;
+                Ok((
+                    machine,
+                    ChildCardinality::List {
+                        min: None,
+                        max: None,
+                    },
+                ))
             }
-        }
-        TokenKind::Identifier(name) => {
-            Ok((name.clone(), ChildCardinality::Required))
-        }
+            "OPTIONAL" => {
+                parser.expect_punct("(")?;
+                let machine = parser.expect_ident()?;
+                parser.expect_punct(")")?;
+                Ok((machine, ChildCardinality::Optional))
+            }
+            _ => Err(SmqlError::ParseError {
+                message: format!("Expected LIST or OPTIONAL, found '{}'", k),
+                span: None,
+                hint: None,
+            }),
+        },
+        TokenKind::Identifier(name) => Ok((name.clone(), ChildCardinality::Required)),
         _ => Err(SmqlError::parse("Expected child type")),
     }
 }
@@ -665,7 +686,9 @@ fn parse_hook_trigger(parser: &mut Parser) -> SmqlResult<HookTrigger> {
             parser.expect_punct(")")?;
             Ok(HookTrigger::OnDwell { state, duration })
         } else {
-            Err(SmqlError::parse("Expected SPAWN, ENTER, EXIT, or DWELL after ON"))
+            Err(SmqlError::parse(
+                "Expected SPAWN, ENTER, EXIT, or DWELL after ON",
+            ))
         }
     } else if parser.try_keyword("BEFORE") {
         parser.expect_keyword("EACH")?;
@@ -676,7 +699,9 @@ fn parse_hook_trigger(parser: &mut Parser) -> SmqlResult<HookTrigger> {
         parser.expect_keyword("TRANSITION")?;
         Ok(HookTrigger::AfterEachTransition)
     } else {
-        Err(SmqlError::parse("Expected ON, BEFORE, or AFTER for hook trigger"))
+        Err(SmqlError::parse(
+            "Expected ON, BEFORE, or AFTER for hook trigger",
+        ))
     }
 }
 
@@ -712,7 +737,10 @@ fn parse_roles_block(parser: &mut Parser) -> SmqlResult<Vec<RoleDefinition>> {
                 "QUERY" => permissions.push(RolePermission::CanQuery),
                 "ALTER" => permissions.push(RolePermission::CanAlter),
                 _ => {
-                    return Err(SmqlError::parse(format!("Unknown permission '{}'", perm_kw)));
+                    return Err(SmqlError::parse(format!(
+                        "Unknown permission '{}'",
+                        perm_kw
+                    )));
                 }
             }
         }

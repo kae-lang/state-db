@@ -1,17 +1,20 @@
-use smql_ast::{SmqlError, SmqlResult};
-use smql_ast::query::*;
-use smql_ast::types::{AggregateFunction, SortClause, SortDirection};
-use crate::lexer::TokenKind;
 use crate::common;
 use crate::expr;
+use crate::lexer::TokenKind;
 use crate::Parser;
+use smql_ast::query::*;
+use smql_ast::types::{AggregateFunction, SortClause, SortDirection};
+use smql_ast::{SmqlError, SmqlResult};
 
 /// Parse GET Machine instance_id.
 pub fn parse_get(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     parser.expect_keyword("GET")?;
     let machine = parser.expect_ident()?;
     let instance_id = parser.expect_ident_or_string()?;
-    Ok(Query::Get(GetQuery { machine, instance_id }))
+    Ok(Query::Get(GetQuery {
+        machine,
+        instance_id,
+    }))
 }
 
 /// Parse FIND Machine [WHERE ...] [SORT ...] [LIMIT n] [OFFSET n].

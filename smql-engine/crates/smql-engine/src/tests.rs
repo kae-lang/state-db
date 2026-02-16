@@ -6,10 +6,8 @@ mod eval_tests {
     use std::collections::HashMap;
 
     fn ctx_with_data(data: Vec<(&str, Value)>) -> EvalContext {
-        let map: HashMap<String, Value> = data
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        let map: HashMap<String, Value> =
+            data.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         EvalContext::new(map, "open".to_string())
     }
 
@@ -112,7 +110,11 @@ mod eval_tests {
     #[test]
     fn eval_int_float_coercion() {
         let ctx = ctx_with_data(vec![]);
-        let expr = binop(lit(Value::Int(5)), BinaryOperator::Eq, lit(Value::Float(5.0)));
+        let expr = binop(
+            lit(Value::Int(5)),
+            BinaryOperator::Eq,
+            lit(Value::Float(5.0)),
+        );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
 
@@ -202,9 +204,9 @@ mod eval_tests {
             name: "elapsed".to_string(),
             args: vec![],
         });
-        let threshold = Expression::new(ExpressionKind::DurationLiteral(
-            SmqlDuration::from_hours(24),
-        ));
+        let threshold = Expression::new(ExpressionKind::DurationLiteral(SmqlDuration::from_hours(
+            24,
+        )));
         let expr = binop(elapsed, BinaryOperator::Gt, threshold);
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
@@ -240,11 +242,7 @@ mod eval_tests {
         let ctx = ctx_with_data(vec![("priority", Value::Int(2))]);
         let expr = Expression::new(ExpressionKind::InSet {
             expr: Box::new(field("priority")),
-            values: vec![
-                lit(Value::Int(1)),
-                lit(Value::Int(2)),
-                lit(Value::Int(3)),
-            ],
+            values: vec![lit(Value::Int(1)), lit(Value::Int(2)), lit(Value::Int(3))],
         });
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
@@ -254,11 +252,7 @@ mod eval_tests {
         let ctx = ctx_with_data(vec![("priority", Value::Int(5))]);
         let expr = Expression::new(ExpressionKind::InSet {
             expr: Box::new(field("priority")),
-            values: vec![
-                lit(Value::Int(1)),
-                lit(Value::Int(2)),
-                lit(Value::Int(3)),
-            ],
+            values: vec![lit(Value::Int(1)), lit(Value::Int(2)), lit(Value::Int(3))],
         });
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
     }
@@ -427,22 +421,13 @@ mod engine_tests {
             },
         ];
         m.transitions = vec![
-            TransitionDefinition::new(
-                TransitionSource::State("open".into()),
-                "in_progress".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("open".into()), "in_progress".into()),
             TransitionDefinition::new(
                 TransitionSource::State("in_progress".into()),
                 "resolved".into(),
             ),
-            TransitionDefinition::new(
-                TransitionSource::State("resolved".into()),
-                "closed".into(),
-            ),
-            TransitionDefinition::new(
-                TransitionSource::State("in_progress".into()),
-                "open".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("resolved".into()), "closed".into()),
+            TransitionDefinition::new(TransitionSource::State("in_progress".into()), "open".into()),
         ];
 
         engine.catalog.register(m).unwrap();
@@ -470,10 +455,8 @@ mod engine_tests {
         ];
 
         // draft -> published with guard: approved == true
-        let mut t = TransitionDefinition::new(
-            TransitionSource::State("draft".into()),
-            "published".into(),
-        );
+        let mut t =
+            TransitionDefinition::new(TransitionSource::State("draft".into()), "published".into());
         t.guards = vec![Expression::new(ExpressionKind::BinaryOp {
             left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
                 "approved".to_string(),
@@ -516,12 +499,7 @@ mod engine_tests {
             machine: machine.to_string(),
             data: data
                 .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k.to_string(),
-                        Expression::new(ExpressionKind::Literal(v)),
-                    )
-                })
+                .map(|(k, v)| (k.to_string(), Expression::new(ExpressionKind::Literal(v))))
                 .collect(),
             then_transition: None,
             batch: false,
@@ -532,7 +510,11 @@ mod engine_tests {
     }
 
     fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-        TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
+        TransitionCommand::new(
+            machine.to_string(),
+            instance_id.to_string(),
+            to_state.to_string(),
+        )
     }
 
     // --- Spawn tests ---
@@ -604,11 +586,7 @@ mod engine_tests {
         let cmd = spawn_cmd("Ticket", vec![("title", Value::Text("test".into()))]);
         let result = engine.spawn(&cmd).await.unwrap();
 
-        let trail = engine
-            .storage
-            .get_trail(&result.instance.id)
-            .await
-            .unwrap();
+        let trail = engine.storage.get_trail(&result.instance.id).await.unwrap();
         assert_eq!(trail.len(), 1);
         assert_eq!(trail[0].to_state, "open");
         assert_eq!(trail[0].transition_name, Some("SPAWN".to_string()));
@@ -735,7 +713,9 @@ mod engine_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let result = engine.transition(&transition_cmd("GuardedMachine", &id, "published")).await;
+        let result = engine
+            .transition(&transition_cmd("GuardedMachine", &id, "published"))
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().instance.state, "published");
     }
@@ -755,7 +735,9 @@ mod engine_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let result = engine.transition(&transition_cmd("GuardedMachine", &id, "published")).await;
+        let result = engine
+            .transition(&transition_cmd("GuardedMachine", &id, "published"))
+            .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, smql_ast::SmqlError::TransitionDenied(_)));
@@ -998,18 +980,12 @@ mod query_tests {
             },
         ];
         m.transitions = vec![
-            TransitionDefinition::new(
-                TransitionSource::State("open".into()),
-                "in_progress".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("open".into()), "in_progress".into()),
             TransitionDefinition::new(
                 TransitionSource::State("in_progress".into()),
                 "resolved".into(),
             ),
-            TransitionDefinition::new(
-                TransitionSource::State("resolved".into()),
-                "closed".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("resolved".into()), "closed".into()),
         ];
         engine.catalog.register(m).unwrap();
     }
@@ -1100,9 +1076,18 @@ mod query_tests {
         let engine = setup_engine();
         register_ticket_machine(&engine);
 
-        engine.spawn(&spawn_ticket(&engine, "Low", 5)).await.unwrap();
-        engine.spawn(&spawn_ticket(&engine, "High", 1)).await.unwrap();
-        engine.spawn(&spawn_ticket(&engine, "Medium", 3)).await.unwrap();
+        engine
+            .spawn(&spawn_ticket(&engine, "Low", 5))
+            .await
+            .unwrap();
+        engine
+            .spawn(&spawn_ticket(&engine, "High", 1))
+            .await
+            .unwrap();
+        engine
+            .spawn(&spawn_ticket(&engine, "Medium", 3))
+            .await
+            .unwrap();
 
         // FIND Ticket WHERE priority < 3
         let filter = Expression::new(ExpressionKind::BinaryOp {
@@ -1202,7 +1187,11 @@ mod query_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&TransitionCommand::new("Ticket".into(), id.to_string(), "in_progress".into()))
+            .transition(&TransitionCommand::new(
+                "Ticket".into(),
+                id.to_string(),
+                "in_progress".into(),
+            ))
             .await
             .unwrap();
 
@@ -1336,9 +1325,7 @@ mod query_tests {
                 .and_then(|r| r.measures.get("count"));
             let ip_count = rows
                 .iter()
-                .find(|r| {
-                    r.group_key.get("state") == Some(&Value::Text("in_progress".into()))
-                })
+                .find(|r| r.group_key.get("state") == Some(&Value::Text("in_progress".into())))
                 .and_then(|r| r.measures.get("count"));
 
             assert_eq!(open_count, Some(&Value::Int(1)));
@@ -1455,9 +1442,18 @@ mod query_tests {
         let engine = setup_engine();
         register_ticket_machine(&engine);
 
-        engine.spawn(&spawn_ticket(&engine, "Low", 5)).await.unwrap();
-        engine.spawn(&spawn_ticket(&engine, "High", 1)).await.unwrap();
-        engine.spawn(&spawn_ticket(&engine, "Med", 3)).await.unwrap();
+        engine
+            .spawn(&spawn_ticket(&engine, "Low", 5))
+            .await
+            .unwrap();
+        engine
+            .spawn(&spawn_ticket(&engine, "High", 1))
+            .await
+            .unwrap();
+        engine
+            .spawn(&spawn_ticket(&engine, "Med", 3))
+            .await
+            .unwrap();
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
@@ -1839,7 +1835,10 @@ mod query_tests {
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Trail(entries) = result {
             assert!(entries.len() >= 2);
-            let transition_entry = entries.iter().find(|e| e.to_state == "in_progress").unwrap();
+            let transition_entry = entries
+                .iter()
+                .find(|e| e.to_state == "in_progress")
+                .unwrap();
             assert_eq!(transition_entry.actor, Some("bob".to_string()));
         } else {
             panic!("Expected Trail result");
@@ -2101,11 +2100,7 @@ mod timer_tests {
         let catalog = Arc::new(MachineCatalog::new());
         let storage = Arc::new(MemoryStorage::new());
         let timer_manager = Arc::new(TimerManager::new());
-        let engine = Engine::with_timer_manager(
-            catalog,
-            storage,
-            Arc::clone(&timer_manager),
-        );
+        let engine = Engine::with_timer_manager(catalog, storage, Arc::clone(&timer_manager));
         (engine, timer_manager)
     }
 
@@ -2126,23 +2121,16 @@ mod timer_tests {
         }];
 
         // waiting -> active with a 72h timeout that auto-transitions to expired
-        let mut t1 = TransitionDefinition::new(
-            TransitionSource::State("waiting".into()),
-            "active".into(),
-        );
+        let mut t1 =
+            TransitionDefinition::new(TransitionSource::State("waiting".into()), "active".into());
         t1.timeout = Some(TimeoutClause {
             duration: SmqlDuration::from_hours(72),
             target_state: "expired".into(),
         });
 
-        let t2 = TransitionDefinition::new(
-            TransitionSource::State("active".into()),
-            "done".into(),
-        );
-        let t3 = TransitionDefinition::new(
-            TransitionSource::State("expired".into()),
-            "done".into(),
-        );
+        let t2 = TransitionDefinition::new(TransitionSource::State("active".into()), "done".into());
+        let t3 =
+            TransitionDefinition::new(TransitionSource::State("expired".into()), "done".into());
 
         m.transitions = vec![t1, t2, t3];
         engine.catalog.register(m).unwrap();
@@ -2175,7 +2163,11 @@ mod timer_tests {
 
         // Transition to "active" — this transition has TIMEOUT: 72h -> expired
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
 
@@ -2198,14 +2190,22 @@ mod timer_tests {
 
         // Transition to active (registers 72h timeout)
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
         assert_eq!(timer_manager.timer_count(), 1);
 
         // Transition to done — should cancel the active timeout
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "done".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "done".into(),
+            ))
             .await
             .unwrap();
         assert_eq!(timer_manager.timer_count(), 0);
@@ -2231,7 +2231,11 @@ mod timer_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&TransitionCommand::new("NoTimeout".into(), id.to_string(), "b".into()))
+            .transition(&TransitionCommand::new(
+                "NoTimeout".into(),
+                id.to_string(),
+                "b".into(),
+            ))
             .await
             .unwrap();
 
@@ -2250,7 +2254,11 @@ mod timer_tests {
 
         // Move to active
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
 
@@ -2276,7 +2284,11 @@ mod timer_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
 
@@ -2311,11 +2323,19 @@ mod timer_tests {
 
         // Move to active, then to done
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "done".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "done".into(),
+            ))
             .await
             .unwrap();
 
@@ -2346,10 +2366,7 @@ mod timer_tests {
 
     #[test]
     fn eval_timeout_remaining_with_value() {
-        let mut ctx = EvalContext::new(
-            std::collections::HashMap::new(),
-            "active".to_string(),
-        );
+        let mut ctx = EvalContext::new(std::collections::HashMap::new(), "active".to_string());
         ctx.timeout_remaining = Some(chrono::TimeDelta::hours(12));
 
         let expr = Expression::new(ExpressionKind::FunctionCall {
@@ -2367,10 +2384,7 @@ mod timer_tests {
 
     #[test]
     fn eval_timeout_remaining_without_timer() {
-        let ctx = EvalContext::new(
-            std::collections::HashMap::new(),
-            "active".to_string(),
-        );
+        let ctx = EvalContext::new(std::collections::HashMap::new(), "active".to_string());
         // No timeout_remaining set (defaults to None)
 
         let expr = Expression::new(ExpressionKind::FunctionCall {
@@ -2396,7 +2410,11 @@ mod timer_tests {
 
         // Transition to active (registers 72h timeout)
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
 
@@ -2425,7 +2443,11 @@ mod timer_tests {
 
         // Transition to active
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
 
@@ -2478,11 +2500,19 @@ mod timer_tests {
 
         // Transition to active, then immediately to done
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "active".into(),
+            ))
             .await
             .unwrap();
         engine
-            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "done".into()))
+            .transition(&TransitionCommand::new(
+                "TimerMachine".into(),
+                id.to_string(),
+                "done".into(),
+            ))
             .await
             .unwrap();
 
@@ -2553,7 +2583,10 @@ mod timer_tests {
         engine.transition(&cmd2).await.unwrap();
 
         let timers = engine.storage.load_all_timers().await.unwrap();
-        assert!(timers.is_empty(), "Timer should be removed after transition away");
+        assert!(
+            timers.is_empty(),
+            "Timer should be removed after transition away"
+        );
     }
 
     #[tokio::test]
@@ -2574,11 +2607,7 @@ mod timer_tests {
         };
         storage.store_timer(&stored).await.unwrap();
 
-        let engine = Engine::with_timer_manager(
-            catalog,
-            storage,
-            Arc::clone(&timer_manager),
-        );
+        let engine = Engine::with_timer_manager(catalog, storage, Arc::clone(&timer_manager));
 
         // Before restore, timer manager is empty
         assert_eq!(timer_manager.timer_count(), 0);
@@ -2641,10 +2670,7 @@ mod hook_tests {
             },
         ];
         m.transitions = vec![
-            TransitionDefinition::new(
-                TransitionSource::State("open".into()),
-                "in_progress".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("open".into()), "in_progress".into()),
             TransitionDefinition::new(
                 TransitionSource::State("in_progress".into()),
                 "closed".into(),
@@ -2711,15 +2737,13 @@ mod hook_tests {
             constraints: vec![Constraint::Default(DefaultValue::String("untitled".into()))],
         }];
 
-        let mut t = TransitionDefinition::new(
-            TransitionSource::State("draft".into()),
-            "published".into(),
-        );
+        let mut t =
+            TransitionDefinition::new(TransitionSource::State("draft".into()), "published".into());
         t.actions = vec![
             Action::Emit {
                 event: "published".to_string(),
                 payload: Some(Expression::new(ExpressionKind::FieldAccess(vec![
-                    "title".to_string(),
+                    "title".to_string()
                 ]))),
             },
             Action::Log("Published: {title}".to_string()),
@@ -2734,12 +2758,7 @@ mod hook_tests {
             machine: machine.to_string(),
             data: data
                 .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k.to_string(),
-                        Expression::new(ExpressionKind::Literal(v)),
-                    )
-                })
+                .map(|(k, v)| (k.to_string(), Expression::new(ExpressionKind::Literal(v))))
                 .collect(),
             then_transition: None,
             batch: false,
@@ -2750,7 +2769,11 @@ mod hook_tests {
     }
 
     fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-        TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
+        TransitionCommand::new(
+            machine.to_string(),
+            instance_id.to_string(),
+            to_state.to_string(),
+        )
     }
 
     // --- ON SPAWN hook fires ---
@@ -2801,7 +2824,9 @@ mod hook_tests {
         let id = spawned.instance.id.as_str();
 
         // BEFORE hook has LOG action which always succeeds
-        let result = engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await;
+        let result = engine
+            .transition(&transition_cmd("HookedTicket", &id, "in_progress"))
+            .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().instance.state, "in_progress");
     }
@@ -2820,7 +2845,10 @@ mod hook_tests {
         // Drain spawn events
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
+        engine
+            .transition(&transition_cmd("HookedTicket", &id, "in_progress"))
+            .await
+            .unwrap();
 
         // Collect all events from this transition
         let mut events = Vec::new();
@@ -2845,7 +2873,10 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
+        engine
+            .transition(&transition_cmd("HookedTicket", &id, "in_progress"))
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2868,7 +2899,10 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
+        engine
+            .transition(&transition_cmd("HookedTicket", &id, "in_progress"))
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2885,13 +2919,19 @@ mod hook_tests {
         let (engine, event_bus) = setup_engine_with_event_bus();
         register_action_machine(&engine);
 
-        let cmd = spawn_cmd("ActionMachine", vec![("title", Value::Text("My Post".into()))]);
+        let cmd = spawn_cmd(
+            "ActionMachine",
+            vec![("title", Value::Text("My Post".into()))],
+        );
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd("ActionMachine", &id, "published")).await.unwrap();
+        engine
+            .transition(&transition_cmd("ActionMachine", &id, "published"))
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2939,7 +2979,10 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
+        engine
+            .transition(&transition_cmd("HookedTicket", &id, "in_progress"))
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2967,20 +3010,15 @@ mod hook_tests {
         ];
         m.terminal_states = vec!["expired".into()];
 
-        let mut t = TransitionDefinition::new(
-            TransitionSource::State("waiting".into()),
-            "active".into(),
-        );
+        let mut t =
+            TransitionDefinition::new(TransitionSource::State("waiting".into()), "active".into());
         t.timeout = Some(TimeoutClause {
             duration: smql_ast::value::SmqlDuration::from_hours(1),
             target_state: "expired".into(),
         });
         m.transitions = vec![
             t,
-            TransitionDefinition::new(
-                TransitionSource::State("active".into()),
-                "expired".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("active".into()), "expired".into()),
         ];
 
         m.hooks = vec![
@@ -3006,12 +3044,18 @@ mod hook_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        engine.transition(&transition_cmd("TimeoutHooked", &id, "active")).await.unwrap();
+        engine
+            .transition(&transition_cmd("TimeoutHooked", &id, "active"))
+            .await
+            .unwrap();
 
         let mut rx = event_bus.subscribe();
 
         // Simulate timeout
-        engine.timeout_transition(&id, "active", "expired").await.unwrap();
+        engine
+            .timeout_transition(&id, "active", "expired")
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -3053,10 +3097,14 @@ mod hook_tests {
         let id = spawned.instance.id.as_str();
 
         // Even with many hooks, transition should succeed
-        let result = engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await;
+        let result = engine
+            .transition(&transition_cmd("HookedTicket", &id, "in_progress"))
+            .await;
         assert!(result.is_ok());
 
-        let result2 = engine.transition(&transition_cmd("HookedTicket", &id, "closed")).await;
+        let result2 = engine
+            .transition(&transition_cmd("HookedTicket", &id, "closed"))
+            .await;
         assert!(result2.is_ok());
         assert_eq!(result2.unwrap().instance.state, "closed");
     }
@@ -3088,7 +3136,9 @@ mod hook_tests {
         let id = spawned.instance.id.as_str();
 
         // Log action shouldn't fail or block
-        let result = engine.transition(&transition_cmd("LogMachine", &id, "b")).await;
+        let result = engine
+            .transition(&transition_cmd("LogMachine", &id, "b"))
+            .await;
         assert!(result.is_ok());
     }
 
@@ -3104,10 +3154,7 @@ mod hook_tests {
             StateDefinition::new("b".into()),
         ];
 
-        let mut t = TransitionDefinition::new(
-            TransitionSource::State("a".into()),
-            "b".into(),
-        );
+        let mut t = TransitionDefinition::new(TransitionSource::State("a".into()), "b".into());
         t.actions = vec![Action::Emit {
             event: "4_transition_action".to_string(),
             payload: None,
@@ -3146,7 +3193,10 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd("OrderMachine", &id, "b")).await.unwrap();
+        engine
+            .transition(&transition_cmd("OrderMachine", &id, "b"))
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -3165,16 +3215,25 @@ mod hook_tests {
         assert!(after_idx.is_some(), "AFTER EACH should fire");
 
         // Verify ordering
-        assert!(exit_idx.unwrap() < action_idx.unwrap(), "EXIT before ACTION");
-        assert!(action_idx.unwrap() < enter_idx.unwrap(), "ACTION before ENTER");
-        assert!(enter_idx.unwrap() < after_idx.unwrap(), "ENTER before AFTER");
+        assert!(
+            exit_idx.unwrap() < action_idx.unwrap(),
+            "EXIT before ACTION"
+        );
+        assert!(
+            action_idx.unwrap() < enter_idx.unwrap(),
+            "ACTION before ENTER"
+        );
+        assert!(
+            enter_idx.unwrap() < after_idx.unwrap(),
+            "ENTER before AFTER"
+        );
     }
 }
 
 #[cfg(test)]
 mod composition_tests {
     use crate::engine::Engine;
-    use crate::eval::{ChildInfo, EvalContext, eval_expr};
+    use crate::eval::{eval_expr, ChildInfo, EvalContext};
     use smql_ast::command::{SpawnCommand, TransitionCommand};
     use smql_ast::expression::{BinaryOperator, Expression, ExpressionKind};
     use smql_ast::machine::*;
@@ -3216,7 +3275,10 @@ mod composition_tests {
         m.children = vec![ChildDefinition {
             name: "items".to_string(),
             machine: "LineItem".to_string(),
-            cardinality: ChildCardinality::List { min: None, max: None },
+            cardinality: ChildCardinality::List {
+                min: None,
+                max: None,
+            },
         }];
         m.transitions = vec![
             TransitionDefinition::new(
@@ -3229,7 +3291,9 @@ mod composition_tests {
             ),
             {
                 let t = TransitionDefinition::new(
-                    TransitionSource::Any { except: vec!["cancelled".into(), "shipped".into()] },
+                    TransitionSource::Any {
+                        except: vec!["cancelled".into(), "shipped".into()],
+                    },
                     "cancelled".into(),
                 );
                 t
@@ -3278,12 +3342,7 @@ mod composition_tests {
             machine: machine.to_string(),
             data: data
                 .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k.to_string(),
-                        Expression::new(ExpressionKind::Literal(v)),
-                    )
-                })
+                .map(|(k, v)| (k.to_string(), Expression::new(ExpressionKind::Literal(v))))
                 .collect(),
             then_transition: None,
             batch: false,
@@ -3293,17 +3352,17 @@ mod composition_tests {
         }
     }
 
-    fn spawn_child_cmd(machine: &str, data: Vec<(&str, Value)>, parent_id: &str, parent_machine: &str) -> SpawnCommand {
+    fn spawn_child_cmd(
+        machine: &str,
+        data: Vec<(&str, Value)>,
+        parent_id: &str,
+        parent_machine: &str,
+    ) -> SpawnCommand {
         SpawnCommand {
             machine: machine.to_string(),
             data: data
                 .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k.to_string(),
-                        Expression::new(ExpressionKind::Literal(v)),
-                    )
-                })
+                .map(|(k, v)| (k.to_string(), Expression::new(ExpressionKind::Literal(v))))
                 .collect(),
             then_transition: None,
             batch: false,
@@ -3314,7 +3373,11 @@ mod composition_tests {
     }
 
     fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
-        TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
+        TransitionCommand::new(
+            machine.to_string(),
+            instance_id.to_string(),
+            to_state.to_string(),
+        )
     }
 
     fn lit(v: Value) -> Expression {
@@ -3342,7 +3405,10 @@ mod composition_tests {
         register_line_item_machine(&engine);
 
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Alice".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Alice".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
@@ -3389,7 +3455,10 @@ mod composition_tests {
         register_line_item_machine(&engine);
 
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Bob".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Bob".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
@@ -3519,14 +3588,12 @@ mod composition_tests {
         let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
         ctx.children.insert(
             "items".to_string(),
-            vec![
-                ChildInfo {
-                    id: "c1".into(),
-                    machine: "LineItem".into(),
-                    state: "pending".into(),
-                    data: HashMap::new(),
-                },
-            ],
+            vec![ChildInfo {
+                id: "c1".into(),
+                machine: "LineItem".into(),
+                state: "pending".into(),
+                data: HashMap::new(),
+            }],
         );
 
         let expr = Expression::new(ExpressionKind::Any {
@@ -3571,9 +3638,24 @@ mod composition_tests {
         ctx.children.insert(
             "items".to_string(),
             vec![
-                ChildInfo { id: "c1".into(), machine: "LineItem".into(), state: "pending".into(), data: HashMap::new() },
-                ChildInfo { id: "c2".into(), machine: "LineItem".into(), state: "pending".into(), data: HashMap::new() },
-                ChildInfo { id: "c3".into(), machine: "LineItem".into(), state: "pending".into(), data: HashMap::new() },
+                ChildInfo {
+                    id: "c1".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
+                ChildInfo {
+                    id: "c2".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
+                ChildInfo {
+                    id: "c3".into(),
+                    machine: "LineItem".into(),
+                    state: "pending".into(),
+                    data: HashMap::new(),
+                },
             ],
         );
 
@@ -3600,14 +3682,12 @@ mod composition_tests {
         let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
         ctx.children.insert(
             "items".to_string(),
-            vec![
-                ChildInfo {
-                    id: "c1".into(),
-                    machine: "LineItem".into(),
-                    state: "fulfilled".into(),
-                    data: HashMap::new(),
-                },
-            ],
+            vec![ChildInfo {
+                id: "c1".into(),
+                machine: "LineItem".into(),
+                state: "fulfilled".into(),
+                data: HashMap::new(),
+            }],
         );
 
         // SIGNAL FROM LineItem WHERE STATE IS fulfilled
@@ -3623,14 +3703,12 @@ mod composition_tests {
         let mut ctx = EvalContext::new(HashMap::new(), "confirmed".to_string());
         ctx.children.insert(
             "items".to_string(),
-            vec![
-                ChildInfo {
-                    id: "c1".into(),
-                    machine: "LineItem".into(),
-                    state: "pending".into(),
-                    data: HashMap::new(),
-                },
-            ],
+            vec![ChildInfo {
+                id: "c1".into(),
+                machine: "LineItem".into(),
+                state: "pending".into(),
+                data: HashMap::new(),
+            }],
         );
 
         let expr = Expression::new(ExpressionKind::SignalFrom {
@@ -3707,12 +3785,18 @@ mod composition_tests {
         engine.catalog.register(m).unwrap();
 
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Charlie".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Charlie".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
 
-        let result = engine.transition(&transition_cmd("Order", &order_id, "confirmed")).await.unwrap();
+        let result = engine
+            .transition(&transition_cmd("Order", &order_id, "confirmed"))
+            .await
+            .unwrap();
 
         // The mutate should have set first_item to a Ref
         let first_item = result.instance.data.get("first_item").unwrap();
@@ -3745,7 +3829,10 @@ mod composition_tests {
         register_line_item_machine(&engine);
 
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Dave".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Dave".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
@@ -3776,8 +3863,18 @@ mod composition_tests {
         engine.transition(&cmd).await.unwrap();
 
         // Children should also be cancelled (first terminal state for LineItem)
-        let c1 = engine.storage.get_instance(&child1.instance.id).await.unwrap().unwrap();
-        let c2 = engine.storage.get_instance(&child2.instance.id).await.unwrap().unwrap();
+        let c1 = engine
+            .storage
+            .get_instance(&child1.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let c2 = engine
+            .storage
+            .get_instance(&child2.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
         // LineItem terminal states: ["fulfilled", "cancelled"]
         // CASCADE tries the first terminal state "fulfilled" — transition from pending->fulfilled exists
         assert_eq!(c1.state, "fulfilled");
@@ -3793,7 +3890,10 @@ mod composition_tests {
         register_line_item_machine(&engine);
 
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Eve".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Eve".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
@@ -3821,7 +3921,12 @@ mod composition_tests {
         engine.transition(&cmd).await.unwrap();
 
         // Child should still be fulfilled (not re-transitioned)
-        let c = engine.storage.get_instance(&child.instance.id).await.unwrap().unwrap();
+        let c = engine
+            .storage
+            .get_instance(&child.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(c.state, "fulfilled");
     }
 
@@ -3834,7 +3939,10 @@ mod composition_tests {
         register_line_item_machine(&engine);
 
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Frank".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Frank".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
@@ -3910,7 +4018,10 @@ mod composition_tests {
         m.children = vec![ChildDefinition {
             name: "items".to_string(),
             machine: "LineItem".to_string(),
-            cardinality: ChildCardinality::List { min: None, max: None },
+            cardinality: ChildCardinality::List {
+                min: None,
+                max: None,
+            },
         }];
 
         let t_confirm = TransitionDefinition::new(
@@ -3932,11 +4043,17 @@ mod composition_tests {
 
         // Spawn order and confirm it
         let order = engine
-            .spawn(&spawn_cmd("GuardedOrder", vec![("customer", Value::Text("Grace".into()))]))
+            .spawn(&spawn_cmd(
+                "GuardedOrder",
+                vec![("customer", Value::Text("Grace".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
-        engine.transition(&transition_cmd("GuardedOrder", &order_id, "confirmed")).await.unwrap();
+        engine
+            .transition(&transition_cmd("GuardedOrder", &order_id, "confirmed"))
+            .await
+            .unwrap();
 
         // Spawn two children
         let c1 = engine
@@ -3959,27 +4076,47 @@ mod composition_tests {
             .unwrap();
 
         // Try to ship — should fail because items are still pending
-        let ship_result = engine.try_transition(&transition_cmd("GuardedOrder", &order_id, "shipped")).await.unwrap();
-        assert!(ship_result.is_none(), "Should fail: not all items fulfilled");
+        let ship_result = engine
+            .try_transition(&transition_cmd("GuardedOrder", &order_id, "shipped"))
+            .await
+            .unwrap();
+        assert!(
+            ship_result.is_none(),
+            "Should fail: not all items fulfilled"
+        );
 
         // Fulfill first item
         engine
-            .transition(&transition_cmd("LineItem", &c1.instance.id.as_str(), "fulfilled"))
+            .transition(&transition_cmd(
+                "LineItem",
+                &c1.instance.id.as_str(),
+                "fulfilled",
+            ))
             .await
             .unwrap();
 
         // Try again — still should fail
-        let ship_result2 = engine.try_transition(&transition_cmd("GuardedOrder", &order_id, "shipped")).await.unwrap();
+        let ship_result2 = engine
+            .try_transition(&transition_cmd("GuardedOrder", &order_id, "shipped"))
+            .await
+            .unwrap();
         assert!(ship_result2.is_none(), "Should fail: only 1 of 2 fulfilled");
 
         // Fulfill second item
         engine
-            .transition(&transition_cmd("LineItem", &c2.instance.id.as_str(), "fulfilled"))
+            .transition(&transition_cmd(
+                "LineItem",
+                &c2.instance.id.as_str(),
+                "fulfilled",
+            ))
             .await
             .unwrap();
 
         // Now ship should succeed
-        let ship_result3 = engine.transition(&transition_cmd("GuardedOrder", &order_id, "shipped")).await.unwrap();
+        let ship_result3 = engine
+            .transition(&transition_cmd("GuardedOrder", &order_id, "shipped"))
+            .await
+            .unwrap();
         assert_eq!(ship_result3.instance.state, "shipped");
     }
 
@@ -3998,12 +4135,10 @@ mod composition_tests {
         ];
         m.terminal_states = vec!["ready".into()];
         m.data = vec![];
-        m.transitions = vec![
-            TransitionDefinition::new(
-                TransitionSource::State("pending".into()),
-                "ready".into(),
-            ),
-        ];
+        m.transitions = vec![TransitionDefinition::new(
+            TransitionSource::State("pending".into()),
+            "ready".into(),
+        )];
         engine.catalog.register(m).unwrap();
 
         // Wire up callback
@@ -4067,7 +4202,10 @@ mod composition_tests {
 
         // Spawn a LineItem without a parent
         let item = engine
-            .spawn(&spawn_cmd("LineItem", vec![("product", Value::Text("Solo".into()))]))
+            .spawn(&spawn_cmd(
+                "LineItem",
+                vec![("product", Value::Text("Solo".into()))],
+            ))
             .await
             .unwrap();
         let item_id = item.instance.id.as_str();
@@ -4089,7 +4227,10 @@ mod composition_tests {
 
         // 1. Spawn order
         let order = engine
-            .spawn(&spawn_cmd("Order", vec![("customer", Value::Text("Zara".into()))]))
+            .spawn(&spawn_cmd(
+                "Order",
+                vec![("customer", Value::Text("Zara".into()))],
+            ))
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
@@ -4188,18 +4329,9 @@ mod alter_tests {
             },
         ];
         m.transitions = vec![
-            TransitionDefinition::new(
-                TransitionSource::State("open".into()),
-                "in_progress".into(),
-            ),
-            TransitionDefinition::new(
-                TransitionSource::State("in_progress".into()),
-                "done".into(),
-            ),
-            TransitionDefinition::new(
-                TransitionSource::State("in_progress".into()),
-                "open".into(),
-            ),
+            TransitionDefinition::new(TransitionSource::State("open".into()), "in_progress".into()),
+            TransitionDefinition::new(TransitionSource::State("in_progress".into()), "done".into()),
+            TransitionDefinition::new(TransitionSource::State("in_progress".into()), "open".into()),
         ];
         engine.catalog.register_unchecked(m);
     }
@@ -4261,7 +4393,11 @@ mod alter_tests {
         let spawn_result = engine.spawn(&spawn_task(&engine, "Test")).await.unwrap();
         let id = spawn_result.instance.id.as_str();
 
-        let t_cmd = smql_ast::command::TransitionCommand::new("Task".into(), id.clone(), "in_progress".into());
+        let t_cmd = smql_ast::command::TransitionCommand::new(
+            "Task".into(),
+            id.clone(),
+            "in_progress".into(),
+        );
         engine.transition(&t_cmd).await.unwrap();
 
         // Now remove in_progress state and migrate to open
@@ -4278,7 +4414,12 @@ mod alter_tests {
 
         // Verify instance was migrated
         let inst_id = smql_storage::InstanceId::from_string(&id).unwrap();
-        let inst = engine.storage.get_instance(&inst_id).await.unwrap().unwrap();
+        let inst = engine
+            .storage
+            .get_instance(&inst_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(inst.state, "open");
 
         // Verify state was removed from definition
@@ -4356,10 +4497,8 @@ mod alter_tests {
         let engine = setup_engine();
         register_simple_machine(&engine);
 
-        let new_transition = TransitionDefinition::new(
-            TransitionSource::State("open".into()),
-            "done".into(),
-        );
+        let new_transition =
+            TransitionDefinition::new(TransitionSource::State("open".into()), "done".into());
 
         let cmd = AlterMachineCommand {
             machine: "Task".into(),
@@ -4385,10 +4524,8 @@ mod alter_tests {
         let engine = setup_engine();
         register_simple_machine(&engine);
 
-        let bad_transition = TransitionDefinition::new(
-            TransitionSource::State("open".into()),
-            "nonexistent".into(),
-        );
+        let bad_transition =
+            TransitionDefinition::new(TransitionSource::State("open".into()), "nonexistent".into());
 
         let cmd = AlterMachineCommand {
             machine: "Task".into(),
@@ -4460,9 +4597,9 @@ mod alter_tests {
                     field_type: TypeDefinition::Text,
                     constraints: vec![Constraint::Optional],
                 },
-                backfill: Some(Expression::new(ExpressionKind::Literal(
-                    Value::Text("general".into()),
-                ))),
+                backfill: Some(Expression::new(ExpressionKind::Literal(Value::Text(
+                    "general".into(),
+                )))),
             }],
         };
 
@@ -4476,9 +4613,16 @@ mod alter_tests {
 
         // Verify instances were backfilled
         let filter = smql_storage::Filter::default();
-        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        let instances = engine
+            .storage
+            .find_instances("Task", &filter)
+            .await
+            .unwrap();
         for inst in &instances {
-            assert_eq!(inst.data.get("category"), Some(&Value::Text("general".into())));
+            assert_eq!(
+                inst.data.get("category"),
+                Some(&Value::Text("general".into()))
+            );
         }
     }
 
@@ -4505,8 +4649,15 @@ mod alter_tests {
         assert_eq!(result.instances_migrated, 1);
 
         let filter = smql_storage::Filter::default();
-        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
-        assert_eq!(instances[0].data.get("status_note"), Some(&Value::Text("none".into())));
+        let instances = engine
+            .storage
+            .find_instances("Task", &filter)
+            .await
+            .unwrap();
+        assert_eq!(
+            instances[0].data.get("status_note"),
+            Some(&Value::Text("none".into()))
+        );
     }
 
     #[tokio::test]
@@ -4577,7 +4728,11 @@ mod alter_tests {
 
         // Verify field removed from instances
         let filter = smql_storage::Filter::default();
-        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        let instances = engine
+            .storage
+            .find_instances("Task", &filter)
+            .await
+            .unwrap();
         assert!(!instances[0].data.contains_key("priority"));
     }
 
@@ -4618,7 +4773,11 @@ mod alter_tests {
         assert_eq!(result.instances_migrated, 3);
 
         let filter = smql_storage::Filter::default();
-        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        let instances = engine
+            .storage
+            .find_instances("Task", &filter)
+            .await
+            .unwrap();
         for inst in &instances {
             assert_eq!(inst.data.get("priority"), Some(&Value::Int(1)));
         }
@@ -4649,10 +4808,8 @@ mod alter_tests {
         register_simple_machine(&engine);
 
         // Modify the open -> in_progress transition to add a guard
-        let mut modified = TransitionDefinition::new(
-            TransitionSource::State("open".into()),
-            "in_progress".into(),
-        );
+        let mut modified =
+            TransitionDefinition::new(TransitionSource::State("open".into()), "in_progress".into());
         modified.guards = vec![Expression::new(ExpressionKind::IsSet(Box::new(
             Expression::new(ExpressionKind::FieldAccess(vec!["title".into()])),
         )))];
@@ -4777,7 +4934,10 @@ mod alter_tests {
         let stmts = smql_parser::parse(input).unwrap();
         assert_eq!(stmts.len(), 1);
 
-        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(cmd)) = &stmts[0] {
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(
+            cmd,
+        )) = &stmts[0]
+        {
             let result = engine.execute_alter_machine(&cmd).await.unwrap();
             assert_eq!(result.operations_applied, 1);
             let def = engine.catalog.get("Task").unwrap();
@@ -4795,7 +4955,10 @@ mod alter_tests {
         let input = "ALTER MACHINE Task REMOVE STATE in_progress MIGRATE TO open";
         let stmts = smql_parser::parse(input).unwrap();
 
-        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(cmd)) = &stmts[0] {
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(
+            cmd,
+        )) = &stmts[0]
+        {
             let result = engine.execute_alter_machine(&cmd).await.unwrap();
             assert_eq!(result.operations_applied, 1);
         } else {
@@ -4813,12 +4976,19 @@ mod alter_tests {
         let input = "ALTER MACHINE Task BACKFILL priority = 5";
         let stmts = smql_parser::parse(input).unwrap();
 
-        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(cmd)) = &stmts[0] {
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::AlterMachine(
+            cmd,
+        )) = &stmts[0]
+        {
             let result = engine.execute_alter_machine(&cmd).await.unwrap();
             assert_eq!(result.instances_migrated, 1);
 
             let filter = smql_storage::Filter::default();
-            let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+            let instances = engine
+                .storage
+                .find_instances("Task", &filter)
+                .await
+                .unwrap();
             assert_eq!(instances[0].data.get("priority"), Some(&Value::Int(5)));
         } else {
             panic!("Expected ALTER MACHINE command");
@@ -4845,17 +5015,35 @@ mod alter_tests {
         engine.transition(&t_cmd).await.unwrap();
 
         // Migrate in_progress -> open
-        let migrated = engine.storage.migrate_instances_state("Task", "in_progress", "open").await.unwrap();
+        let migrated = engine
+            .storage
+            .migrate_instances_state("Task", "in_progress", "open")
+            .await
+            .unwrap();
         assert_eq!(migrated, 1);
 
         // Both should now be in open state
-        let filter = smql_storage::Filter { state: Some("open".into()), ..Default::default() };
-        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        let filter = smql_storage::Filter {
+            state: Some("open".into()),
+            ..Default::default()
+        };
+        let instances = engine
+            .storage
+            .find_instances("Task", &filter)
+            .await
+            .unwrap();
         assert_eq!(instances.len(), 2);
 
         // Nothing in in_progress
-        let filter2 = smql_storage::Filter { state: Some("in_progress".into()), ..Default::default() };
-        let instances2 = engine.storage.find_instances("Task", &filter2).await.unwrap();
+        let filter2 = smql_storage::Filter {
+            state: Some("in_progress".into()),
+            ..Default::default()
+        };
+        let instances2 = engine
+            .storage
+            .find_instances("Task", &filter2)
+            .await
+            .unwrap();
         assert_eq!(instances2.len(), 0);
     }
 
@@ -4871,11 +5059,19 @@ mod alter_tests {
             "priority".into(),
             Value::Int(99),
         )];
-        let count = engine.storage.bulk_update_instances("Task", &mutations).await.unwrap();
+        let count = engine
+            .storage
+            .bulk_update_instances("Task", &mutations)
+            .await
+            .unwrap();
         assert_eq!(count, 2);
 
         let filter = smql_storage::Filter::default();
-        let instances = engine.storage.find_instances("Task", &filter).await.unwrap();
+        let instances = engine
+            .storage
+            .find_instances("Task", &filter)
+            .await
+            .unwrap();
         for inst in &instances {
             assert_eq!(inst.data.get("priority"), Some(&Value::Int(99)));
         }

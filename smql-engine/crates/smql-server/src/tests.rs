@@ -16,9 +16,7 @@ fn execute_request(smql: &str) -> Request<Body> {
         .method("POST")
         .uri("/execute")
         .header("content-type", "application/json")
-        .body(Body::from(
-            serde_json::json!({ "smql": smql }).to_string(),
-        ))
+        .body(Body::from(serde_json::json!({ "smql": smql }).to_string()))
         .unwrap()
 }
 
@@ -86,26 +84,69 @@ fn metrics_new_registers_all_collectors() {
     let metrics = crate::metrics::SmqlMetrics::new();
     // Increment at least one to make it appear in output
     metrics.spawns_total.with_label_values(&["x"]).inc();
-    metrics.transitions_total.with_label_values(&["x", "a", "b"]).inc();
+    metrics
+        .transitions_total
+        .with_label_values(&["x", "a", "b"])
+        .inc();
     metrics.instances_total.with_label_values(&["x", "a"]).inc();
     metrics.guard_failures_total.with_label_values(&["x"]).inc();
-    metrics.timeout_fires_total.with_label_values(&["x", "a"]).inc();
-    metrics.query_duration_seconds.with_label_values(&["GET"]).observe(0.001);
-    metrics.transition_duration_seconds.with_label_values(&["x"]).observe(0.01);
+    metrics
+        .timeout_fires_total
+        .with_label_values(&["x", "a"])
+        .inc();
+    metrics
+        .query_duration_seconds
+        .with_label_values(&["GET"])
+        .observe(0.001);
+    metrics
+        .transition_duration_seconds
+        .with_label_values(&["x"])
+        .observe(0.01);
     let output = metrics.encode();
-    assert!(output.contains("smql_instances_total"), "Missing instances_total:\n{}", output);
-    assert!(output.contains("smql_transitions_total"), "Missing transitions_total:\n{}", output);
-    assert!(output.contains("smql_transition_duration_seconds"), "Missing transition_duration:\n{}", output);
-    assert!(output.contains("smql_guard_failures_total"), "Missing guard_failures:\n{}", output);
-    assert!(output.contains("smql_timeout_fires_total"), "Missing timeout_fires:\n{}", output);
-    assert!(output.contains("smql_query_duration_seconds"), "Missing query_duration:\n{}", output);
-    assert!(output.contains("smql_spawns_total"), "Missing spawns_total:\n{}", output);
+    assert!(
+        output.contains("smql_instances_total"),
+        "Missing instances_total:\n{}",
+        output
+    );
+    assert!(
+        output.contains("smql_transitions_total"),
+        "Missing transitions_total:\n{}",
+        output
+    );
+    assert!(
+        output.contains("smql_transition_duration_seconds"),
+        "Missing transition_duration:\n{}",
+        output
+    );
+    assert!(
+        output.contains("smql_guard_failures_total"),
+        "Missing guard_failures:\n{}",
+        output
+    );
+    assert!(
+        output.contains("smql_timeout_fires_total"),
+        "Missing timeout_fires:\n{}",
+        output
+    );
+    assert!(
+        output.contains("smql_query_duration_seconds"),
+        "Missing query_duration:\n{}",
+        output
+    );
+    assert!(
+        output.contains("smql_spawns_total"),
+        "Missing spawns_total:\n{}",
+        output
+    );
 }
 
 #[test]
 fn metrics_encode_returns_valid_text() {
     let metrics = crate::metrics::SmqlMetrics::new();
-    metrics.spawns_total.with_label_values(&["test_machine"]).inc();
+    metrics
+        .spawns_total
+        .with_label_values(&["test_machine"])
+        .inc();
     let output = metrics.encode();
     assert!(output.contains(r#"smql_spawns_total{machine="test_machine"} 1"#));
 }
@@ -113,9 +154,18 @@ fn metrics_encode_returns_valid_text() {
 #[test]
 fn metrics_gauge_inc_dec() {
     let metrics = crate::metrics::SmqlMetrics::new();
-    metrics.instances_total.with_label_values(&["m", "idle"]).inc();
-    metrics.instances_total.with_label_values(&["m", "idle"]).inc();
-    metrics.instances_total.with_label_values(&["m", "idle"]).dec();
+    metrics
+        .instances_total
+        .with_label_values(&["m", "idle"])
+        .inc();
+    metrics
+        .instances_total
+        .with_label_values(&["m", "idle"])
+        .inc();
+    metrics
+        .instances_total
+        .with_label_values(&["m", "idle"])
+        .dec();
     let output = metrics.encode();
     assert!(output.contains(r#"smql_instances_total{machine="m",state="idle"} 1"#));
 }
@@ -130,16 +180,28 @@ async fn metrics_endpoint_returns_text() {
     let app = server.router();
 
     // Define + spawn to ensure some metrics exist
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED, "Define failed");
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED, "Spawn failed");
 
     let resp = app.clone().oneshot(get_request("/metrics")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
-    assert!(body.contains("smql_spawns_total"), "Missing spawns metric:\n{}", body);
+    assert!(
+        body.contains("smql_spawns_total"),
+        "Missing spawns metric:\n{}",
+        body
+    );
 }
 
 #[tokio::test]
@@ -147,10 +209,18 @@ async fn metrics_increment_on_spawn() {
     let server = SmqlServer::new();
     let app = server.router();
 
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let resp = app.clone().oneshot(get_request("/metrics")).await.unwrap();
@@ -173,11 +243,19 @@ async fn metrics_increment_on_transition() {
     let server = SmqlServer::new();
     let app = server.router();
 
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     // Spawn
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -185,7 +263,11 @@ async fn metrics_increment_on_transition() {
 
     // Transition
     let transition_smql = format!(r#"TRANSITION counter "{}" TO running"#, instance_id);
-    let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(&transition_smql))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Check metrics
@@ -209,10 +291,18 @@ async fn metrics_guard_failure_counter() {
     let server = SmqlServer::new();
     let app = server.router();
 
-    let resp = app.clone().oneshot(execute_request(define_guarded_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_guarded_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN gated {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN gated {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -220,7 +310,11 @@ async fn metrics_guard_failure_counter() {
 
     // Attempt transition that will fail guard
     let transition_smql = format!(r#"TRANSITION gated "{}" TO closed"#, instance_id);
-    let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(&transition_smql))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
     // Check guard_failures_total
@@ -241,11 +335,19 @@ async fn metrics_query_duration_recorded() {
     let server = SmqlServer::new();
     let app = server.router();
 
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     // Execute a FIND query
-    let resp = app.clone().oneshot(execute_request("FIND counter")).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request("FIND counter"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Check query_duration_seconds histogram
@@ -590,7 +692,11 @@ async fn list_machines_empty() {
 #[tokio::test]
 async fn list_machines_after_define() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let resp = app.oneshot(get_request("/machines")).await.unwrap();
@@ -605,7 +711,11 @@ async fn list_machines_after_define() {
 #[tokio::test]
 async fn get_machine_found() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let resp = app.oneshot(get_request("/machines/counter")).await.unwrap();
@@ -619,7 +729,10 @@ async fn get_machine_found() {
 #[tokio::test]
 async fn get_machine_not_found() {
     let app = test_router();
-    let resp = app.oneshot(get_request("/machines/nonexistent")).await.unwrap();
+    let resp = app
+        .oneshot(get_request("/machines/nonexistent"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -629,16 +742,27 @@ async fn get_machine_not_found() {
 #[tokio::test]
 async fn get_instance_found() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
 
-    let resp = app.oneshot(get_request(&format!("/instances/{}", instance_id))).await.unwrap();
+    let resp = app
+        .oneshot(get_request(&format!("/instances/{}", instance_id)))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -649,7 +773,10 @@ async fn get_instance_found() {
 #[tokio::test]
 async fn get_instance_invalid_id() {
     let app = test_router();
-    let resp = app.oneshot(get_request("/instances/not-a-ulid")).await.unwrap();
+    let resp = app
+        .oneshot(get_request("/instances/not-a-ulid"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -661,7 +788,10 @@ async fn get_instance_not_found() {
     let app = test_router();
     // Generate a valid ULID that doesn't exist in storage
     let id = smql_storage::InstanceId::new();
-    let resp = app.oneshot(get_request(&format!("/instances/{}", id))).await.unwrap();
+    let resp = app
+        .oneshot(get_request(&format!("/instances/{}", id)))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -672,7 +802,10 @@ async fn get_instance_not_found() {
 #[tokio::test]
 async fn execute_parse_error() {
     let app = test_router();
-    let resp = app.oneshot(execute_request("INVALID GARBAGE @#$")).await.unwrap();
+    let resp = app
+        .oneshot(execute_request("INVALID GARBAGE @#$"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -696,10 +829,18 @@ async fn execute_empty_input() {
 #[tokio::test]
 async fn execute_try_transition_guard_fails() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_guarded_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_guarded_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN gated {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN gated {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -717,10 +858,18 @@ async fn execute_try_transition_guard_fails() {
 #[tokio::test]
 async fn execute_try_transition_success() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -739,11 +888,19 @@ async fn execute_try_transition_success() {
 #[tokio::test]
 async fn execute_alter_machine() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     let alter_smql = r#"ALTER MACHINE counter ADD STATE paused"#;
-    let resp = app.clone().oneshot(execute_request(alter_smql)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(alter_smql))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -755,10 +912,18 @@ async fn execute_alter_machine() {
 #[tokio::test]
 async fn execute_query_get() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
@@ -775,13 +940,25 @@ async fn execute_query_get() {
 #[tokio::test]
 async fn execute_query_find() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request("FIND counter")).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request("FIND counter"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -792,10 +969,18 @@ async fn execute_query_find() {
 #[tokio::test]
 async fn execute_query_trail() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
@@ -812,13 +997,25 @@ async fn execute_query_trail() {
 #[tokio::test]
 async fn execute_query_aggregate() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request("AGGREGATE counter MEASURE COUNT()")).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request("AGGREGATE counter MEASURE COUNT()"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -829,20 +1026,36 @@ async fn execute_query_aggregate() {
 #[tokio::test]
 async fn execute_query_paths() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
 
     let transition_smql = format!(r#"TRANSITION counter "{}" TO running"#, instance_id);
-    let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(&transition_smql))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = app.clone().oneshot(execute_request("PATHS FROM counter")).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request("PATHS FROM counter"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -853,13 +1066,25 @@ async fn execute_query_paths() {
 #[tokio::test]
 async fn execute_query_funnel() {
     let app = test_router();
-    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_simple_machine()))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request(r#"SPAWN counter {}"#))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    let resp = app.clone().oneshot(execute_request("FUNNEL counter THROUGH [idle, running]")).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(execute_request("FUNNEL counter THROUGH [idle, running]"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();

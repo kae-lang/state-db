@@ -1,18 +1,18 @@
 // SMQL Parser — SMQL language parser (winnow-based)
 
-mod lexer;
-mod expr;
-mod machine;
 mod commands;
-mod queries;
 mod common;
+mod expr;
+mod lexer;
+mod machine;
+mod queries;
 
 #[cfg(test)]
 mod tests;
 
-use smql_ast::{SmqlError, SmqlResult};
 use smql_ast::command::Statement;
 use smql_ast::machine::MachineDefinition;
+use smql_ast::{SmqlError, SmqlResult};
 
 pub use lexer::Token;
 
@@ -53,6 +53,7 @@ pub fn parse_machines(input: &str) -> SmqlResult<Vec<MachineDefinition>> {
 pub(crate) struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    #[allow(dead_code)]
     source: &'a str,
 }
 
@@ -196,6 +197,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn current_offset(&self) -> usize {
         self.peek().map(|t| t.offset).unwrap_or(self.source.len())
     }
@@ -203,7 +205,9 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> SmqlResult<Statement> {
         if self.check_keyword("DEFINE") {
             let machine = machine::parse_define_machine(self)?;
-            Ok(Statement::Command(smql_ast::command::Command::DefineMachine(machine)))
+            Ok(Statement::Command(
+                smql_ast::command::Command::DefineMachine(machine),
+            ))
         } else if self.check_keyword("SPAWN") {
             let cmd = commands::parse_spawn(self)?;
             Ok(Statement::Command(cmd))

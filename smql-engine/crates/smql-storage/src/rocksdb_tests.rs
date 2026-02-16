@@ -12,11 +12,7 @@ mod rocksdb_storage_tests {
 
     fn temp_path() -> String {
         let c = COUNTER.fetch_add(1, Ordering::SeqCst);
-        format!(
-            "/tmp/smql-test-rocksdb-{}-{}",
-            std::process::id(),
-            c
-        )
+        format!("/tmp/smql-test-rocksdb-{}-{}", std::process::id(), c)
     }
 
     fn open_storage() -> (RocksDBStorage, String) {
@@ -171,10 +167,7 @@ mod rocksdb_storage_tests {
         storage.store_instance(&inst2).await.unwrap();
 
         let filter = Filter {
-            predicate: Some(FilterPredicate::Gt(
-                "priority".to_string(),
-                Value::Int(3),
-            )),
+            predicate: Some(FilterPredicate::Gt("priority".to_string(), Value::Int(3))),
             ..Default::default()
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -577,21 +570,15 @@ mod rocksdb_storage_tests {
         let (storage, path) = open_storage();
 
         let mut inst1 = make_instance("Order", "open");
-        inst1
-            .data
-            .insert("priority".to_string(), Value::Int(1));
+        inst1.data.insert("priority".to_string(), Value::Int(1));
         inst1.data.insert("vip".to_string(), Value::Bool(false));
 
         let mut inst2 = make_instance("Order", "open");
-        inst2
-            .data
-            .insert("priority".to_string(), Value::Int(5));
+        inst2.data.insert("priority".to_string(), Value::Int(5));
         inst2.data.insert("vip".to_string(), Value::Bool(true));
 
         let mut inst3 = make_instance("Order", "open");
-        inst3
-            .data
-            .insert("priority".to_string(), Value::Int(3));
+        inst3.data.insert("priority".to_string(), Value::Int(3));
         inst3.data.insert("vip".to_string(), Value::Bool(true));
 
         storage.store_instance(&inst1).await.unwrap();
@@ -601,14 +588,8 @@ mod rocksdb_storage_tests {
         // priority > 4 OR vip == true
         let filter = Filter {
             predicate: Some(FilterPredicate::Or(
-                Box::new(FilterPredicate::Gt(
-                    "priority".to_string(),
-                    Value::Int(4),
-                )),
-                Box::new(FilterPredicate::Eq(
-                    "vip".to_string(),
-                    Value::Bool(true),
-                )),
+                Box::new(FilterPredicate::Gt("priority".to_string(), Value::Int(4))),
+                Box::new(FilterPredicate::Eq("vip".to_string(), Value::Bool(true))),
             )),
             ..Default::default()
         };
@@ -814,22 +795,14 @@ mod rocksdb_storage_tests {
         storage.store_instance(&child).await.unwrap();
 
         assert_eq!(
-            storage
-                .find_children(&parent_id, None)
-                .await
-                .unwrap()
-                .len(),
+            storage.find_children(&parent_id, None).await.unwrap().len(),
             1
         );
 
         storage.delete_instance(&child_id).await.unwrap();
 
         assert_eq!(
-            storage
-                .find_children(&parent_id, None)
-                .await
-                .unwrap()
-                .len(),
+            storage.find_children(&parent_id, None).await.unwrap().len(),
             0
         );
 
@@ -841,22 +814,15 @@ mod rocksdb_storage_tests {
     async fn filter_eq() {
         let (storage, path) = open_storage();
         let mut inst1 = make_instance("Order", "open");
-        inst1
-            .data
-            .insert("priority".to_string(), Value::Int(3));
+        inst1.data.insert("priority".to_string(), Value::Int(3));
         let mut inst2 = make_instance("Order", "open");
-        inst2
-            .data
-            .insert("priority".to_string(), Value::Int(5));
+        inst2.data.insert("priority".to_string(), Value::Int(5));
 
         storage.store_instance(&inst1).await.unwrap();
         storage.store_instance(&inst2).await.unwrap();
 
         let filter = Filter {
-            predicate: Some(FilterPredicate::Eq(
-                "priority".to_string(),
-                Value::Int(3),
-            )),
+            predicate: Some(FilterPredicate::Eq("priority".to_string(), Value::Int(3))),
             ..Default::default()
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -871,22 +837,15 @@ mod rocksdb_storage_tests {
     async fn filter_ne() {
         let (storage, path) = open_storage();
         let mut inst1 = make_instance("Order", "open");
-        inst1
-            .data
-            .insert("priority".to_string(), Value::Int(3));
+        inst1.data.insert("priority".to_string(), Value::Int(3));
         let mut inst2 = make_instance("Order", "open");
-        inst2
-            .data
-            .insert("priority".to_string(), Value::Int(5));
+        inst2.data.insert("priority".to_string(), Value::Int(5));
 
         storage.store_instance(&inst1).await.unwrap();
         storage.store_instance(&inst2).await.unwrap();
 
         let filter = Filter {
-            predicate: Some(FilterPredicate::Ne(
-                "priority".to_string(),
-                Value::Int(3),
-            )),
+            predicate: Some(FilterPredicate::Ne("priority".to_string(), Value::Int(3))),
             ..Default::default()
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -907,10 +866,7 @@ mod rocksdb_storage_tests {
         }
 
         let filter = Filter {
-            predicate: Some(FilterPredicate::Gte(
-                "priority".to_string(),
-                Value::Int(3),
-            )),
+            predicate: Some(FilterPredicate::Gte("priority".to_string(), Value::Int(3))),
             ..Default::default()
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -930,10 +886,7 @@ mod rocksdb_storage_tests {
         }
 
         let filter = Filter {
-            predicate: Some(FilterPredicate::Lte(
-                "priority".to_string(),
-                Value::Int(3),
-            )),
+            predicate: Some(FilterPredicate::Lte("priority".to_string(), Value::Int(3))),
             ..Default::default()
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -953,10 +906,7 @@ mod rocksdb_storage_tests {
         }
 
         let filter = Filter {
-            predicate: Some(FilterPredicate::Lt(
-                "priority".to_string(),
-                Value::Int(3),
-            )),
+            predicate: Some(FilterPredicate::Lt("priority".to_string(), Value::Int(3))),
             ..Default::default()
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
@@ -1009,14 +959,8 @@ mod rocksdb_storage_tests {
         // Range filter: priority > 2 AND priority < 8
         let filter = Filter {
             predicate: Some(FilterPredicate::And(
-                Box::new(FilterPredicate::Gt(
-                    "priority".to_string(),
-                    Value::Int(2),
-                )),
-                Box::new(FilterPredicate::Lt(
-                    "priority".to_string(),
-                    Value::Int(8),
-                )),
+                Box::new(FilterPredicate::Gt("priority".to_string(), Value::Int(2))),
+                Box::new(FilterPredicate::Lt("priority".to_string(), Value::Int(8))),
             )),
             ..Default::default()
         };
@@ -1436,7 +1380,9 @@ mod rocksdb_storage_tests {
         };
         let results = storage.find_instances("Order", &filter).await.unwrap();
         assert_eq!(results.len(), 3);
-        assert!(results.iter().all(|r| r.id.as_str() > instances[1].id.as_str()));
+        assert!(results
+            .iter()
+            .all(|r| r.id.as_str() > instances[1].id.as_str()));
 
         drop(storage);
         cleanup(&path);

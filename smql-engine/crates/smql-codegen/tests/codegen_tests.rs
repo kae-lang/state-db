@@ -1,7 +1,7 @@
-use smql_codegen::{CodeGenerator, CodegenError};
+use smql_ast::types::TypeDefinition;
 use smql_codegen::rust_gen::{to_pascal_case, to_snake_case};
 use smql_codegen::type_map::smql_type_to_rust;
-use smql_ast::types::TypeDefinition;
+use smql_codegen::{CodeGenerator, CodegenError};
 
 fn support_ticket_smql() -> &'static str {
     r#"DEFINE MACHINE SupportTicket (
@@ -159,7 +159,10 @@ fn test_type_mapping() {
         smql_type_to_rust(&TypeDefinition::Money("USD".to_string())),
         "(i64, String)"
     );
-    assert_eq!(smql_type_to_rust(&TypeDefinition::Json), "serde_json::Value");
+    assert_eq!(
+        smql_type_to_rust(&TypeDefinition::Json),
+        "serde_json::Value"
+    );
     assert_eq!(smql_type_to_rust(&TypeDefinition::Blob), "Vec<u8>");
     assert_eq!(
         smql_type_to_rust(&TypeDefinition::Map(
@@ -271,5 +274,8 @@ fn test_empty_data() {
 fn test_no_machines_error() {
     // An empty input or non-machine statement should fail
     let result = CodeGenerator::from_source("");
-    assert!(matches!(result, Err(CodegenError::Parse(_)) | Err(CodegenError::NoMachines)));
+    assert!(matches!(
+        result,
+        Err(CodegenError::Parse(_)) | Err(CodegenError::NoMachines)
+    ));
 }

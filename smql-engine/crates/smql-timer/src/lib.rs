@@ -94,8 +94,7 @@ impl TimerManager {
 
         if let Some(deadline) = by_key.remove(&key) {
             if let Some(entries) = by_deadline.get_mut(&deadline) {
-                entries
-                    .retain(|e| !(e.instance_id == instance_id && e.from_state == state));
+                entries.retain(|e| !(e.instance_id == instance_id && e.from_state == state));
                 if entries.is_empty() {
                     by_deadline.remove(&deadline);
                 }
@@ -137,8 +136,7 @@ impl TimerManager {
         let mut expired = Vec::new();
 
         // Collect all deadline keys that are <= now
-        let expired_keys: Vec<DateTime<Utc>> =
-            by_deadline.range(..=now).map(|(k, _)| *k).collect();
+        let expired_keys: Vec<DateTime<Utc>> = by_deadline.range(..=now).map(|(k, _)| *k).collect();
 
         for deadline in expired_keys {
             if let Some(entries) = by_deadline.remove(&deadline) {

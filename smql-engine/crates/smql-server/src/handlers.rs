@@ -56,9 +56,7 @@ async fn ws_subscribe(
     ws: WebSocketUpgrade,
     Query(params): Query<SubscribeParams>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| {
-        websocket::handle_ws(socket, state.event_bus, params)
-    })
+    ws.on_upgrade(move |socket| websocket::handle_ws(socket, state.event_bus, params))
 }
 
 // --- Execute raw SMQL ---
@@ -119,40 +117,31 @@ async fn execute_smql(
     }
 }
 
-async fn execute_command(
-    state: &AppState,
-    cmd: Command,
-) -> (StatusCode, Json<ExecuteResponse>) {
+async fn execute_command(state: &AppState, cmd: Command) -> (StatusCode, Json<ExecuteResponse>) {
     match cmd {
-        Command::DefineMachine(def) => {
-            match state.engine.catalog.register(def) {
-                Ok(warnings) => {
-                    let warns: Vec<String> = warnings.iter().map(|w| w.message.clone()).collect();
-                    (
-                        StatusCode::CREATED,
-                        Json(ExecuteResponse {
-                            success: true,
-                            result: Some(serde_json::json!({ "action": "machine_defined" })),
-                            error: None,
-                            warnings: if warns.is_empty() {
-                                None
-                            } else {
-                                Some(warns)
-                            },
-                        }),
-                    )
-                }
-                Err(e) => (
-                    StatusCode::BAD_REQUEST,
+        Command::DefineMachine(def) => match state.engine.catalog.register(def) {
+            Ok(warnings) => {
+                let warns: Vec<String> = warnings.iter().map(|w| w.message.clone()).collect();
+                (
+                    StatusCode::CREATED,
                     Json(ExecuteResponse {
-                        success: false,
-                        result: None,
-                        error: Some(e.to_string()),
-                        warnings: None,
+                        success: true,
+                        result: Some(serde_json::json!({ "action": "machine_defined" })),
+                        error: None,
+                        warnings: if warns.is_empty() { None } else { Some(warns) },
                     }),
-                ),
+                )
             }
-        }
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(ExecuteResponse {
+                    success: false,
+                    result: None,
+                    error: Some(e.to_string()),
+                    warnings: None,
+                }),
+            ),
+        },
 
         Command::Spawn(spawn_cmd) => {
             let machine_name = spawn_cmd.machine.clone();
@@ -338,11 +327,7 @@ async fn execute_command(
                                 "instances_migrated": result.instances_migrated,
                             })),
                             error: None,
-                            warnings: if warns.is_empty() {
-                                None
-                            } else {
-                                Some(warns)
-                            },
+                            warnings: if warns.is_empty() { None } else { Some(warns) },
                         }),
                     )
                 }
@@ -397,10 +382,7 @@ async fn list_machines(State(state): State<AppState>) -> impl IntoResponse {
     Json(serde_json::json!({ "machines": names }))
 }
 
-async fn get_machine(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> impl IntoResponse {
+async fn get_machine(State(state): State<AppState>, Path(name): Path<String>) -> impl IntoResponse {
     match state.engine.catalog.get(&name) {
         Ok(def) => (
             StatusCode::OK,
@@ -419,10 +401,7 @@ async fn get_machine(
     }
 }
 
-async fn get_instance(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn get_instance(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     let instance_id = match smql_storage::InstanceId::from_string(&id) {
         Ok(id) => id,
         Err(_) => {
@@ -479,12 +458,8 @@ pub fn value_to_json(val: &Value) -> serde_json::Value {
         Value::DateTime(v) => serde_json::json!(v.to_rfc3339()),
         Value::Date(v) => serde_json::json!(v.to_string()),
         Value::Duration(d) => serde_json::json!(d.to_string()),
-        Value::List(items) => {
-            serde_json::Value::Array(items.iter().map(value_to_json).collect())
-        }
-        Value::Set(items) => {
-            serde_json::Value::Array(items.iter().map(value_to_json).collect())
-        }
+        Value::List(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
+        Value::Set(items) => serde_json::Value::Array(items.iter().map(value_to_json).collect()),
         Value::Map(entries) => {
             let obj: serde_json::Map<String, serde_json::Value> = entries
                 .iter()

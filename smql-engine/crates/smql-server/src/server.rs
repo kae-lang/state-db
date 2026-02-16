@@ -109,7 +109,10 @@ impl SmqlServer {
     pub async fn serve(self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
         // Wire up webhook client for real HTTP POST
         let webhook_client = Arc::new(WebhookClient::new(WebhookConfig::default()));
-        self.state.engine.hook_executor.set_webhook_client(webhook_client);
+        self.state
+            .engine
+            .hook_executor
+            .set_webhook_client(webhook_client);
 
         // Restore persisted timers before starting the timer loop
         match self.state.engine.restore_timers().await {
@@ -208,7 +211,9 @@ mod auth_integration_tests {
                     .method("POST")
                     .uri("/execute")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"smql":"DEFINE MACHINE Test ( STATES { open } INITIAL STATE open )"}"#))
+                    .body(Body::from(
+                        r#"{"smql":"DEFINE MACHINE Test ( STATES { open } INITIAL STATE open )"}"#,
+                    ))
                     .unwrap(),
             )
             .await

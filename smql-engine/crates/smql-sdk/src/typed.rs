@@ -42,8 +42,8 @@ impl<M: SmqlMachine> TypedInstance<M> {
     /// Convert from an untyped InstanceResponse.
     pub fn from_response(resp: InstanceResponse) -> SdkResult<Self> {
         let state = M::State::from_str(&resp.state)?;
-        let data: M::Data = serde_json::from_value(resp.data)
-            .map_err(|e| SdkError::Deserialize(e.to_string()))?;
+        let data: M::Data =
+            serde_json::from_value(resp.data).map_err(|e| SdkError::Deserialize(e.to_string()))?;
         Ok(Self {
             id: resp.id,
             state,
@@ -60,12 +60,9 @@ impl<M: SmqlMachine> TypedInstance<M> {
 /// Extension methods on SmqlClient for typed operations.
 impl SmqlClient {
     /// Spawn a typed instance.
-    pub async fn spawn_typed<M: SmqlMachine>(
-        &self,
-        data: M::Data,
-    ) -> SdkResult<TypedInstance<M>> {
-        let json_data = serde_json::to_value(&data)
-            .map_err(|e| SdkError::Deserialize(e.to_string()))?;
+    pub async fn spawn_typed<M: SmqlMachine>(&self, data: M::Data) -> SdkResult<TypedInstance<M>> {
+        let json_data =
+            serde_json::to_value(&data).map_err(|e| SdkError::Deserialize(e.to_string()))?;
         let resp = self.spawn(M::MACHINE_NAME, json_data).await?;
         TypedInstance::<M>::from_response(resp)
     }

@@ -98,7 +98,9 @@ impl Engine {
         self.validate_spawn_data(&machine_def, &mut data)?;
 
         // Create instance (with optional parent linkage)
-        let instance = if let (Some(parent_id_str), Some(parent_machine)) = (&cmd.parent_id, &cmd.parent_machine) {
+        let instance = if let (Some(parent_id_str), Some(parent_machine)) =
+            (&cmd.parent_id, &cmd.parent_machine)
+        {
             let parent_id = smql_storage::InstanceId::from_string(parent_id_str)
                 .map_err(|_| SmqlError::not_found("Parent instance", parent_id_str))?;
             // Validate parent exists
@@ -115,11 +117,7 @@ impl Engine {
                 parent_machine.clone(),
             )
         } else {
-            Instance::new(
-                cmd.machine.clone(),
-                machine_def.initial_state.clone(),
-                data,
-            )
+            Instance::new(cmd.machine.clone(), machine_def.initial_state.clone(), data)
         };
 
         // Create initial trail entry (spawn event)
@@ -154,7 +152,12 @@ impl Engine {
         let resolved = self.resolve_hooks_actions(&machine_def.hooks, &eval_ctx);
         let _ = self
             .hook_executor
-            .fire_hooks(&machine_def.hooks, &HookTrigger::OnSpawn, &hook_ctx, &resolved)
+            .fire_hooks(
+                &machine_def.hooks,
+                &HookTrigger::OnSpawn,
+                &hook_ctx,
+                &resolved,
+            )
             .await;
 
         // --- Fire ON ENTER(initial_state) hooks ---
@@ -210,16 +213,13 @@ impl Engine {
                 }
             } else if is_required {
                 // Check for default value
-                let default = field_def
-                    .constraints
-                    .iter()
-                    .find_map(|c| {
-                        if let Constraint::Default(d) = c {
-                            Some(d)
-                        } else {
-                            None
-                        }
-                    });
+                let default = field_def.constraints.iter().find_map(|c| {
+                    if let Constraint::Default(d) = c {
+                        Some(d)
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(default_val) = default {
                     data.insert(field_def.name.clone(), default_to_value(default_val));
@@ -235,16 +235,13 @@ impl Engine {
                 }
             } else {
                 // Optional field not provided — apply default if one exists
-                let default = field_def
-                    .constraints
-                    .iter()
-                    .find_map(|c| {
-                        if let Constraint::Default(d) = c {
-                            Some(d)
-                        } else {
-                            None
-                        }
-                    });
+                let default = field_def.constraints.iter().find_map(|c| {
+                    if let Constraint::Default(d) = c {
+                        Some(d)
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(default_val) = default {
                     data.insert(field_def.name.clone(), default_to_value(default_val));
@@ -279,7 +276,7 @@ impl Engine {
             (Value::Json(_), TypeDefinition::Json) => true,
             (Value::Ref(_, _), TypeDefinition::Ref(_)) => true,
             (Value::Text(_), TypeDefinition::Enum(_)) => true, // Enums stored as text
-            (Value::Int(_), TypeDefinition::Float) => true, // Int -> Float coercion
+            (Value::Int(_), TypeDefinition::Float) => true,    // Int -> Float coercion
             _ => false,
         };
 
@@ -301,8 +298,9 @@ impl Engine {
     pub fn transition<'a>(
         &'a self,
         cmd: &'a TransitionCommand,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SmqlResult<TransitionResult>> + Send + 'a>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = SmqlResult<TransitionResult>> + Send + 'a>,
+    > {
         Box::pin(self.transition_inner(cmd))
     }
 
@@ -330,7 +328,10 @@ impl Engine {
                     cmd.machine, instance.machine
                 ),
                 field: Some("machine".to_string()),
-                hint: Some(format!("Use TRANSITION {} \"{}\" TO ...", instance.machine, cmd.instance_id)),
+                hint: Some(format!(
+                    "Use TRANSITION {} \"{}\" TO ...",
+                    instance.machine, cmd.instance_id
+                )),
             });
         }
 
@@ -371,7 +372,8 @@ impl Engine {
 
         // Populate children/parent context for composition guards
         if !machine_def.children.is_empty() || instance.parent_id.is_some() {
-            self.populate_composition_context(&mut ctx, &instance, &machine_def).await;
+            self.populate_composition_context(&mut ctx, &instance, &machine_def)
+                .await;
         }
 
         // Build HookContext for this transition
@@ -481,7 +483,9 @@ impl Engine {
         }
         for mutate in &transition_def.mutates {
             // Check for __spawn FunctionCall in MUTATE
-            if let smql_ast::expression::ExpressionKind::FunctionCall { name, args } = &mutate.value.kind {
+            if let smql_ast::expression::ExpressionKind::FunctionCall { name, args } =
+                &mutate.value.kind
+            {
                 if name == "__spawn" {
                     // __spawn(machine_name, key1, val1, key2, val2, ...)
                     if let Some(first_arg) = args.first() {
@@ -504,14 +508,18 @@ impl Engine {
                             i += 2;
                         }
                         // Spawn child with parent linkage
-                        let child_data_exprs: Vec<(String, smql_ast::expression::Expression)> = child_data
-                            .into_iter()
-                            .map(|(k, v)| {
-                                (k, smql_ast::expression::Expression::new(
-                                    smql_ast::expression::ExpressionKind::Literal(v),
-                                ))
-                            })
-                            .collect();
+                        let child_data_exprs: Vec<(String, smql_ast::expression::Expression)> =
+                            child_data
+                                .into_iter()
+                                .map(|(k, v)| {
+                                    (
+                                        k,
+                                        smql_ast::expression::Expression::new(
+                                            smql_ast::expression::ExpressionKind::Literal(v),
+                                        ),
+                                    )
+                                })
+                                .collect();
                         let child_cmd = SpawnCommand {
                             machine: child_machine.clone(),
                             data: child_data_exprs,
@@ -567,7 +575,13 @@ impl Engine {
 
         // --- 4. Atomic storage write ---
         self.storage
-            .transition_instance(&id, instance.version, &cmd.to_state, &mutations, trail_entry)
+            .transition_instance(
+                &id,
+                instance.version,
+                &cmd.to_state,
+                &mutations,
+                trail_entry,
+            )
             .await?;
 
         // --- 5. ON EXIT(old_state) hooks (fire-and-forget) ---
@@ -582,8 +596,7 @@ impl Engine {
             .await;
 
         // --- 6. Cancel old timeout, register new one ---
-        self.timer_manager
-            .cancel(&cmd.instance_id, &instance.state);
+        self.timer_manager.cancel(&cmd.instance_id, &instance.state);
         let _ = self
             .storage
             .remove_timer(&cmd.instance_id, &instance.state)
@@ -598,7 +611,10 @@ impl Engine {
                 &timeout.target_state,
             );
             // Persist timer to storage for crash recovery
-            if let Some(entry) = self.timer_manager.get_timer(&cmd.instance_id, &cmd.to_state) {
+            if let Some(entry) = self
+                .timer_manager
+                .get_timer(&cmd.instance_id, &cmd.to_state)
+            {
                 let stored = smql_storage::StoredTimer {
                     instance_id: cmd.instance_id.clone(),
                     machine: instance.machine.clone(),
@@ -704,11 +720,7 @@ impl Engine {
 
     /// Cascade: transition all children to their machine's first terminal state.
     /// Errors on child cascade are logged but don't fail the parent.
-    async fn cascade_children(
-        &self,
-        parent_id: &smql_storage::InstanceId,
-        _parent_machine: &str,
-    ) {
+    async fn cascade_children(&self, parent_id: &smql_storage::InstanceId, _parent_machine: &str) {
         let children = match self.storage.find_children(parent_id, None).await {
             Ok(c) => c,
             Err(_) => return,
@@ -760,9 +772,7 @@ impl Engine {
 
             let matches_source = match &t.from {
                 TransitionSource::State(s) => s == from_state,
-                TransitionSource::Any { except } => {
-                    !except.iter().any(|e| e == from_state)
-                }
+                TransitionSource::Any { except } => !except.iter().any(|e| e == from_state),
                 TransitionSource::Group(_) => false, // Groups resolved at runtime
             };
 
@@ -831,13 +841,7 @@ impl Engine {
 
         // Atomic transition
         self.storage
-            .transition_instance(
-                &id,
-                instance.version,
-                target_state,
-                &mutations,
-                trail_entry,
-            )
+            .transition_instance(&id, instance.version, target_state, &mutations, trail_entry)
             .await?;
 
         // Remove fired timer from storage
@@ -887,7 +891,8 @@ impl Engine {
                             &timeout.target_state,
                         );
                         // Persist new timer to storage
-                        if let Some(entry) = self.timer_manager.get_timer(instance_id, target_state) {
+                        if let Some(entry) = self.timer_manager.get_timer(instance_id, target_state)
+                        {
                             let stored = smql_storage::StoredTimer {
                                 instance_id: instance_id.to_string(),
                                 machine: instance.machine.clone(),
@@ -942,7 +947,9 @@ impl Engine {
                                 &timeout.target_state,
                             );
                             // Persist new timer to storage
-                            if let Some(entry) = self.timer_manager.get_timer(instance_id, target_state) {
+                            if let Some(entry) =
+                                self.timer_manager.get_timer(instance_id, target_state)
+                            {
                                 let stored = smql_storage::StoredTimer {
                                     instance_id: instance_id.to_string(),
                                     machine: instance.machine.clone(),
@@ -1123,9 +1130,11 @@ impl EngineCallback for EngineCallbackImpl {
         machine: &str,
         data: Vec<(String, Value)>,
     ) -> Result<String, HookError> {
-        let parent_id = smql_storage::InstanceId::from_string(parent_instance_id)
-            .map_err(|_| HookError::ActionFailed {
-                message: format!("Invalid parent instance ID: {}", parent_instance_id),
+        let parent_id =
+            smql_storage::InstanceId::from_string(parent_instance_id).map_err(|_| {
+                HookError::ActionFailed {
+                    message: format!("Invalid parent instance ID: {}", parent_instance_id),
+                }
             })?;
         let parent = self
             .storage
@@ -1167,9 +1176,12 @@ impl EngineCallback for EngineCallbackImpl {
             timer_manager: self.timer_manager.clone(),
             hook_executor: self.hook_executor.clone(),
         };
-        let result = engine.spawn(&cmd).await.map_err(|e| HookError::ActionFailed {
-            message: format!("Failed to spawn child: {}", e),
-        })?;
+        let result = engine
+            .spawn(&cmd)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to spawn child: {}", e),
+            })?;
         Ok(result.instance.id.as_str())
     }
 
@@ -1178,10 +1190,11 @@ impl EngineCallback for EngineCallbackImpl {
         child_instance_id: &str,
         target_state: &str,
     ) -> Result<(), HookError> {
-        let child_id = smql_storage::InstanceId::from_string(child_instance_id)
-            .map_err(|_| HookError::ActionFailed {
+        let child_id = smql_storage::InstanceId::from_string(child_instance_id).map_err(|_| {
+            HookError::ActionFailed {
                 message: format!("Invalid child instance ID: {}", child_instance_id),
-            })?;
+            }
+        })?;
         let child = self
             .storage
             .get_instance(&child_id)
@@ -1199,7 +1212,8 @@ impl EngineCallback for EngineCallbackImpl {
         };
 
         let parent_machine = child.parent_machine.clone().unwrap_or_default();
-        let cmd = TransitionCommand::new(parent_machine, parent_id.as_str(), target_state.to_string());
+        let cmd =
+            TransitionCommand::new(parent_machine, parent_id.as_str(), target_state.to_string());
         let engine = Engine {
             catalog: self.catalog.clone(),
             storage: self.storage.clone(),
@@ -1207,9 +1221,12 @@ impl EngineCallback for EngineCallbackImpl {
             hook_executor: self.hook_executor.clone(),
         };
         // Use try_transition so if the parent can't transition, we don't fail the hook
-        let _ = engine.try_transition(&cmd).await.map_err(|e| HookError::ActionFailed {
-            message: format!("Failed to signal parent: {}", e),
-        })?;
+        let _ = engine
+            .try_transition(&cmd)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to signal parent: {}", e),
+            })?;
         Ok(())
     }
 }
