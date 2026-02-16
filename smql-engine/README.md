@@ -149,14 +149,17 @@ Meta-commands: `.help`, `.machines`, `.states <machine>`, `.transitions <machine
 
 ### 5. Run Script Files
 
-SMQL scripts support `$N` references to refer to previously spawned instance IDs:
-
 ```smql
-DEFINE MACHINE Task ( STATES { todo, done } INITIAL STATE todo TERMINAL STATES { done } TRANSITIONS { todo -> done {} } )
+DEFINE MACHINE Task (
+    DATA { title : TEXT -> REQUIRED }
+    STATES { todo, done }
+    INITIAL STATE todo
+    TERMINAL STATES { done }
+    TRANSITIONS { todo -> done {} }
+)
 SPAWN Task { title: "First task" }
 SPAWN Task { title: "Second task" }
-TRANSITION Task $1 TO done
-GET $2
+FIND Task WHERE STATE IS todo
 ```
 
 ```bash
