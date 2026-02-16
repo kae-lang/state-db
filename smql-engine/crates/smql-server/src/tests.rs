@@ -470,3 +470,422 @@ async fn websocket_subscribe_with_machine_filter() {
         _ => {} // Timing-dependent
     }
 }
+
+// ---------------------------------------------------------------------------
+// value_to_json coverage tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn value_to_json_text() {
+    let val = smql_ast::value::Value::Text("hello".to_string());
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!("hello"));
+}
+
+#[test]
+fn value_to_json_int() {
+    let val = smql_ast::value::Value::Int(42);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!(42));
+}
+
+#[test]
+fn value_to_json_float() {
+    let val = smql_ast::value::Value::Float(3.14);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!(3.14));
+}
+
+#[test]
+fn value_to_json_bool() {
+    let val = smql_ast::value::Value::Bool(true);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!(true));
+}
+
+#[test]
+fn value_to_json_null() {
+    let val = smql_ast::value::Value::Null;
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::Value::Null);
+}
+
+#[test]
+fn value_to_json_duration() {
+    let dur = smql_ast::value::SmqlDuration::from_seconds(3600);
+    let val = smql_ast::value::Value::Duration(dur);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!("1h"));
+}
+
+#[test]
+fn value_to_json_list() {
+    let val = smql_ast::value::Value::List(vec![
+        smql_ast::value::Value::Int(1),
+        smql_ast::value::Value::Text("two".to_string()),
+    ]);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!([1, "two"]));
+}
+
+#[test]
+fn value_to_json_set() {
+    let val = smql_ast::value::Value::Set(vec![smql_ast::value::Value::Int(42)]);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!([42]));
+}
+
+#[test]
+fn value_to_json_map() {
+    let mut map = std::collections::BTreeMap::new();
+    map.insert("key".to_string(), smql_ast::value::Value::Int(10));
+    let val = smql_ast::value::Value::Map(map);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!({"key": 10}));
+}
+
+#[test]
+fn value_to_json_ref() {
+    let val = smql_ast::value::Value::Ref("Order".to_string(), "abc123".to_string());
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!({"ref": "Order#abc123"}));
+}
+
+#[test]
+fn value_to_json_money() {
+    let val = smql_ast::value::Value::Money(9999, "USD".to_string());
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!({"amount": 9999, "currency": "USD"}));
+}
+
+#[test]
+fn value_to_json_blob() {
+    let val = smql_ast::value::Value::Blob(vec![1, 2, 3, 4]);
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, serde_json::json!({"blob_size": 4}));
+}
+
+#[test]
+fn value_to_json_json_passthrough() {
+    let inner = serde_json::json!({"nested": [1, 2, 3]});
+    let val = smql_ast::value::Value::Json(inner.clone());
+    let json = crate::handlers::value_to_json(&val);
+    assert_eq!(json, inner);
+}
+
+// ---------------------------------------------------------------------------
+// REST endpoint tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_machines_empty() {
+    let app = test_router();
+    let resp = app.oneshot(get_request("/machines")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["machines"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn list_machines_after_define() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.oneshot(get_request("/machines")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let machines = json["machines"].as_array().unwrap();
+    assert_eq!(machines.len(), 1);
+    assert_eq!(machines[0], "counter");
+}
+
+#[tokio::test]
+async fn get_machine_found() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.oneshot(get_request("/machines/counter")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["name"], "counter");
+    assert_eq!(json["initial_state"], "idle");
+}
+
+#[tokio::test]
+async fn get_machine_not_found() {
+    let app = test_router();
+    let resp = app.oneshot(get_request("/machines/nonexistent")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(json["error"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
+async fn get_instance_found() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = json["result"]["id"].as_str().unwrap();
+
+    let resp = app.oneshot(get_request(&format!("/instances/{}", instance_id))).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["machine"], "counter");
+    assert_eq!(json["state"], "idle");
+}
+
+#[tokio::test]
+async fn get_instance_invalid_id() {
+    let app = test_router();
+    let resp = app.oneshot(get_request("/instances/not-a-ulid")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(json["error"].as_str().unwrap().contains("Invalid"));
+}
+
+#[tokio::test]
+async fn get_instance_not_found() {
+    let app = test_router();
+    // Generate a valid ULID that doesn't exist in storage
+    let id = smql_storage::InstanceId::new();
+    let resp = app.oneshot(get_request(&format!("/instances/{}", id))).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// Execute edge cases
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn execute_parse_error() {
+    let app = test_router();
+    let resp = app.oneshot(execute_request("INVALID GARBAGE @#$")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], false);
+    assert!(json["error"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn execute_empty_input() {
+    let app = test_router();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/execute")
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::json!({ "smql": "" }).to_string()))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn execute_try_transition_guard_fails() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_guarded_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN gated {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = json["result"]["id"].as_str().unwrap();
+
+    let smql = format!(r#"TRY TRANSITION "{}" TO closed"#, instance_id);
+    let resp = app.clone().oneshot(execute_request(&smql)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["result"]["transitioned"], false);
+}
+
+#[tokio::test]
+async fn execute_try_transition_success() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = json["result"]["id"].as_str().unwrap();
+
+    let smql = format!(r#"TRY TRANSITION "{}" TO running"#, instance_id);
+    let resp = app.clone().oneshot(execute_request(&smql)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["result"]["transitioned"], true);
+    assert_eq!(json["result"]["to_state"], "running");
+}
+
+#[tokio::test]
+async fn execute_alter_machine() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let alter_smql = r#"ALTER MACHINE counter ADD STATE paused"#;
+    let resp = app.clone().oneshot(execute_request(alter_smql)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["result"]["action"], "machine_altered");
+    assert_eq!(json["result"]["machine"], "counter");
+}
+
+#[tokio::test]
+async fn execute_query_get() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = json["result"]["id"].as_str().unwrap();
+
+    let smql = format!(r#"GET counter "{}""#, instance_id);
+    let resp = app.clone().oneshot(execute_request(&smql)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["result"]["machine"], "counter");
+}
+
+#[tokio::test]
+async fn execute_query_find() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request("FIND counter")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["result"]["count"], 1);
+}
+
+#[tokio::test]
+async fn execute_query_trail() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = json["result"]["id"].as_str().unwrap();
+
+    let smql = format!(r#"TRAIL OF "{}""#, instance_id);
+    let resp = app.clone().oneshot(execute_request(&smql)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert!(json["result"]["entries"].as_array().is_some());
+}
+
+#[tokio::test]
+async fn execute_query_aggregate() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request("AGGREGATE counter MEASURE COUNT()")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert!(json["result"]["rows"].as_array().is_some());
+}
+
+#[tokio::test]
+async fn execute_query_paths() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = json["result"]["id"].as_str().unwrap();
+
+    let transition_smql = format!(r#"TRANSITION "{}" TO running"#, instance_id);
+    let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app.clone().oneshot(execute_request("PATHS FROM counter")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert!(json["result"]["paths"].as_array().is_some());
+}
+
+#[tokio::test]
+async fn execute_query_funnel() {
+    let app = test_router();
+    let resp = app.clone().oneshot(execute_request(define_simple_machine())).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request(r#"SPAWN counter {}"#)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let resp = app.clone().oneshot(execute_request("FUNNEL counter THROUGH [idle, running]")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["success"], true);
+    assert!(json["result"]["stages"].as_array().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// SmqlServer constructors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn server_default_creates_instance() {
+    let _server = SmqlServer::default();
+}
+
+#[test]
+fn server_with_storage() {
+    let storage = std::sync::Arc::new(smql_storage::MemoryStorage::new());
+    let _server = SmqlServer::with_storage(storage);
+}
+
+#[test]
+fn server_with_engine() {
+    let catalog = std::sync::Arc::new(smql_catalog::MachineCatalog::new());
+    let storage = std::sync::Arc::new(smql_storage::MemoryStorage::new());
+    let engine = std::sync::Arc::new(smql_engine_core::Engine::new(catalog, storage));
+    let _server = SmqlServer::with_engine(engine);
+}

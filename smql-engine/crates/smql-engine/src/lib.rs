@@ -7,6 +7,8 @@ pub mod query;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod eval_tests;
 
 pub use alter::AlterResult;
 pub use engine::{Engine, SpawnResult, TransitionResult};

@@ -333,3 +333,65 @@ fn print_query_result(result: QueryResult) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_complete_statement_balanced_braces() {
+        assert!(is_complete_statement("DEFINE MACHINE Foo { STATES { open } }"));
+    }
+
+    #[test]
+    fn is_complete_statement_unbalanced_braces() {
+        assert!(!is_complete_statement("DEFINE MACHINE Foo { STATES { open }"));
+    }
+
+    #[test]
+    fn is_complete_statement_balanced_parens() {
+        assert!(is_complete_statement("AGGREGATE Machine MEASURE COUNT()"));
+    }
+
+    #[test]
+    fn is_complete_statement_unbalanced_parens() {
+        assert!(!is_complete_statement("AGGREGATE Machine MEASURE COUNT("));
+    }
+
+    #[test]
+    fn is_complete_statement_no_braces_or_parens() {
+        assert!(is_complete_statement("TRANSITION id TO closed"));
+    }
+
+    #[test]
+    fn is_complete_statement_empty_string() {
+        assert!(is_complete_statement(""));
+    }
+
+    #[test]
+    fn is_complete_statement_mixed_balanced() {
+        assert!(is_complete_statement("DEFINE MACHINE Foo { HOOKS { ON SPAWN { EMIT(\"created\") } } }"));
+    }
+
+    #[test]
+    fn is_complete_statement_mixed_unbalanced_brace() {
+        assert!(!is_complete_statement("DEFINE MACHINE Foo { HOOKS { ON SPAWN { EMIT(\"created\") }"));
+    }
+
+    #[test]
+    fn is_complete_statement_mixed_unbalanced_paren() {
+        assert!(!is_complete_statement("AGGREGATE Machine MEASURE AVG(price"));
+    }
+
+    #[test]
+    fn is_complete_statement_nested_balanced() {
+        assert!(is_complete_statement("{{ () {} }}"));
+    }
+
+    #[test]
+    fn is_complete_statement_only_closing_braces() {
+        // More closes than opens — the counts happen to match if same number,
+        // but here closes > opens so it is unbalanced
+        assert!(!is_complete_statement("}}"));
+    }
+}
