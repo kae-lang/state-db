@@ -38,7 +38,7 @@ pub async fn handle_ws(mut socket: WebSocket, event_bus: Arc<EventBus>, params: 
                         });
 
                         if socket
-                            .send(Message::Text(payload.to_string().into()))
+                            .send(Message::Text(payload.to_string()))
                             .await
                             .is_err()
                         {

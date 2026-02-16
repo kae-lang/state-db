@@ -370,7 +370,7 @@ fn truthy_float_zero_is_truthy() {
     // This is by design: is_truthy does not check Float(0.0)
     let ctx = ctx_with_data(vec![]);
     let guard_expr = lit(Value::Float(0.0));
-    assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+    assert!(eval_guard(&guard_expr, &ctx).unwrap());
 }
 
 #[test]
@@ -378,14 +378,14 @@ fn truthy_empty_map_is_truthy() {
     // Empty map falls through to _ => true
     let ctx = ctx_with_data(vec![]);
     let guard_expr = lit(Value::Map(BTreeMap::new()));
-    assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+    assert!(eval_guard(&guard_expr, &ctx).unwrap());
 }
 
 #[test]
 fn truthy_negative_int_is_truthy() {
     let ctx = ctx_with_data(vec![]);
     let guard_expr = lit(Value::Int(-1));
-    assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+    assert!(eval_guard(&guard_expr, &ctx).unwrap());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -764,7 +764,7 @@ fn complex_and_or_not_combination() {
     let not_x_eq_0 = unaryop(UnaryOperator::Not, x_eq_0);
     let full = binop(and_expr, BinaryOperator::Or, not_x_eq_0);
 
-    assert_eq!(eval_guard(&full, &ctx).unwrap(), true);
+    assert!(eval_guard(&full, &ctx).unwrap());
 }
 
 #[test]
@@ -915,12 +915,12 @@ fn sub_duration_same_is_zero() {
 fn eval_guard_with_int_result() {
     let ctx = ctx_with_data(vec![("x", Value::Int(42))]);
     // eval_guard on a field that returns Int(42) — truthy
-    assert_eq!(eval_guard(&field("x"), &ctx).unwrap(), true);
+    assert!(eval_guard(&field("x"), &ctx).unwrap());
 }
 
 #[test]
 fn eval_guard_with_null_field() {
     let ctx = ctx_with_data(vec![]);
     // eval_guard on missing field returns Null — falsy
-    assert_eq!(eval_guard(&field("missing"), &ctx).unwrap(), false);
+    assert!(!eval_guard(&field("missing"), &ctx).unwrap());
 }

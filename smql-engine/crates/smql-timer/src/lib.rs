@@ -79,10 +79,7 @@ impl TimerManager {
         let mut by_deadline = self.timers_by_deadline.write().unwrap();
         let mut by_key = self.timers_by_key.write().unwrap();
 
-        by_deadline
-            .entry(deadline)
-            .or_insert_with(Vec::new)
-            .push(entry);
+        by_deadline.entry(deadline).or_default().push(entry);
         by_key.insert(key, deadline);
     }
 

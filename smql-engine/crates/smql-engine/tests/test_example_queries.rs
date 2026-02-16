@@ -93,7 +93,7 @@ async fn transition_with_data(
     engine
         .transition(&cmd)
         .await
-        .expect(&format!("transition {} to {}", id, to));
+        .unwrap_or_else(|_| panic!("transition {} to {}", id, to));
 }
 
 /// Transition as actor (no data).
@@ -107,7 +107,7 @@ async fn transition_as(engine: &Engine, machine: &str, id: &str, to: &str, actor
     engine
         .transition(&cmd)
         .await
-        .expect(&format!("transition {} to {}", id, to));
+        .unwrap_or_else(|_| panic!("transition {} to {}", id, to));
 }
 
 // ===========================================================================

@@ -233,7 +233,10 @@ mod tests {
         assert_eq!(value_to_json(&Value::Null), serde_json::Value::Null);
         assert_eq!(value_to_json(&Value::Bool(true)), serde_json::json!(true));
         assert_eq!(value_to_json(&Value::Int(42)), serde_json::json!(42));
-        assert_eq!(value_to_json(&Value::Float(3.14)), serde_json::json!(3.14));
+        assert_eq!(
+            value_to_json(&Value::Float(3.125)),
+            serde_json::json!(3.125)
+        );
         assert_eq!(
             value_to_json(&Value::Text("hi".into())),
             serde_json::json!("hi")

@@ -462,17 +462,14 @@ async fn websocket_subscribe_receives_events() {
     // Try to receive "state_changed" event
     let event = tokio::time::timeout(std::time::Duration::from_secs(2), ws_stream.next()).await;
 
-    match event {
-        Ok(Some(Ok(msg))) => {
-            let text = msg.to_text().unwrap();
-            let json: serde_json::Value = serde_json::from_str(text).unwrap();
-            assert!(
-                json["event"] == "spawned" || json["event"] == "state_changed",
-                "Unexpected event: {:?}",
-                json
-            );
-        }
-        _ => {} // Timing-dependent
+    if let Ok(Some(Ok(msg))) = event {
+        let text = msg.to_text().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(
+            json["event"] == "spawned" || json["event"] == "state_changed",
+            "Unexpected event: {:?}",
+            json
+        );
     }
 }
 
@@ -563,13 +560,10 @@ async fn websocket_subscribe_with_machine_filter() {
     // We should get the m1 event
     let event = tokio::time::timeout(std::time::Duration::from_secs(2), ws_stream.next()).await;
 
-    match event {
-        Ok(Some(Ok(msg))) => {
-            let text = msg.to_text().unwrap();
-            let json: serde_json::Value = serde_json::from_str(text).unwrap();
-            assert_eq!(json["machine"], "m1", "Should only receive m1 events");
-        }
-        _ => {} // Timing-dependent
+    if let Ok(Some(Ok(msg))) = event {
+        let text = msg.to_text().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["machine"], "m1", "Should only receive m1 events");
     }
 }
 
@@ -593,9 +587,9 @@ fn value_to_json_int() {
 
 #[test]
 fn value_to_json_float() {
-    let val = smql_ast::value::Value::Float(3.14);
+    let val = smql_ast::value::Value::Float(3.125);
     let json = crate::handlers::value_to_json(&val);
-    assert_eq!(json, serde_json::json!(3.14));
+    assert_eq!(json, serde_json::json!(3.125));
 }
 
 #[test]

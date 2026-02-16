@@ -3289,15 +3289,12 @@ mod composition_tests {
                 TransitionSource::State("confirmed".into()),
                 "shipped".into(),
             ),
-            {
-                let t = TransitionDefinition::new(
-                    TransitionSource::Any {
-                        except: vec!["cancelled".into(), "shipped".into()],
-                    },
-                    "cancelled".into(),
-                );
-                t
-            },
+            TransitionDefinition::new(
+                TransitionSource::Any {
+                    except: vec!["cancelled".into(), "shipped".into()],
+                },
+                "cancelled".into(),
+            ),
         ];
         engine.catalog.register(m).unwrap();
     }
@@ -4446,9 +4443,8 @@ mod alter_tests {
         let def = engine.catalog.get("Task").unwrap();
         // All transitions involving in_progress should be removed
         for t in &def.transitions {
-            match &t.from {
-                TransitionSource::State(s) => assert_ne!(s, "in_progress"),
-                _ => {}
+            if let TransitionSource::State(s) = &t.from {
+                assert_ne!(s, "in_progress");
             }
             assert_ne!(t.to, "in_progress");
         }
@@ -4938,7 +4934,7 @@ mod alter_tests {
             cmd,
         )) = &stmts[0]
         {
-            let result = engine.execute_alter_machine(&cmd).await.unwrap();
+            let result = engine.execute_alter_machine(cmd).await.unwrap();
             assert_eq!(result.operations_applied, 1);
             let def = engine.catalog.get("Task").unwrap();
             assert!(def.states.iter().any(|s| s.name == "review"));
@@ -4959,7 +4955,7 @@ mod alter_tests {
             cmd,
         )) = &stmts[0]
         {
-            let result = engine.execute_alter_machine(&cmd).await.unwrap();
+            let result = engine.execute_alter_machine(cmd).await.unwrap();
             assert_eq!(result.operations_applied, 1);
         } else {
             panic!("Expected ALTER MACHINE command");
@@ -4980,7 +4976,7 @@ mod alter_tests {
             cmd,
         )) = &stmts[0]
         {
-            let result = engine.execute_alter_machine(&cmd).await.unwrap();
+            let result = engine.execute_alter_machine(cmd).await.unwrap();
             assert_eq!(result.instances_migrated, 1);
 
             let filter = smql_storage::Filter::default();

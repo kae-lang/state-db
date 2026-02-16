@@ -432,10 +432,10 @@ mod tests {
 
     #[test]
     fn tokenize_numbers() {
-        let tokens = tokenize("42 3.14 -5").unwrap();
+        let tokens = tokenize("42 3.125 -5").unwrap();
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[0].kind, TokenKind::IntLiteral(42));
-        assert_eq!(tokens[1].kind, TokenKind::FloatLiteral(3.14));
+        assert_eq!(tokens[1].kind, TokenKind::FloatLiteral(3.125));
         assert_eq!(tokens[2].kind, TokenKind::IntLiteral(-5));
     }
 

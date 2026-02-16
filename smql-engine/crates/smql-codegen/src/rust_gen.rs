@@ -36,9 +36,7 @@ pub fn generate_machine_module(def: &MachineDefinition) -> String {
 
 fn generate_field_enum(name: &str, variants: &[String]) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]\n"
-    ));
+    out.push_str("    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]\n");
     out.push_str(&format!("    pub enum {} {{\n", name));
     for v in variants {
         let variant = to_pascal_case(v);
@@ -125,8 +123,7 @@ fn generate_data_struct(def: &MachineDefinition) -> String {
             .any(|c| matches!(c, Constraint::Optional));
 
         let rust_type = if let TypeDefinition::Enum(_) = &field.field_type {
-            let enum_name = field_enum_name(&struct_name, &field.name);
-            enum_name
+            field_enum_name(&struct_name, &field.name)
         } else {
             type_map::smql_type_to_rust(&field.field_type)
         };
@@ -157,7 +154,7 @@ fn generate_machine_marker(def: &MachineDefinition) -> String {
         def.name
     ));
     out.push_str(&format!("        pub type Data = {};\n", data_name));
-    out.push_str(&format!("        pub type MachineState = State;\n"));
+    out.push_str("        pub type MachineState = State;\n");
     out.push_str("    }\n");
     out
 }
@@ -168,7 +165,7 @@ fn generate_machine_marker(def: &MachineDefinition) -> String {
 pub fn to_pascal_case(s: &str) -> String {
     if s.contains('_') || s.contains('-') || s.contains(' ') {
         // Split on separators and capitalize each part
-        s.split(|c: char| c == '_' || c == '-' || c == ' ')
+        s.split(['_', '-', ' '])
             .filter(|part| !part.is_empty())
             .map(|part| {
                 let mut chars = part.chars();
@@ -182,7 +179,7 @@ pub fn to_pascal_case(s: &str) -> String {
                 }
             })
             .collect()
-    } else if s.chars().next().map_or(false, |c| c.is_lowercase()) {
+    } else if s.chars().next().is_some_and(|c| c.is_lowercase()) {
         // Simple lowercase word: capitalize first letter
         let mut chars = s.chars();
         match chars.next() {

@@ -821,6 +821,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     /// A callback that records calls for verification.
+    #[allow(clippy::type_complexity)]
     struct RecordingCallback {
         spawn_calls: std::sync::Mutex<Vec<(String, String, Vec<(String, Value)>)>>,
         signal_calls: std::sync::Mutex<Vec<(String, String)>>,

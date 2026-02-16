@@ -131,7 +131,7 @@ mod value_tests {
     fn value_display_primitives() {
         assert_eq!(Value::Text("hello".into()).to_string(), "\"hello\"");
         assert_eq!(Value::Int(42).to_string(), "42");
-        assert_eq!(Value::Float(3.14).to_string(), "3.14");
+        assert_eq!(Value::Float(3.125).to_string(), "3.125");
         assert_eq!(Value::Bool(true).to_string(), "true");
         assert_eq!(Value::Null.to_string(), "NULL");
     }
@@ -170,7 +170,7 @@ mod value_tests {
         let values = vec![
             Value::Text("test".into()),
             Value::Int(42),
-            Value::Float(3.14),
+            Value::Float(3.125),
             Value::Bool(false),
             Value::Null,
             Value::List(vec![Value::Int(1)]),

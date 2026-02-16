@@ -189,7 +189,7 @@ pub fn validate_machine(
 }
 
 /// Compute all states reachable from the initial state via BFS.
-fn compute_reachable_states<'a>(machine: &'a MachineDefinition) -> HashSet<&'a str> {
+fn compute_reachable_states(machine: &MachineDefinition) -> HashSet<&str> {
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::new();
     reachable.insert(machine.initial_state.as_str());

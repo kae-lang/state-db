@@ -271,7 +271,7 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
 
         ExpressionKind::SignalFrom { machine, condition } => {
             // Find children matching the given machine name
-            for (_, children) in &ctx.children {
+            for children in ctx.children.values() {
                 for child in children {
                     if child.machine == *machine {
                         let child_ctx = make_child_eval_context(child, ctx);

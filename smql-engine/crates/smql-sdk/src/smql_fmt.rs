@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(value_to_smql(&serde_json::json!(true)), "true");
         assert_eq!(value_to_smql(&serde_json::json!(false)), "false");
         assert_eq!(value_to_smql(&serde_json::json!(42)), "42");
-        assert_eq!(value_to_smql(&serde_json::json!(3.14)), "3.14");
+        assert_eq!(value_to_smql(&serde_json::json!(3.125)), "3.125");
         assert_eq!(value_to_smql(&serde_json::json!("hello")), "\"hello\"");
     }
 

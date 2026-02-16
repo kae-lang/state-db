@@ -559,8 +559,8 @@ mod tests {
     #[test]
     fn neg_float() {
         let ctx = ctx_with_data(vec![]);
-        let expr = unaryop(UnaryOperator::Neg, lit(Value::Float(3.14)));
-        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(-3.14));
+        let expr = unaryop(UnaryOperator::Neg, lit(Value::Float(3.125)));
+        assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Float(-3.125));
     }
 
     #[test]
@@ -596,77 +596,77 @@ mod tests {
 
         // Use eval_guard which internally calls is_truthy on the result
         let guard_expr = lit(Value::Bool(true));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_bool_false() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Bool(false));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_null() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Null);
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_int_zero() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Int(0));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_int_nonzero() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Int(1));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_empty_text() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Text("".to_string()));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_nonempty_text() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Text("hello".to_string()));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_empty_list() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::List(vec![]));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_nonempty_list() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::List(vec![Value::Int(1)]));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_empty_set() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Set(vec![]));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_nonempty_set() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Set(vec![Value::Int(1)]));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     // ── 16. values_equal edge cases ─────────────────────────────────────
@@ -675,9 +675,9 @@ mod tests {
     fn values_equal_float_float() {
         let ctx = ctx_with_data(vec![]);
         let expr = binop(
-            lit(Value::Float(3.14)),
+            lit(Value::Float(3.125)),
             BinaryOperator::Eq,
-            lit(Value::Float(3.14)),
+            lit(Value::Float(3.125)),
         );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(true));
     }
@@ -686,9 +686,9 @@ mod tests {
     fn values_equal_float_float_not_equal() {
         let ctx = ctx_with_data(vec![]);
         let expr = binop(
-            lit(Value::Float(3.14)),
+            lit(Value::Float(3.125)),
             BinaryOperator::Eq,
-            lit(Value::Float(2.71)),
+            lit(Value::Float(2.75)),
         );
         assert_eq!(eval_expr(&expr, &ctx).unwrap(), Value::Bool(false));
     }
@@ -1406,14 +1406,14 @@ mod tests {
     fn eval_guard_true_condition() {
         let ctx = ctx_with_data(vec![("x", Value::Int(10))]);
         let expr = binop(field(vec!["x"]), BinaryOperator::Gt, lit(Value::Int(5)));
-        assert_eq!(eval_guard(&expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&expr, &ctx).unwrap());
     }
 
     #[test]
     fn eval_guard_false_condition() {
         let ctx = ctx_with_data(vec![("x", Value::Int(3))]);
         let expr = binop(field(vec!["x"]), BinaryOperator::Gt, lit(Value::Int(5)));
-        assert_eq!(eval_guard(&expr, &ctx).unwrap(), false);
+        assert!(!eval_guard(&expr, &ctx).unwrap());
     }
 
     // ── Additional: QualifiedAccess ─────────────────────────────────────
@@ -1809,20 +1809,20 @@ mod tests {
     fn truthy_map_is_truthy() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Map(make_map(vec![("a", Value::Int(1))])));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_float_nonzero() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Float(0.1));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 
     #[test]
     fn truthy_duration_is_truthy() {
         let ctx = ctx_with_data(vec![]);
         let guard_expr = lit(Value::Duration(SmqlDuration::from_seconds(10)));
-        assert_eq!(eval_guard(&guard_expr, &ctx).unwrap(), true);
+        assert!(eval_guard(&guard_expr, &ctx).unwrap());
     }
 }

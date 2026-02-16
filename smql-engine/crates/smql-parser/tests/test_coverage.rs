@@ -199,7 +199,7 @@ DEFINE MACHINE Bad (
 fn parse_float_default_value() {
     let input = r#"
 DEFINE MACHINE WithFloat (
-    DATA { score : FLOAT -> DEFAULT(3.14) }
+    DATA { score : FLOAT -> DEFAULT(3.125) }
     STATES { a }
     INITIAL STATE a
     TERMINAL STATES { a }
@@ -210,7 +210,7 @@ DEFINE MACHINE WithFloat (
     assert_eq!(m.data.len(), 1);
     assert_eq!(
         m.data[0].constraints,
-        vec![Constraint::Default(DefaultValue::Float(3.14))]
+        vec![Constraint::Default(DefaultValue::Float(3.125))]
     );
 }
 

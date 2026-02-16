@@ -377,17 +377,17 @@ impl Storage for MemoryStorage {
                         let matches = filter
                             .from_state
                             .as_ref()
-                            .map_or(true, |s| entry.from_state == *s)
+                            .is_none_or(|s| entry.from_state == *s)
                             && filter
                                 .to_state
                                 .as_ref()
-                                .map_or(true, |s| entry.to_state == *s)
+                                .is_none_or(|s| entry.to_state == *s)
                             && filter
                                 .actor
                                 .as_ref()
-                                .map_or(true, |a| entry.actor.as_ref() == Some(a))
-                            && filter.after.map_or(true, |t| entry.timestamp > t)
-                            && filter.before.map_or(true, |t| entry.timestamp < t);
+                                .is_none_or(|a| entry.actor.as_ref() == Some(a))
+                            && filter.after.is_none_or(|t| entry.timestamp > t)
+                            && filter.before.is_none_or(|t| entry.timestamp < t);
 
                         if matches {
                             results.push(entry.clone());

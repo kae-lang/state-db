@@ -75,7 +75,7 @@ fn create_storage(arg: &str) -> Arc<dyn Storage> {
     #[cfg(feature = "rocksdb")]
     {
         match smql_storage::RocksDBStorage::open(arg) {
-            Ok(s) => return Arc::new(s),
+            Ok(s) => Arc::new(s),
             Err(e) => {
                 eprintln!("Failed to open RocksDB at '{}': {}", arg, e);
                 std::process::exit(1);
@@ -159,7 +159,7 @@ async fn main() {
                         Ok(entries) => {
                             for entry in entries.flatten() {
                                 let p = entry.path();
-                                if p.extension().map_or(false, |ext| ext == "smql") {
+                                if p.extension().is_some_and(|ext| ext == "smql") {
                                     smql_files.push(p.to_string_lossy().to_string());
                                 }
                             }

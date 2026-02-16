@@ -140,31 +140,31 @@ pub enum FilterPredicate {
 impl FilterPredicate {
     pub fn matches(&self, data: &HashMap<String, Value>) -> bool {
         match self {
-            FilterPredicate::Eq(field, val) => data.get(field).map_or(false, |v| v == val),
-            FilterPredicate::Ne(field, val) => data.get(field).map_or(true, |v| v != val),
-            FilterPredicate::Gt(field, val) => data.get(field).map_or(false, |v| {
-                compare_values(v, val) == Some(std::cmp::Ordering::Greater)
-            }),
-            FilterPredicate::Gte(field, val) => data.get(field).map_or(false, |v| {
+            FilterPredicate::Eq(field, val) => data.get(field).is_some_and(|v| v == val),
+            FilterPredicate::Ne(field, val) => data.get(field).is_none_or(|v| v != val),
+            FilterPredicate::Gt(field, val) => data
+                .get(field)
+                .is_some_and(|v| compare_values(v, val) == Some(std::cmp::Ordering::Greater)),
+            FilterPredicate::Gte(field, val) => data.get(field).is_some_and(|v| {
                 matches!(
                     compare_values(v, val),
                     Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
                 )
             }),
-            FilterPredicate::Lt(field, val) => data.get(field).map_or(false, |v| {
-                compare_values(v, val) == Some(std::cmp::Ordering::Less)
-            }),
-            FilterPredicate::Lte(field, val) => data.get(field).map_or(false, |v| {
+            FilterPredicate::Lt(field, val) => data
+                .get(field)
+                .is_some_and(|v| compare_values(v, val) == Some(std::cmp::Ordering::Less)),
+            FilterPredicate::Lte(field, val) => data.get(field).is_some_and(|v| {
                 matches!(
                     compare_values(v, val),
                     Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
                 )
             }),
             FilterPredicate::IsNull(field) => {
-                data.get(field).map_or(true, |v| matches!(v, Value::Null))
+                data.get(field).is_none_or(|v| matches!(v, Value::Null))
             }
             FilterPredicate::IsNotNull(field) => {
-                data.get(field).map_or(false, |v| !matches!(v, Value::Null))
+                data.get(field).is_some_and(|v| !matches!(v, Value::Null))
             }
             FilterPredicate::And(a, b) => a.matches(data) && b.matches(data),
             FilterPredicate::Or(a, b) => a.matches(data) || b.matches(data),
