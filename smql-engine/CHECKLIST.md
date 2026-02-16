@@ -1,8 +1,8 @@
 # SMQL Engine — Build Checklist
 
-> Last updated: 2026-02-15
-> Current phase: Phase 14 COMPLETE
-> Current agent focus: QA
+> Last updated: 2026-02-16
+> Current phase: Phase 15 COMPLETE
+> Current agent focus: Done
 
 ---
 
@@ -272,6 +272,30 @@
 - [ ] 14.4 Performance benchmarks (deferred)
 - [x] 14.5 CHECKPOINT: All 447 tests pass (401 existing + 46 integration) — 2026-02-15
 
-## Phase 15: SDK & Developer Experience Polish [STATUS: NOT STARTED]
+## Phase 15: SDK & Developer Experience Polish [STATUS: COMPLETE]
 
-- [ ] 15.1-15.4 SDK and final checkpoint
+- [x] 15.1 Workspace setup — 2026-02-16
+  - [x] 15.1.1 reqwest + url workspace deps added
+  - [x] 15.1.2 smql-sdk deps updated (reqwest, tokio-tungstenite, futures-util, url)
+  - [x] 15.1.3 smql-codegen crate created (smql-ast, smql-parser, thiserror deps)
+- [x] 15.2 smql-sdk crate — 28 tests (12 unit + 15 integration + 1 doc)
+  - [x] 15.2.1 SdkError enum (Http, Server, TransitionDenied, NotFound, Parse, Subscription, Deserialize)
+  - [x] 15.2.2 Response types (ExecuteResponse, InstanceResponse, TransitionResponse, MachineInfo, TrailEntryResponse, SdkEvent)
+  - [x] 15.2.3 SMQL formatter (format_spawn, format_transition, format_find, value_to_smql)
+  - [x] 15.2.4 SmqlClient (new, builder, execute, define_machine, spawn, transition, try_transition, get_instance, list_machines, get_machine, trail, health)
+  - [x] 15.2.5 FindBuilder (in_state, where_clause, sort_by, limit, offset, execute, count)
+  - [x] 15.2.6 AggregateBuilder (measure, group_by_state, group_by_field, execute)
+  - [x] 15.2.7 Subscription (WebSocket connect, next_event, on_event callback, cancel)
+  - [x] 15.2.8 Typed API (SmqlMachine, SmqlState traits, TypedInstance, spawn_typed, find_typed)
+  - [x] 15.2.9 Prelude module re-exports
+  - [x] 15.2.10 Integration tests (15 tests against in-process server)
+- [x] 15.3 smql-codegen crate — 11 tests
+  - [x] 15.3.1 CodeGenerator (from_source, from_files, generate_rust, generate_combined_rust)
+  - [x] 15.3.2 Type mapping (SMQL types → Rust types)
+  - [x] 15.3.3 Rust code generation (state enum, data struct, enum fields, machine marker)
+  - [x] 15.3.4 PascalCase/snake_case name conversion
+  - [x] 15.3.5 Codegen tests (11 tests: type mapping, state enum, data struct, enum field, machine impl, multi-machine, roundtrips)
+- [x] 15.4 CLI codegen subcommand (`smql codegen --input dir/ --output src/generated/`)
+- [x] 15.5 Bug fix: server route params `:name`/`:id` (axum 0.7 syntax, was using 0.8 `{name}` syntax)
+- [x] 15.6 Documentation (README.md, SDK example, rustdoc)
+- [x] 15.7 CHECKPOINT: All 530 tests pass (486 base + 44 rocksdb) — 2026-02-16

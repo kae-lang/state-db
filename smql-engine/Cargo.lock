@@ -1895,6 +1895,7 @@ dependencies = [
  "serde_json",
  "smql-ast",
  "smql-catalog",
+ "smql-codegen",
  "smql-engine-core",
  "smql-parser",
  "smql-server",
@@ -1902,6 +1903,15 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "smql-codegen"
+version = "0.1.0"
+dependencies = [
+ "smql-ast",
+ "smql-parser",
+ "thiserror",
 ]
 
 [[package]]
@@ -1963,12 +1973,16 @@ dependencies = [
 name = "smql-sdk"
 version = "0.1.0"
 dependencies = [
- "bytes",
+ "axum",
+ "futures-util",
+ "reqwest",
  "serde",
  "serde_json",
- "smql-ast",
+ "smql-server",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]

@@ -17,6 +17,7 @@ smql-engine-core = { path = "../smql-engine" }
 smql-parser = { path = "../smql-parser" }
 smql-server = { path = "../smql-server" }
 smql-storage = { path = "../smql-storage" }
+smql-codegen = { path = "../smql-codegen" }
 clap = { workspace = true }
 rustyline = { workspace = true }
 tokio = { workspace = true }
