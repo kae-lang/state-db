@@ -7,8 +7,8 @@ pub fn format_spawn(machine: &str, data: &serde_json::Value) -> String {
 }
 
 /// Format a TRANSITION command.
-pub fn format_transition(instance_id: &str, to_state: &str, opts: &TransitionOptions) -> String {
-    let mut s = format!("TRANSITION \"{}\" TO {}", instance_id, to_state);
+pub fn format_transition(machine: &str, instance_id: &str, to_state: &str, opts: &TransitionOptions) -> String {
+    let mut s = format!("TRANSITION {} \"{}\" TO {}", machine, instance_id, to_state);
     if !opts.with_data.is_empty() {
         let fields: Vec<String> = opts
             .with_data
@@ -28,11 +28,12 @@ pub fn format_transition(instance_id: &str, to_state: &str, opts: &TransitionOpt
 
 /// Format a TRY TRANSITION command.
 pub fn format_try_transition(
+    machine: &str,
     instance_id: &str,
     to_state: &str,
     opts: &TransitionOptions,
 ) -> String {
-    let base = format_transition(instance_id, to_state, opts);
+    let base = format_transition(machine, instance_id, to_state, opts);
     format!("TRY {}", base)
 }
 
@@ -175,8 +176,8 @@ mod tests {
     #[test]
     fn test_format_transition() {
         let opts = TransitionOptions::default();
-        let s = format_transition("abc-123", "active", &opts);
-        assert_eq!(s, "TRANSITION \"abc-123\" TO active");
+        let s = format_transition("Machine", "abc-123", "active", &opts);
+        assert_eq!(s, "TRANSITION Machine \"abc-123\" TO active");
     }
 
     #[test]
@@ -186,7 +187,8 @@ mod tests {
             memo: Some("bump count".to_string()),
             as_actor: None,
         };
-        let s = format_transition("id1", "next", &opts);
+        let s = format_transition("Machine", "id1", "next", &opts);
+        assert!(s.contains("TRANSITION Machine"));
         assert!(s.contains("WITH { count: 10 }"));
         assert!(s.contains("MEMO \"bump count\""));
     }

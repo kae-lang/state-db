@@ -75,12 +75,13 @@ async fn spawn_ticket(engine: &Engine) -> String {
 /// Transition with data (for setting assignee, resolution_note, etc.)
 async fn transition_with_data(
     engine: &Engine,
+    machine: &str,
     id: &str,
     to: &str,
     actor: &str,
     data: Vec<(&str, Value)>,
 ) {
-    let mut cmd = smql_ast::command::TransitionCommand::new(id.to_string(), to.to_string());
+    let mut cmd = smql_ast::command::TransitionCommand::new(machine.to_string(), id.to_string(), to.to_string());
     cmd.as_actor = Some(actor.to_string());
     cmd.with_data = data
         .into_iter()
@@ -90,8 +91,8 @@ async fn transition_with_data(
 }
 
 /// Transition as actor (no data).
-async fn transition_as(engine: &Engine, id: &str, to: &str, actor: &str) {
-    let mut cmd = smql_ast::command::TransitionCommand::new(id.to_string(), to.to_string());
+async fn transition_as(engine: &Engine, machine: &str, id: &str, to: &str, actor: &str) {
+    let mut cmd = smql_ast::command::TransitionCommand::new(machine.to_string(), id.to_string(), to.to_string());
     cmd.as_actor = Some(actor.to_string());
     engine.transition(&cmd).await.expect(&format!("transition {} to {}", id, to));
 }
@@ -202,7 +203,7 @@ async fn level2_find_by_state() {
 
     // Move id1 to triaged
     transition_with_data(
-        &engine, &id1, "triaged", "agent_1",
+        &engine, "SupportTicket", &id1, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
 
@@ -303,10 +304,10 @@ async fn level3_trail_with_transitions() {
 
     // open → triaged → in_progress
     transition_with_data(
-        &engine, &id, "triaged", "agent_1",
+        &engine, "SupportTicket", &id, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
-    transition_as(&engine, &id, "in_progress", "agent_1").await;
+    transition_as(&engine, "SupportTicket", &id, "in_progress", "agent_1").await;
 
     let q = Query::Trail(TrailQuery {
         machine: Some("SupportTicket".into()),
@@ -340,7 +341,7 @@ async fn level3_trail_records_actor() {
     let id = spawn_ticket(&engine).await;
 
     transition_with_data(
-        &engine, &id, "triaged", "agent_1",
+        &engine, "SupportTicket", &id, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
 
@@ -364,7 +365,7 @@ async fn level3_trail_records_memo() {
     let engine = make_engine();
     let id = spawn_ticket(&engine).await;
 
-    let mut cmd = smql_ast::command::TransitionCommand::new(id.clone(), "triaged".to_string());
+    let mut cmd = smql_ast::command::TransitionCommand::new("SupportTicket".to_string(), id.clone(), "triaged".to_string());
     cmd.as_actor = Some("agent_1".to_string());
     cmd.memo = Some("Urgent escalation".to_string());
     cmd.with_data = vec![("assignee".to_string(), lit(actor_map("agent_1")))].into_iter().collect();
@@ -429,16 +430,16 @@ async fn level4_aggregate_count_by_state() {
 
     // Move id1 and id2 to triaged
     transition_with_data(
-        &engine, &id1, "triaged", "agent_1",
+        &engine, "SupportTicket", &id1, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
     transition_with_data(
-        &engine, &id2, "triaged", "agent_2",
+        &engine, "SupportTicket", &id2, "triaged", "agent_2",
         vec![("assignee", actor_map("agent_2"))],
     ).await;
 
     // Move id1 further to in_progress
-    transition_as(&engine, &id1, "in_progress", "agent_1").await;
+    transition_as(&engine, "SupportTicket", &id1, "in_progress", "agent_1").await;
 
     let q = Query::Aggregate(AggregateQuery {
         machine: "SupportTicket".into(),
@@ -524,10 +525,10 @@ async fn level5_paths_single() {
     let id = spawn_ticket(&engine).await;
 
     transition_with_data(
-        &engine, &id, "triaged", "agent_1",
+        &engine, "SupportTicket", &id, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
-    transition_as(&engine, &id, "in_progress", "agent_1").await;
+    transition_as(&engine, "SupportTicket", &id, "in_progress", "agent_1").await;
 
     let q = Query::Paths(PathsQuery {
         machine: "SupportTicket".into(),
@@ -555,19 +556,19 @@ async fn level5_paths_multiple() {
 
     // Ticket 1: open → triaged → in_progress
     transition_with_data(
-        &engine, &id1, "triaged", "agent_1",
+        &engine, "SupportTicket", &id1, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
-    transition_as(&engine, &id1, "in_progress", "agent_1").await;
+    transition_as(&engine, "SupportTicket", &id1, "in_progress", "agent_1").await;
 
     // Ticket 2: open → triaged → in_progress → resolved
     transition_with_data(
-        &engine, &id2, "triaged", "agent_2",
+        &engine, "SupportTicket", &id2, "triaged", "agent_2",
         vec![("assignee", actor_map("agent_2"))],
     ).await;
-    transition_as(&engine, &id2, "in_progress", "agent_2").await;
+    transition_as(&engine, "SupportTicket", &id2, "in_progress", "agent_2").await;
     transition_with_data(
-        &engine, &id2, "resolved", "agent_2",
+        &engine, "SupportTicket", &id2, "resolved", "agent_2",
         vec![("resolution_note", Value::Text("Fixed".into()))],
     ).await;
 
@@ -599,7 +600,7 @@ async fn level5_paths_with_limit() {
     // Create 1 ticket with a different path
     let id = spawn_ticket(&engine).await;
     transition_with_data(
-        &engine, &id, "triaged", "agent_1",
+        &engine, "SupportTicket", &id, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
 
@@ -634,20 +635,20 @@ async fn level6_funnel_basic() {
     // All 3 go through open (via spawn)
     // 2 reach triaged
     transition_with_data(
-        &engine, &id1, "triaged", "agent_1",
+        &engine, "SupportTicket", &id1, "triaged", "agent_1",
         vec![("assignee", actor_map("agent_1"))],
     ).await;
     transition_with_data(
-        &engine, &id2, "triaged", "agent_2",
+        &engine, "SupportTicket", &id2, "triaged", "agent_2",
         vec![("assignee", actor_map("agent_2"))],
     ).await;
 
     // 1 reaches in_progress
-    transition_as(&engine, &id1, "in_progress", "agent_1").await;
+    transition_as(&engine, "SupportTicket", &id1, "in_progress", "agent_1").await;
 
     // 1 reaches resolved
     transition_with_data(
-        &engine, &id1, "resolved", "agent_1",
+        &engine, "SupportTicket", &id1, "resolved", "agent_1",
         vec![("resolution_note", Value::Text("Fixed it".into()))],
     ).await;
 
@@ -789,8 +790,8 @@ fn spawn_item_cmd(order_id: &str, product: &str, qty: i64, price: i64) -> smql_a
     }
 }
 
-fn trans(id: &str, to: &str) -> smql_ast::command::TransitionCommand {
-    smql_ast::command::TransitionCommand::new(id.to_string(), to.to_string())
+fn trans(machine: &str, id: &str, to: &str) -> smql_ast::command::TransitionCommand {
+    smql_ast::command::TransitionCommand::new(machine.to_string(), id.to_string(), to.to_string())
 }
 
 /// 7.1 Query parent and child instances across machines.
@@ -840,7 +841,7 @@ async fn level7_find_children() {
 
     // Bob's items
     let item_c = engine.spawn(&spawn_item_cmd(&o2, "Widget C", 3, 8000)).await.unwrap().instance.id.as_str();
-    engine.transition(&trans(&item_c, "confirmed")).await.unwrap();
+    engine.transition(&trans("LineItem", &item_c, "confirmed")).await.unwrap();
 
     // Find all pending line items
     let q = Query::Find(FindQuery {
@@ -886,7 +887,7 @@ async fn level7_aggregate_across_machines() {
     engine.spawn(&spawn_item_cmd(&o2, "C", 3, 8000)).await.unwrap();
 
     // Place order 1
-    engine.transition(&trans(&o1, "placed")).await.unwrap();
+    engine.transition(&trans("Order", &o1, "placed")).await.unwrap();
 
     // Aggregate orders by state
     let q = Query::Aggregate(AggregateQuery {
@@ -971,7 +972,7 @@ async fn level8_full_order_lifecycle_queries() {
     let i2 = engine.spawn(&spawn_item_cmd(&oid, "Mouse", 2, 2500)).await.unwrap().instance.id.as_str();
 
     // Phase 1: draft → placed
-    engine.transition(&trans(&oid, "placed")).await.unwrap();
+    engine.transition(&trans("Order", &oid, "placed")).await.unwrap();
 
     // Query: order should be "placed"
     let q = Query::Get(GetQuery { machine: "Order".into(), instance_id: oid.clone() });
@@ -981,22 +982,22 @@ async fn level8_full_order_lifecycle_queries() {
     }
 
     // Phase 2: placed → paid
-    engine.transition(&trans(&oid, "paid")).await.unwrap();
+    engine.transition(&trans("Order", &oid, "paid")).await.unwrap();
 
     // Phase 3: Try to fulfil without confirming items — should fail
-    let result = engine.transition(&trans(&oid, "fulfilled")).await;
+    let result = engine.transition(&trans("Order", &oid, "fulfilled")).await;
     assert!(result.is_err(), "ALL(items, STATE IS confirmed) guard should block");
 
     // Confirm items
-    engine.transition(&trans(&i1, "confirmed")).await.unwrap();
-    engine.transition(&trans(&i2, "confirmed")).await.unwrap();
+    engine.transition(&trans("LineItem", &i1, "confirmed")).await.unwrap();
+    engine.transition(&trans("LineItem", &i2, "confirmed")).await.unwrap();
 
     // Phase 4: Now fulfil should work
-    engine.transition(&trans(&oid, "fulfilled")).await.unwrap();
+    engine.transition(&trans("Order", &oid, "fulfilled")).await.unwrap();
 
     // Phase 5: ship → deliver
-    engine.transition(&trans(&oid, "shipped")).await.unwrap();
-    engine.transition(&trans(&oid, "delivered")).await.unwrap();
+    engine.transition(&trans("Order", &oid, "shipped")).await.unwrap();
+    engine.transition(&trans("Order", &oid, "delivered")).await.unwrap();
 
     // Verify final state
     let q = Query::Get(GetQuery { machine: "Order".into(), instance_id: oid.clone() });
@@ -1048,7 +1049,7 @@ async fn level8_cascade_cancel_query() {
     let i2 = engine.spawn(&spawn_item_cmd(&oid, "Cable", 3, 833)).await.unwrap().instance.id.as_str();
 
     // Cancel with CASCADE
-    let mut cmd = smql_ast::command::TransitionCommand::new(oid.clone(), "cancelled".to_string());
+    let mut cmd = smql_ast::command::TransitionCommand::new("Order".to_string(), oid.clone(), "cancelled".to_string());
     cmd.cascade = true;
     engine.transition(&cmd).await.unwrap();
 
@@ -1228,31 +1229,31 @@ async fn level10_order_funnel() {
         let iid = item.instance.id.as_str();
 
         // Confirm item for future use
-        engine.transition(&trans(&iid, "confirmed")).await.unwrap();
+        engine.transition(&trans("LineItem", &iid, "confirmed")).await.unwrap();
     }
 
     // All 5: draft → placed
     for oid in &order_ids {
-        engine.transition(&trans(oid, "placed")).await.unwrap();
+        engine.transition(&trans("Order", oid, "placed")).await.unwrap();
     }
 
     // 4 out of 5: placed → paid
     for oid in &order_ids[..4] {
-        engine.transition(&trans(oid, "paid")).await.unwrap();
+        engine.transition(&trans("Order", oid, "paid")).await.unwrap();
     }
 
     // 3 out of 5: paid → fulfilled (items already confirmed)
     for oid in &order_ids[..3] {
-        engine.transition(&trans(oid, "fulfilled")).await.unwrap();
+        engine.transition(&trans("Order", oid, "fulfilled")).await.unwrap();
     }
 
     // 2 out of 5: fulfilled → shipped
     for oid in &order_ids[..2] {
-        engine.transition(&trans(oid, "shipped")).await.unwrap();
+        engine.transition(&trans("Order", oid, "shipped")).await.unwrap();
     }
 
     // 1 out of 5: shipped → delivered
-    engine.transition(&trans(&order_ids[0], "delivered")).await.unwrap();
+    engine.transition(&trans("Order", &order_ids[0], "delivered")).await.unwrap();
 
     // Funnel analysis
     let q = Query::Funnel(FunnelQuery {
@@ -1308,24 +1309,24 @@ async fn level10_order_paths_diverging() {
     // Order A: draft → placed → cancelled
     let oa = engine.spawn(&spawn_order_cmd("A", 5000)).await.unwrap().instance.id.as_str();
     engine.spawn(&spawn_item_cmd(&oa, "X", 1, 5000)).await.unwrap();
-    engine.transition(&trans(&oa, "placed")).await.unwrap();
-    engine.transition(&trans(&oa, "cancelled")).await.unwrap();
+    engine.transition(&trans("Order", &oa, "placed")).await.unwrap();
+    engine.transition(&trans("Order", &oa, "cancelled")).await.unwrap();
 
     // Order B: same path as A (draft → placed → cancelled)
     let ob = engine.spawn(&spawn_order_cmd("B", 3000)).await.unwrap().instance.id.as_str();
     engine.spawn(&spawn_item_cmd(&ob, "Y", 1, 3000)).await.unwrap();
-    engine.transition(&trans(&ob, "placed")).await.unwrap();
-    engine.transition(&trans(&ob, "cancelled")).await.unwrap();
+    engine.transition(&trans("Order", &ob, "placed")).await.unwrap();
+    engine.transition(&trans("Order", &ob, "cancelled")).await.unwrap();
 
     // Order C: draft → placed → paid → fulfilled → shipped → delivered
     let oc = engine.spawn(&spawn_order_cmd("C", 10000)).await.unwrap().instance.id.as_str();
     let ic = engine.spawn(&spawn_item_cmd(&oc, "Z", 1, 10000)).await.unwrap().instance.id.as_str();
-    engine.transition(&trans(&ic, "confirmed")).await.unwrap();
-    engine.transition(&trans(&oc, "placed")).await.unwrap();
-    engine.transition(&trans(&oc, "paid")).await.unwrap();
-    engine.transition(&trans(&oc, "fulfilled")).await.unwrap();
-    engine.transition(&trans(&oc, "shipped")).await.unwrap();
-    engine.transition(&trans(&oc, "delivered")).await.unwrap();
+    engine.transition(&trans("LineItem", &ic, "confirmed")).await.unwrap();
+    engine.transition(&trans("Order", &oc, "placed")).await.unwrap();
+    engine.transition(&trans("Order", &oc, "paid")).await.unwrap();
+    engine.transition(&trans("Order", &oc, "fulfilled")).await.unwrap();
+    engine.transition(&trans("Order", &oc, "shipped")).await.unwrap();
+    engine.transition(&trans("Order", &oc, "delivered")).await.unwrap();
 
     let q = Query::Paths(PathsQuery {
         machine: "Order".into(),
@@ -1373,7 +1374,7 @@ async fn level10_combined_analysis() {
             .await
             .unwrap();
         engine
-            .transition(&trans(&item.instance.id.as_str(), "confirmed"))
+            .transition(&trans("LineItem", &item.instance.id.as_str(), "confirmed"))
             .await
             .unwrap();
         ids.push(oid);
@@ -1381,13 +1382,13 @@ async fn level10_combined_analysis() {
 
     // Order 0,1,2,3: all placed
     for id in &ids {
-        engine.transition(&trans(id, "placed")).await.unwrap();
+        engine.transition(&trans("Order", id, "placed")).await.unwrap();
     }
     // Order 0,1: paid
-    engine.transition(&trans(&ids[0], "paid")).await.unwrap();
-    engine.transition(&trans(&ids[1], "paid")).await.unwrap();
+    engine.transition(&trans("Order", &ids[0], "paid")).await.unwrap();
+    engine.transition(&trans("Order", &ids[1], "paid")).await.unwrap();
     // Order 0: fulfilled
-    engine.transition(&trans(&ids[0], "fulfilled")).await.unwrap();
+    engine.transition(&trans("Order", &ids[0], "fulfilled")).await.unwrap();
 
     // 1. AGGREGATE COUNT by state
     let q = Query::Aggregate(AggregateQuery {

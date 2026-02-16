@@ -190,7 +190,7 @@ The `ACTOR` is the person performing the transition, provided via `AS`. Since AC
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO triaged WITH { assignee: {id: \"agent_1\"} } AS \"agent_1\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO triaged WITH { assignee: {id: \"agent_1\"} } AS \"agent_1\""
   }'
 ```
 
@@ -229,7 +229,7 @@ Without `WITH { assignee: ... }`, the guard rejects the transition:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO triaged"
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO triaged"
   }'
 ```
 
@@ -256,7 +256,7 @@ Only the assigned agent or an admin can pick up the ticket:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO in_progress AS \"agent_1\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO in_progress AS \"agent_1\""
   }'
 ```
 
@@ -283,7 +283,7 @@ If someone other than the assignee (and not an admin) tries to pick it up:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO in_progress AS \"random_user\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO in_progress AS \"random_user\""
   }'
 ```
 
@@ -304,7 +304,7 @@ When the agent needs more information from the customer:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO waiting_on_customer AS \"agent_1\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO waiting_on_customer AS \"agent_1\""
   }'
 ```
 
@@ -332,7 +332,7 @@ The customer or the assigned agent can move it back to `in_progress`:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO in_progress AS \"a1b2c3d4-e5f6-7890-abcd-ef1234567890\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO in_progress AS \"a1b2c3d4-e5f6-7890-abcd-ef1234567890\""
   }'
 ```
 
@@ -353,7 +353,7 @@ Both guards are evaluated, and all failures are collected (not just the first on
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO resolved WITH { resolution_note: \"Cleared browser cache and reset session tokens. Issue resolved.\" } AS \"agent_1\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO resolved WITH { resolution_note: \"Cleared browser cache and reset session tokens. Issue resolved.\" } AS \"agent_1\""
   }'
 ```
 
@@ -387,7 +387,7 @@ An admin can close the ticket immediately. Otherwise, the 7-day timeout closes i
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO closed AS \"admin_user\" WITH { satisfaction: 4 }"
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO closed AS \"admin_user\" WITH { satisfaction: 4 }"
   }'
 ```
 
@@ -419,7 +419,7 @@ Key details:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMABCDEF1234567890ABCDEF\" TO triaged AS \"supervisor_1\""
+    "smql": "TRANSITION SupportTicket \"01JMABCDEF1234567890ABCDEF\" TO triaged AS \"supervisor_1\""
   }'
 ```
 

@@ -518,14 +518,14 @@ mod command_tests {
 
     #[test]
     fn transition_command_display() {
-        let c = Command::Transition(TransitionCommand::new("tk_123".into(), "triaged".into()));
-        assert_eq!(c.to_string(), "TRANSITION tk_123 TO triaged");
+        let c = Command::Transition(TransitionCommand::new("SupportTicket".into(), "tk_123".into(), "triaged".into()));
+        assert_eq!(c.to_string(), "TRANSITION SupportTicket tk_123 TO triaged");
     }
 
     #[test]
     fn try_transition_command_display() {
-        let c = Command::TryTransition(TransitionCommand::new("tk_123".into(), "resolved".into()));
-        assert_eq!(c.to_string(), "TRY TRANSITION tk_123 TO resolved");
+        let c = Command::TryTransition(TransitionCommand::new("SupportTicket".into(), "tk_123".into(), "resolved".into()));
+        assert_eq!(c.to_string(), "TRY TRANSITION SupportTicket tk_123 TO resolved");
     }
 
     #[test]
@@ -546,8 +546,8 @@ mod command_tests {
 
     #[test]
     fn transition_command_new_defaults() {
-        let t = TransitionCommand::new("id_1".into(), "next".into());
-        assert!(t.machine.is_none());
+        let t = TransitionCommand::new("Machine".into(), "id_1".into(), "next".into());
+        assert_eq!(t.machine, "Machine");
         assert!(t.with_data.is_empty());
         assert!(t.memo.is_none());
         assert!(t.as_actor.is_none());
@@ -557,7 +557,7 @@ mod command_tests {
 
     #[test]
     fn command_serde() {
-        let c = Command::Transition(TransitionCommand::new("tk_1".into(), "open".into()));
+        let c = Command::Transition(TransitionCommand::new("Machine".into(), "tk_1".into(), "open".into()));
         let json = serde_json::to_string(&c).unwrap();
         let c2: Command = serde_json::from_str(&json).unwrap();
         assert_eq!(c, c2);

@@ -102,7 +102,7 @@ spawn           = SPAWN ident "{" [ data_pairs ] "}"
 data_pairs      = data_pair { "," data_pair } ;
 data_pair       = ident ":" expression ;
 
-transition      = TRANSITION string TO ident
+transition      = TRANSITION ident string TO ident
                   [ AS "{" data_pairs "}" ]
                   [ WITH "{" data_pairs "}" ]
                   [ MEMO string ]
@@ -110,7 +110,7 @@ transition      = TRANSITION string TO ident
                   [ OR_STAY ]
                   [ CASCADE ] ;
 
-try_transition  = TRY TRANSITION string TO ident
+try_transition  = TRY TRANSITION ident string TO ident
                   [ AS "{" data_pairs "}" ]
                   [ WITH "{" data_pairs "}" ]
                   [ MEMO string ] ;

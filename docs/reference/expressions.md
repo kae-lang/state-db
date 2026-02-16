@@ -256,6 +256,6 @@ If any guard fails, the transition is denied and all failures are reported in th
 Guards are evaluated **after** WITH data is applied. This means you can provide a required field and satisfy its guard in the same command:
 
 ```sql
-TRANSITION "id" TO resolved WITH { resolution_note: "Fixed" } AS "agent_1"
+TRANSITION SupportTicket "id" TO resolved WITH { resolution_note: "Fixed" } AS "agent_1"
 -- The "resolution_note IS SET" guard passes because WITH runs first
 ```

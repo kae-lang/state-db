@@ -236,7 +236,7 @@ Key properties:
 Use the `MEMO` clause to attach audit notes to transitions:
 
 ```sql
-TRANSITION "01JM..." TO resolved
+TRANSITION SupportTicket "01JM..." TO resolved
   WITH { resolution_note: "Cache cleared" }
   AS "agent_1"
   MEMO "Customer confirmed fix works"

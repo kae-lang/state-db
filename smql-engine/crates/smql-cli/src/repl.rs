@@ -99,7 +99,7 @@ fn handle_dot_command(cmd: &str, engine: &Engine) {
             println!("SMQL statements:");
             println!("  DEFINE MACHINE name {{ ... }}");
             println!("  SPAWN Machine {{ field: value }}");
-            println!("  TRANSITION instance_id TO state");
+            println!("  TRANSITION Machine instance_id TO state");
             println!("  GET Machine instance_id");
             println!("  FIND Machine WHERE condition");
             println!("  TRAIL OF instance_id");
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn is_complete_statement_no_braces_or_parens() {
-        assert!(is_complete_statement("TRANSITION id TO closed"));
+        assert!(is_complete_statement("TRANSITION Machine id TO closed"));
     }
 
     #[test]

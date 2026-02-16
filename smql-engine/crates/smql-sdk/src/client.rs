@@ -107,11 +107,12 @@ impl SmqlClient {
     /// Transition an instance to a new state.
     pub async fn transition(
         &self,
+        machine: &str,
         instance_id: &str,
         to_state: &str,
         opts: TransitionOptions,
     ) -> SdkResult<TransitionResponse> {
-        let smql = smql_fmt::format_transition(instance_id, to_state, &opts);
+        let smql = smql_fmt::format_transition(machine, instance_id, to_state, &opts);
         let resp = self.execute(&smql).await?;
         let result = resp.result.ok_or_else(|| {
             SdkError::Deserialize("Missing result in transition response".to_string())
@@ -122,11 +123,12 @@ impl SmqlClient {
     /// Try to transition; returns `None` if guard fails instead of an error.
     pub async fn try_transition(
         &self,
+        machine: &str,
         instance_id: &str,
         to_state: &str,
         opts: TransitionOptions,
     ) -> SdkResult<Option<TransitionResponse>> {
-        let smql = smql_fmt::format_try_transition(instance_id, to_state, &opts);
+        let smql = smql_fmt::format_try_transition(machine, instance_id, to_state, &opts);
         let resp = self.execute(&smql).await?;
         let result = resp.result.ok_or_else(|| {
             SdkError::Deserialize("Missing result in try_transition response".to_string())

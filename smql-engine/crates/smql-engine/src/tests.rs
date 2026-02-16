@@ -389,6 +389,7 @@ mod engine_tests {
     use smql_ast::machine::*;
     use smql_ast::types::*;
     use smql_ast::value::Value;
+    use smql_ast::SmqlError;
     use smql_catalog::MachineCatalog;
     use smql_storage::MemoryStorage;
     use std::sync::Arc;
@@ -530,8 +531,8 @@ mod engine_tests {
         }
     }
 
-    fn transition_cmd(instance_id: &str, to_state: &str) -> TransitionCommand {
-        TransitionCommand::new(instance_id.to_string(), to_state.to_string())
+    fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
+        TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
     }
 
     // --- Spawn tests ---
@@ -624,7 +625,7 @@ mod engine_tests {
         let spawned = engine.spawn(&spawn).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let cmd = transition_cmd(&id, "in_progress");
+        let cmd = transition_cmd("Ticket", &id, "in_progress");
         let result = engine.transition(&cmd).await.unwrap();
         assert_eq!(result.from_state, "open");
         assert_eq!(result.to_state, "in_progress");
@@ -642,9 +643,33 @@ mod engine_tests {
         let id = spawned.instance.id.as_str();
 
         // open -> closed is not a valid transition
-        let cmd = transition_cmd(&id, "closed");
+        let cmd = transition_cmd("Ticket", &id, "closed");
         let result = engine.transition(&cmd).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn transition_machine_mismatch() {
+        let engine = setup_engine();
+        register_ticket_machine(&engine);
+
+        let spawn = spawn_cmd("Ticket", vec![("title", Value::Text("test".into()))]);
+        let spawned = engine.spawn(&spawn).await.unwrap();
+        let id = spawned.instance.id.as_str();
+
+        // Use wrong machine name
+        let cmd = transition_cmd("WrongMachine", &id, "in_progress");
+        let result = engine.transition(&cmd).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            SmqlError::ValidationError { message, .. } => {
+                assert!(message.contains("Machine mismatch"));
+                assert!(message.contains("WrongMachine"));
+                assert!(message.contains("Ticket"));
+            }
+            other => panic!("Expected ValidationError, got {:?}", other),
+        }
     }
 
     #[tokio::test]
@@ -656,7 +681,7 @@ mod engine_tests {
         let spawned = engine.spawn(&spawn).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let mut cmd = transition_cmd(&id, "in_progress");
+        let mut cmd = transition_cmd("Ticket", &id, "in_progress");
         cmd.with_data = vec![(
             "assignee".to_string(),
             Expression::new(ExpressionKind::Literal(Value::Text("bob".into()))),
@@ -677,7 +702,7 @@ mod engine_tests {
         let spawned = engine.spawn(&spawn).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let mut cmd = transition_cmd(&id, "in_progress");
+        let mut cmd = transition_cmd("Ticket", &id, "in_progress");
         cmd.memo = Some("Starting work".to_string());
         cmd.as_actor = Some("alice".to_string());
         engine.transition(&cmd).await.unwrap();
@@ -710,7 +735,7 @@ mod engine_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let result = engine.transition(&transition_cmd(&id, "published")).await;
+        let result = engine.transition(&transition_cmd("GuardedMachine", &id, "published")).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().instance.state, "published");
     }
@@ -730,7 +755,7 @@ mod engine_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let result = engine.transition(&transition_cmd(&id, "published")).await;
+        let result = engine.transition(&transition_cmd("GuardedMachine", &id, "published")).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, smql_ast::SmqlError::TransitionDenied(_)));
@@ -747,7 +772,7 @@ mod engine_tests {
         let spawned = engine.spawn(&spawn).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let cmd = transition_cmd(&id, "in_progress");
+        let cmd = transition_cmd("Ticket", &id, "in_progress");
         let result = engine.try_transition(&cmd).await.unwrap();
         assert!(result.is_some());
     }
@@ -765,7 +790,7 @@ mod engine_tests {
         let id = spawned.instance.id.as_str();
 
         let result = engine
-            .try_transition(&transition_cmd(&id, "published"))
+            .try_transition(&transition_cmd("GuardedMachine", &id, "published"))
             .await
             .unwrap();
         assert!(result.is_none());
@@ -784,7 +809,7 @@ mod engine_tests {
 
         // a -> cancelled via wildcard
         let result = engine
-            .transition(&transition_cmd(&id, "cancelled"))
+            .transition(&transition_cmd("WildcardMachine", &id, "cancelled"))
             .await
             .unwrap();
         assert_eq!(result.instance.state, "cancelled");
@@ -801,13 +826,13 @@ mod engine_tests {
 
         // First transition to cancelled
         engine
-            .transition(&transition_cmd(&id, "cancelled"))
+            .transition(&transition_cmd("WildcardMachine", &id, "cancelled"))
             .await
             .unwrap();
 
         // cancelled -> cancelled should be blocked by EXCEPT FROM
         let result = engine
-            .transition(&transition_cmd(&id, "cancelled"))
+            .transition(&transition_cmd("WildcardMachine", &id, "cancelled"))
             .await;
         assert!(result.is_err());
     }
@@ -823,7 +848,7 @@ mod engine_tests {
         let spawned = engine.spawn(&spawn).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let mut cmd = transition_cmd(&id, "closed");
+        let mut cmd = transition_cmd("Ticket", &id, "closed");
         cmd.through = vec!["in_progress".to_string(), "resolved".to_string()];
         let result = engine.transition(&cmd).await.unwrap();
         assert_eq!(result.instance.state, "closed");
@@ -843,7 +868,7 @@ mod engine_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        let mut tcmd = transition_cmd(&id, "published");
+        let mut tcmd = transition_cmd("GuardedMachine", &id, "published");
         tcmd.or_stay = true;
         tcmd.with_data = vec![(
             "title".to_string(),
@@ -872,13 +897,13 @@ mod engine_tests {
 
         // Transition once
         engine
-            .transition(&transition_cmd(&id_str, "in_progress"))
+            .transition(&transition_cmd("Ticket", &id_str, "in_progress"))
             .await
             .unwrap();
 
         // Instance is now version 2. A second transition should work.
         let result = engine
-            .transition(&transition_cmd(&id_str, "resolved"))
+            .transition(&transition_cmd("Ticket", &id_str, "resolved"))
             .await;
         assert!(result.is_ok());
     }
@@ -909,15 +934,15 @@ mod engine_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&transition_cmd(&id, "in_progress"))
+            .transition(&transition_cmd("Ticket", &id, "in_progress"))
             .await
             .unwrap();
         engine
-            .transition(&transition_cmd(&id, "resolved"))
+            .transition(&transition_cmd("Ticket", &id, "resolved"))
             .await
             .unwrap();
         engine
-            .transition(&transition_cmd(&id, "closed"))
+            .transition(&transition_cmd("Ticket", &id, "closed"))
             .await
             .unwrap();
 
@@ -1173,7 +1198,7 @@ mod query_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "in_progress".into()))
+            .transition(&TransitionCommand::new("Ticket".into(), id.to_string(), "in_progress".into()))
             .await
             .unwrap();
 
@@ -1272,6 +1297,7 @@ mod query_tests {
         // Transition some to different states
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1279,6 +1305,7 @@ mod query_tests {
             .unwrap();
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s3.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1328,6 +1355,7 @@ mod query_tests {
 
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1335,6 +1363,7 @@ mod query_tests {
             .unwrap();
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s2.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1369,6 +1398,7 @@ mod query_tests {
         // Only 2 transition to in_progress
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1376,6 +1406,7 @@ mod query_tests {
             .unwrap();
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s2.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1385,6 +1416,7 @@ mod query_tests {
         // Only 1 transitions to resolved
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "resolved".into(),
             ))
@@ -1456,6 +1488,7 @@ mod query_tests {
         // Move s1 to in_progress so we have 2 states
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1463,6 +1496,7 @@ mod query_tests {
             .unwrap();
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s2.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1784,7 +1818,7 @@ mod query_tests {
             .unwrap();
         let id = spawned.instance.id.as_str();
 
-        let mut cmd = TransitionCommand::new(id.to_string(), "in_progress".into());
+        let mut cmd = TransitionCommand::new("Ticket".into(), id.to_string(), "in_progress".into());
         cmd.as_actor = Some("bob".to_string());
         engine.transition(&cmd).await.unwrap();
 
@@ -1814,6 +1848,7 @@ mod query_tests {
 
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1821,6 +1856,7 @@ mod query_tests {
             .unwrap();
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "resolved".into(),
             ))
@@ -1855,6 +1891,7 @@ mod query_tests {
         // Transition low-priority ones
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s1.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1862,6 +1899,7 @@ mod query_tests {
             .unwrap();
         engine
             .transition(&TransitionCommand::new(
+                "Ticket".into(),
                 s2.instance.id.as_str(),
                 "in_progress".into(),
             ))
@@ -1992,7 +2030,7 @@ mod timer_tests {
 
         // Transition to "active" — this transition has TIMEOUT: 72h -> expired
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
 
@@ -2015,14 +2053,14 @@ mod timer_tests {
 
         // Transition to active (registers 72h timeout)
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
         assert_eq!(timer_manager.timer_count(), 1);
 
         // Transition to done — should cancel the active timeout
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "done".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "done".into()))
             .await
             .unwrap();
         assert_eq!(timer_manager.timer_count(), 0);
@@ -2048,7 +2086,7 @@ mod timer_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "b".into()))
+            .transition(&TransitionCommand::new("NoTimeout".into(), id.to_string(), "b".into()))
             .await
             .unwrap();
 
@@ -2067,7 +2105,7 @@ mod timer_tests {
 
         // Move to active
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
 
@@ -2093,7 +2131,7 @@ mod timer_tests {
         let id = spawned.instance.id.as_str();
 
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
 
@@ -2128,11 +2166,11 @@ mod timer_tests {
 
         // Move to active, then to done
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "done".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "done".into()))
             .await
             .unwrap();
 
@@ -2213,7 +2251,7 @@ mod timer_tests {
 
         // Transition to active (registers 72h timeout)
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
 
@@ -2242,7 +2280,7 @@ mod timer_tests {
 
         // Transition to active
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
 
@@ -2295,11 +2333,11 @@ mod timer_tests {
 
         // Transition to active, then immediately to done
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "active".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "active".into()))
             .await
             .unwrap();
         engine
-            .transition(&TransitionCommand::new(id.to_string(), "done".into()))
+            .transition(&TransitionCommand::new("TimerMachine".into(), id.to_string(), "done".into()))
             .await
             .unwrap();
 
@@ -2484,8 +2522,8 @@ mod hook_tests {
         }
     }
 
-    fn transition_cmd(instance_id: &str, to_state: &str) -> TransitionCommand {
-        TransitionCommand::new(instance_id.to_string(), to_state.to_string())
+    fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
+        TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
     }
 
     // --- ON SPAWN hook fires ---
@@ -2536,7 +2574,7 @@ mod hook_tests {
         let id = spawned.instance.id.as_str();
 
         // BEFORE hook has LOG action which always succeeds
-        let result = engine.transition(&transition_cmd(&id, "in_progress")).await;
+        let result = engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().instance.state, "in_progress");
     }
@@ -2555,7 +2593,7 @@ mod hook_tests {
         // Drain spawn events
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
 
         // Collect all events from this transition
         let mut events = Vec::new();
@@ -2580,7 +2618,7 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2603,7 +2641,7 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2626,7 +2664,7 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd(&id, "published")).await.unwrap();
+        engine.transition(&transition_cmd("ActionMachine", &id, "published")).await.unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2674,7 +2712,7 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd(&id, "in_progress")).await.unwrap();
+        engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await.unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -2741,7 +2779,7 @@ mod hook_tests {
         let spawned = engine.spawn(&cmd).await.unwrap();
         let id = spawned.instance.id.as_str();
 
-        engine.transition(&transition_cmd(&id, "active")).await.unwrap();
+        engine.transition(&transition_cmd("TimeoutHooked", &id, "active")).await.unwrap();
 
         let mut rx = event_bus.subscribe();
 
@@ -2788,10 +2826,10 @@ mod hook_tests {
         let id = spawned.instance.id.as_str();
 
         // Even with many hooks, transition should succeed
-        let result = engine.transition(&transition_cmd(&id, "in_progress")).await;
+        let result = engine.transition(&transition_cmd("HookedTicket", &id, "in_progress")).await;
         assert!(result.is_ok());
 
-        let result2 = engine.transition(&transition_cmd(&id, "closed")).await;
+        let result2 = engine.transition(&transition_cmd("HookedTicket", &id, "closed")).await;
         assert!(result2.is_ok());
         assert_eq!(result2.unwrap().instance.state, "closed");
     }
@@ -2823,7 +2861,7 @@ mod hook_tests {
         let id = spawned.instance.id.as_str();
 
         // Log action shouldn't fail or block
-        let result = engine.transition(&transition_cmd(&id, "b")).await;
+        let result = engine.transition(&transition_cmd("LogMachine", &id, "b")).await;
         assert!(result.is_ok());
     }
 
@@ -2881,7 +2919,7 @@ mod hook_tests {
 
         let mut rx = event_bus.subscribe();
 
-        engine.transition(&transition_cmd(&id, "b")).await.unwrap();
+        engine.transition(&transition_cmd("OrderMachine", &id, "b")).await.unwrap();
 
         let mut events = Vec::new();
         while let Ok(e) = rx.try_recv() {
@@ -3048,8 +3086,8 @@ mod composition_tests {
         }
     }
 
-    fn transition_cmd(instance_id: &str, to_state: &str) -> TransitionCommand {
-        TransitionCommand::new(instance_id.to_string(), to_state.to_string())
+    fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
+        TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
     }
 
     fn lit(v: Value) -> Expression {
@@ -3447,7 +3485,7 @@ mod composition_tests {
             .unwrap();
         let order_id = order.instance.id.as_str();
 
-        let result = engine.transition(&transition_cmd(&order_id, "confirmed")).await.unwrap();
+        let result = engine.transition(&transition_cmd("Order", &order_id, "confirmed")).await.unwrap();
 
         // The mutate should have set first_item to a Ref
         let first_item = result.instance.data.get("first_item").unwrap();
@@ -3506,7 +3544,7 @@ mod composition_tests {
             .unwrap();
 
         // CASCADE cancel the order
-        let mut cmd = transition_cmd(&order_id, "cancelled");
+        let mut cmd = transition_cmd("Order", &order_id, "cancelled");
         cmd.cascade = true;
         engine.transition(&cmd).await.unwrap();
 
@@ -3546,12 +3584,12 @@ mod composition_tests {
 
         // Manually transition child to fulfilled (terminal)
         engine
-            .transition(&transition_cmd(&child_id, "fulfilled"))
+            .transition(&transition_cmd("LineItem", &child_id, "fulfilled"))
             .await
             .unwrap();
 
         // CASCADE cancel the order
-        let mut cmd = transition_cmd(&order_id, "cancelled");
+        let mut cmd = transition_cmd("Order", &order_id, "cancelled");
         cmd.cascade = true;
         engine.transition(&cmd).await.unwrap();
 
@@ -3671,7 +3709,7 @@ mod composition_tests {
             .await
             .unwrap();
         let order_id = order.instance.id.as_str();
-        engine.transition(&transition_cmd(&order_id, "confirmed")).await.unwrap();
+        engine.transition(&transition_cmd("GuardedOrder", &order_id, "confirmed")).await.unwrap();
 
         // Spawn two children
         let c1 = engine
@@ -3694,27 +3732,27 @@ mod composition_tests {
             .unwrap();
 
         // Try to ship — should fail because items are still pending
-        let ship_result = engine.try_transition(&transition_cmd(&order_id, "shipped")).await.unwrap();
+        let ship_result = engine.try_transition(&transition_cmd("GuardedOrder", &order_id, "shipped")).await.unwrap();
         assert!(ship_result.is_none(), "Should fail: not all items fulfilled");
 
         // Fulfill first item
         engine
-            .transition(&transition_cmd(&c1.instance.id.as_str(), "fulfilled"))
+            .transition(&transition_cmd("LineItem", &c1.instance.id.as_str(), "fulfilled"))
             .await
             .unwrap();
 
         // Try again — still should fail
-        let ship_result2 = engine.try_transition(&transition_cmd(&order_id, "shipped")).await.unwrap();
+        let ship_result2 = engine.try_transition(&transition_cmd("GuardedOrder", &order_id, "shipped")).await.unwrap();
         assert!(ship_result2.is_none(), "Should fail: only 1 of 2 fulfilled");
 
         // Fulfill second item
         engine
-            .transition(&transition_cmd(&c2.instance.id.as_str(), "fulfilled"))
+            .transition(&transition_cmd("LineItem", &c2.instance.id.as_str(), "fulfilled"))
             .await
             .unwrap();
 
         // Now ship should succeed
-        let ship_result3 = engine.transition(&transition_cmd(&order_id, "shipped")).await.unwrap();
+        let ship_result3 = engine.transition(&transition_cmd("GuardedOrder", &order_id, "shipped")).await.unwrap();
         assert_eq!(ship_result3.instance.state, "shipped");
     }
 
@@ -3771,7 +3809,7 @@ mod composition_tests {
 
         // Fulfill the child — should signal parent to "ready"
         engine
-            .transition(&transition_cmd(&child_id, "fulfilled"))
+            .transition(&transition_cmd("LineItem", &child_id, "fulfilled"))
             .await
             .unwrap();
 
@@ -3809,7 +3847,7 @@ mod composition_tests {
 
         // Should not error even with no parent
         let result = engine
-            .transition(&transition_cmd(&item_id, "fulfilled"))
+            .transition(&transition_cmd("LineItem", &item_id, "fulfilled"))
             .await;
         assert!(result.is_ok());
     }
@@ -3847,14 +3885,14 @@ mod composition_tests {
 
         // 3. Confirm order
         engine
-            .transition(&transition_cmd(&order_id, "confirmed"))
+            .transition(&transition_cmd("Order", &order_id, "confirmed"))
             .await
             .unwrap();
 
         // 4. Fulfill all line items
         for child_id in &child_ids {
             engine
-                .transition(&transition_cmd(child_id, "fulfilled"))
+                .transition(&transition_cmd("LineItem", child_id, "fulfilled"))
                 .await
                 .unwrap();
         }
@@ -3870,7 +3908,7 @@ mod composition_tests {
 
         // 6. Ship order
         engine
-            .transition(&transition_cmd(&order_id, "shipped"))
+            .transition(&transition_cmd("Order", &order_id, "shipped"))
             .await
             .unwrap();
 
@@ -3996,7 +4034,7 @@ mod alter_tests {
         let spawn_result = engine.spawn(&spawn_task(&engine, "Test")).await.unwrap();
         let id = spawn_result.instance.id.as_str();
 
-        let t_cmd = smql_ast::command::TransitionCommand::new(id.clone(), "in_progress".into());
+        let t_cmd = smql_ast::command::TransitionCommand::new("Task".into(), id.clone(), "in_progress".into());
         engine.transition(&t_cmd).await.unwrap();
 
         // Now remove in_progress state and migrate to open
@@ -4107,6 +4145,7 @@ mod alter_tests {
         // Verify transition exists — can now transition open -> done
         let spawn_result = engine.spawn(&spawn_task(&engine, "Direct")).await.unwrap();
         let t_cmd = smql_ast::command::TransitionCommand::new(
+            "Task".into(),
             spawn_result.instance.id.as_str(),
             "done".into(),
         );
@@ -4572,6 +4611,7 @@ mod alter_tests {
 
         // Move T2 to in_progress
         let t_cmd = smql_ast::command::TransitionCommand::new(
+            "Task".into(),
             r2.instance.id.as_str(),
             "in_progress".into(),
         );

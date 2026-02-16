@@ -96,7 +96,7 @@ Multiple guards on a transition are combined with AND — all must pass.
 An **actor** is the identity performing a transition. Actors are maps with `id` and `role` fields, specified with the `AS` clause:
 
 ```sql
-TRANSITION "01J5..." TO resolved
+TRANSITION SupportTicket "01J5..." TO resolved
   AS { id: "user-42", role: "admin" }
 ```
 

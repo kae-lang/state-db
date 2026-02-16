@@ -518,10 +518,11 @@ mod command_tests {
 
     #[test]
     fn parse_transition_command() {
-        let input = r#"TRANSITION tk_123 TO resolved WITH { resolution_note: "Fixed" } MEMO "Resolved the issue""#;
+        let input = r#"TRANSITION SupportTicket tk_123 TO resolved WITH { resolution_note: "Fixed" } MEMO "Resolved the issue""#;
         let stmts = parse(input).unwrap();
         match &stmts[0] {
             Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.machine, "SupportTicket");
                 assert_eq!(t.instance_id, "tk_123");
                 assert_eq!(t.to_state, "resolved");
                 assert_eq!(t.with_data.len(), 1);
@@ -533,10 +534,11 @@ mod command_tests {
 
     #[test]
     fn parse_try_transition() {
-        let input = r#"TRY TRANSITION tk_123 TO resolved"#;
+        let input = r#"TRY TRANSITION SupportTicket tk_123 TO resolved"#;
         let stmts = parse(input).unwrap();
         match &stmts[0] {
             Statement::Command(Command::TryTransition(t)) => {
+                assert_eq!(t.machine, "SupportTicket");
                 assert_eq!(t.instance_id, "tk_123");
                 assert_eq!(t.to_state, "resolved");
             }
@@ -546,10 +548,11 @@ mod command_tests {
 
     #[test]
     fn parse_transition_string_id() {
-        let input = r#"TRANSITION "01ABC" TO resolved"#;
+        let input = r#"TRANSITION Machine "01ABC" TO resolved"#;
         let stmts = parse(input).unwrap();
         match &stmts[0] {
             Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.machine, "Machine");
                 assert_eq!(t.instance_id, "01ABC");
                 assert_eq!(t.to_state, "resolved");
             }
@@ -559,10 +562,11 @@ mod command_tests {
 
     #[test]
     fn parse_transition_with_as_actor() {
-        let input = r#"TRANSITION tk TO resolved AS "alice""#;
+        let input = r#"TRANSITION Machine tk TO resolved AS "alice""#;
         let stmts = parse(input).unwrap();
         match &stmts[0] {
             Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.machine, "Machine");
                 assert_eq!(t.instance_id, "tk");
                 assert_eq!(t.to_state, "resolved");
                 assert_eq!(t.as_actor, Some("alice".to_string()));
@@ -573,10 +577,11 @@ mod command_tests {
 
     #[test]
     fn parse_try_transition_string_id() {
-        let input = r#"TRY TRANSITION "01XYZ" TO done"#;
+        let input = r#"TRY TRANSITION Machine "01XYZ" TO done"#;
         let stmts = parse(input).unwrap();
         match &stmts[0] {
             Statement::Command(Command::TryTransition(t)) => {
+                assert_eq!(t.machine, "Machine");
                 assert_eq!(t.instance_id, "01XYZ");
                 assert_eq!(t.to_state, "done");
             }
@@ -586,10 +591,11 @@ mod command_tests {
 
     #[test]
     fn parse_transition_cascade() {
-        let input = "TRANSITION tk TO cancelled CASCADE";
+        let input = "TRANSITION Machine tk TO cancelled CASCADE";
         let stmts = parse(input).unwrap();
         match &stmts[0] {
             Statement::Command(Command::Transition(t)) => {
+                assert_eq!(t.machine, "Machine");
                 assert_eq!(t.instance_id, "tk");
                 assert_eq!(t.to_state, "cancelled");
                 assert!(t.cascade);

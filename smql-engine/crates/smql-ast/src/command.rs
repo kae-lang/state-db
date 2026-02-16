@@ -26,9 +26,9 @@ impl fmt::Display for Command {
         match self {
             Command::DefineMachine(m) => write!(f, "DEFINE {}", m),
             Command::Spawn(s) => write!(f, "SPAWN {}", s.machine),
-            Command::Transition(t) => write!(f, "TRANSITION {} TO {}", t.instance_id, t.to_state),
+            Command::Transition(t) => write!(f, "TRANSITION {} {} TO {}", t.machine, t.instance_id, t.to_state),
             Command::TryTransition(t) => {
-                write!(f, "TRY TRANSITION {} TO {}", t.instance_id, t.to_state)
+                write!(f, "TRY TRANSITION {} {} TO {}", t.machine, t.instance_id, t.to_state)
             }
             Command::BatchTransition(b) => {
                 write!(f, "TRANSITION ALL {} TO {}", b.machine, b.to_state)
@@ -79,7 +79,7 @@ impl SpawnCommand {
 /// TRANSITION command — move an instance to a new state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransitionCommand {
-    pub machine: Option<String>,
+    pub machine: String,
     pub instance_id: String,
     pub to_state: String,
     /// WITH { field: value, ... } — data mutations
@@ -97,9 +97,9 @@ pub struct TransitionCommand {
 }
 
 impl TransitionCommand {
-    pub fn new(instance_id: String, to_state: String) -> Self {
+    pub fn new(machine: String, instance_id: String, to_state: String) -> Self {
         Self {
-            machine: None,
+            machine,
             instance_id,
             to_state,
             with_data: Vec::new(),

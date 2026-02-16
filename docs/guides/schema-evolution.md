@@ -70,7 +70,7 @@ Move one task to `in_progress`:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"<task_1_id>\" TO in_progress"}'
+  -d '{"smql": "TRANSITION Task \"<task_1_id>\" TO in_progress"}'
 ```
 
 You now have 3 tasks: 2 in `open`, 1 in `in_progress`. The machine is at version 1.
@@ -151,12 +151,12 @@ Now you can block and unblock tasks:
 # Block a task that is in_progress
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"<task_1_id>\" TO blocked"}'
+  -d '{"smql": "TRANSITION Task \"<task_1_id>\" TO blocked"}'
 
 # Unblock it later
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"<task_1_id>\" TO in_progress"}'
+  -d '{"smql": "TRANSITION Task \"<task_1_id>\" TO in_progress"}'
 ```
 
 ---

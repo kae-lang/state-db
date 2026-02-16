@@ -125,12 +125,12 @@ Response:
 curl -X POST http://localhost:4200/execute \
   -H 'Content-Type: application/json' \
   -d '{
-    "smql": "TRANSITION \"01J5X7K2P3Q4R5S6T7U8V9W0XY\" TO doing"
+    "smql": "TRANSITION Task \"01J5X7K2P3Q4R5S6T7U8V9W0XY\" TO doing"
   }'
 ```
 
 ```bash [REPL]
-> TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO doing
+> TRANSITION Task "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO doing
 ```
 
 ```rust [SDK]

@@ -236,7 +236,7 @@ The `draft -> placed` guard requires `total > 0`:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO placed"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO placed"
   }'
 ```
 
@@ -272,7 +272,7 @@ Move to `paid`. In a production system, this transition would be triggered by a 
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO paid"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO paid"
   }'
 ```
 
@@ -288,7 +288,7 @@ Before the order can be fulfilled, every line item must be confirmed. This is en
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMITEM00000000000000001\" TO confirmed"
+    "smql": "TRANSITION LineItem \"01JMITEM00000000000000001\" TO confirmed"
   }'
 ```
 
@@ -300,7 +300,7 @@ With only one of two items confirmed, the `ALL(items, STATE IS confirmed)` guard
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO fulfilled"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO fulfilled"
   }'
 ```
 
@@ -317,7 +317,7 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMITEM00000000000000002\" TO confirmed"
+    "smql": "TRANSITION LineItem \"01JMITEM00000000000000002\" TO confirmed"
   }'
 ```
 
@@ -329,7 +329,7 @@ Now that all items are confirmed, the guard passes:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO fulfilled"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO fulfilled"
   }'
 ```
 
@@ -376,7 +376,7 @@ Both `tracking IS SET` and `carrier IS SET` guards must pass:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMSHIP00000000000000001\" TO dispatched WITH { tracking: \"TRACK123456\", carrier: \"fedex\" }"
+    "smql": "TRANSITION Shipment \"01JMSHIP00000000000000001\" TO dispatched WITH { tracking: \"TRACK123456\", carrier: \"fedex\" }"
   }'
 ```
 
@@ -396,14 +396,14 @@ Without tracking information, the guard rejects the transition:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMSHIP00000000000000001\" TO in_transit"
+    "smql": "TRANSITION Shipment \"01JMSHIP00000000000000001\" TO in_transit"
   }'
 
 # in_transit -> delivered (signals parent Order)
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMSHIP00000000000000001\" TO delivered"
+    "smql": "TRANSITION Shipment \"01JMSHIP00000000000000001\" TO delivered"
   }'
 ```
 
@@ -418,14 +418,14 @@ After shipping and delivery signals:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO shipped"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO shipped"
   }'
 
 # Deliver the order
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO delivered"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO delivered"
   }'
 ```
 
@@ -439,7 +439,7 @@ The `ANY -> cancelled` wildcard on Order allows cancellation from most states. U
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMORDER0000000000000001\" TO cancelled CASCADE"
+    "smql": "TRANSITION Order \"01JMORDER0000000000000001\" TO cancelled CASCADE"
   }'
 ```
 

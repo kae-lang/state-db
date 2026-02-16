@@ -58,23 +58,24 @@ fn spawn_ticket(data: Vec<(&str, Value)>) -> SpawnCommand {
     }
 }
 
-fn transition_cmd(instance_id: &str, to_state: &str) -> TransitionCommand {
-    TransitionCommand::new(instance_id.to_string(), to_state.to_string())
+fn transition_cmd(machine: &str, instance_id: &str, to_state: &str) -> TransitionCommand {
+    TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string())
 }
 
-fn transition_as(instance_id: &str, to_state: &str, actor: &str) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(instance_id.to_string(), to_state.to_string());
+fn transition_as(machine: &str, instance_id: &str, to_state: &str, actor: &str) -> TransitionCommand {
+    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
     cmd.as_actor = Some(actor.to_string());
     cmd
 }
 
 fn transition_with(
+    machine: &str,
     instance_id: &str,
     to_state: &str,
     actor: &str,
     data: Vec<(&str, Value)>,
 ) -> TransitionCommand {
-    let mut cmd = TransitionCommand::new(instance_id.to_string(), to_state.to_string());
+    let mut cmd = TransitionCommand::new(machine.to_string(), instance_id.to_string(), to_state.to_string());
     cmd.as_actor = Some(actor.to_string());
     cmd.with_data = data
         .into_iter()
@@ -114,6 +115,7 @@ async fn spawn_one(engine: &Engine) -> String {
 /// Move ticket from open → triaged (sets assignee as actor-map matching ACTOR).
 async fn to_triaged(engine: &Engine, id: &str, agent: &str) {
     let cmd = transition_with(
+        "SupportTicket",
         id,
         "triaged",
         agent,
@@ -125,7 +127,7 @@ async fn to_triaged(engine: &Engine, id: &str, agent: &str) {
 
 /// Move ticket from triaged → in_progress.
 async fn to_in_progress(engine: &Engine, id: &str, agent: &str) {
-    let cmd = transition_as(id, "in_progress", agent);
+    let cmd = transition_as("SupportTicket", id, "in_progress", agent);
     let r = engine.transition(&cmd).await.expect("triaged → in_progress");
     assert_eq!(r.to_state, "in_progress");
 }
@@ -172,7 +174,7 @@ async fn guard_rejects_without_assignee() {
     let engine = make_engine();
     let id = spawn_one(&engine).await;
 
-    let cmd = transition_cmd(&id, "triaged");
+    let cmd = transition_cmd("SupportTicket", &id, "triaged");
     let result = engine.transition(&cmd).await;
     assert!(result.is_err(), "guard should reject: assignee IS SET");
 }
@@ -191,6 +193,7 @@ async fn full_lifecycle_happy_path() {
 
     // in_progress → resolved (requires resolution_note IS SET, ACTOR == assignee)
     let cmd = transition_with(
+        "SupportTicket",
         &id,
         "resolved",
         "agent_1",
@@ -221,7 +224,7 @@ async fn guard_rejects_wrong_actor() {
     to_triaged(&engine, &id, "agent_1").await;
 
     // Try in_progress as wrong actor (not assignee, not admin)
-    let cmd = transition_as(&id, "in_progress", "random_user");
+    let cmd = transition_as("SupportTicket", &id, "in_progress", "random_user");
     let result = engine.transition(&cmd).await;
     assert!(result.is_err(), "wrong actor should be rejected");
 }
@@ -236,7 +239,7 @@ async fn timeout_registered_on_waiting() {
     to_in_progress(&engine, &id, "agent_1").await;
 
     // in_progress → waiting_on_customer (TIMEOUT: 72h → resolved)
-    let cmd = transition_as(&id, "waiting_on_customer", "agent_1");
+    let cmd = transition_as("SupportTicket", &id, "waiting_on_customer", "agent_1");
     let r = engine.transition(&cmd).await.unwrap();
     assert_eq!(r.to_state, "waiting_on_customer");
 
@@ -254,7 +257,7 @@ async fn invalid_transition_rejected() {
     let id = spawn_one(&engine).await;
 
     // open → closed: no direct transition defined
-    let cmd = transition_cmd(&id, "closed");
+    let cmd = transition_cmd("SupportTicket", &id, "closed");
     let result = engine.transition(&cmd).await;
     assert!(result.is_err(), "open → closed should not be valid");
 }
@@ -385,6 +388,7 @@ async fn funnel_query() {
     to_in_progress(&engine, &id, "agent_1").await;
 
     let cmd = transition_with(
+        "SupportTicket",
         &id,
         "resolved",
         "agent_1",
@@ -427,6 +431,7 @@ async fn multiple_tickets_diverse_paths() {
     to_triaged(&engine, &id0, "agent_1").await;
     to_in_progress(&engine, &id0, "agent_1").await;
     let cmd = transition_with(
+        "SupportTicket",
         &id0,
         "resolved",
         "agent_1",
@@ -437,7 +442,7 @@ async fn multiple_tickets_diverse_paths() {
     // Ticket 1: open → triaged → in_progress → waiting_on_customer
     to_triaged(&engine, &id1, "agent_2").await;
     to_in_progress(&engine, &id1, "agent_2").await;
-    let cmd = transition_as(&id1, "waiting_on_customer", "agent_2");
+    let cmd = transition_as("SupportTicket", &id1, "waiting_on_customer", "agent_2");
     engine.transition(&cmd).await.unwrap();
 
     // FIND open tickets
@@ -500,6 +505,7 @@ async fn transition_memo_in_trail() {
     let id = spawn_one(&engine).await;
 
     let mut cmd = transition_with(
+        "SupportTicket",
         &id,
         "triaged",
         "agent_1",
@@ -553,6 +559,7 @@ async fn reopen_flow() {
 
     // Resolve
     let cmd = transition_with(
+        "SupportTicket",
         &id,
         "resolved",
         "agent_1",
@@ -561,7 +568,7 @@ async fn reopen_flow() {
     engine.transition(&cmd).await.unwrap();
 
     // Reopen as customer (ACTOR.id == customer_id, elapsed_since(resolved) < 30d)
-    let cmd = transition_as(&id, "reopened", &customer_id);
+    let cmd = transition_as("SupportTicket", &id, "reopened", &customer_id);
     let result = engine.transition(&cmd).await;
     // The guard checks ACTOR.id == customer_id where customer_id is a UUID.
     // ACTOR.id is a string from as_actor. customer_id is Value::Uuid.

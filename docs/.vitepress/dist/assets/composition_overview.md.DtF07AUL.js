@@ -13,7 +13,7 @@ import{_ as i,o as a,c as n,ag as e}from"./chunks/framework.DEqXEGcv.js";const o
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">}</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">-- Cancel order and all children</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">TRANSITION </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;01J5...&quot;</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> TO</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> cancelled CASCADE</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">TRANSITION Order </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;01J5...&quot;</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> TO</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> cancelled CASCADE</span></span>
 <span class="line"></span>
 <span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">-- Child signals parent</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">in_transit </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">-&gt;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> delivered {</span></span>

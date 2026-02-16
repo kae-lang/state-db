@@ -129,7 +129,7 @@ TIMEOUT: 1h 30m -> state    -- combined
 The `ON SPAWN` hook fires, emitting a `review.created` event.
 
 ```bash
-> TRANSITION "<id>" TO in_review WITH { reviewer: "bob" }
+> TRANSITION ReviewRequest "<id>" TO in_review WITH { reviewer: "bob" }
 ```
 
 The `AFTER EACH TRANSITION` hook emits `review.state_changed`.
@@ -137,7 +137,7 @@ The `AFTER EACH TRANSITION` hook emits `review.state_changed`.
 ### Request Changes (Starts the Timer)
 
 ```bash
-> TRANSITION "<id>" TO changes_requested WITH { comments: "Please add tests" } AS "bob"
+> TRANSITION ReviewRequest "<id>" TO changes_requested WITH { comments: "Please add tests" } AS "bob"
 ```
 
 Two things happen:
@@ -147,7 +147,7 @@ Two things happen:
 ### Author Fixes and Resubmits (Cancels the Timer)
 
 ```bash
-> TRANSITION "<id>" TO in_review
+> TRANSITION ReviewRequest "<id>" TO in_review
 ```
 
 When the instance leaves `changes_requested`, the 7-day timer is **automatically canceled**. No stale transition will happen.
@@ -155,13 +155,13 @@ When the instance leaves `changes_requested`, the 7-day timer is **automatically
 ### Approve and Merge
 
 ```bash
-> TRANSITION "<id>" TO approved AS "bob"
+> TRANSITION ReviewRequest "<id>" TO approved AS "bob"
 ```
 
 The `ON ENTER approved` hook fires, emitting `review.approved`.
 
 ```bash
-> TRANSITION "<id>" TO merged AS "alice"
+> TRANSITION ReviewRequest "<id>" TO merged AS "alice"
 ```
 
 The instance is now in the terminal state `merged`. No further transitions are possible.
@@ -265,7 +265,7 @@ DEFINE MACHINE QuickReview (
 
 ```bash
 > SPAWN QuickReview { title: "Test" }
-> TRANSITION "<id>" TO waiting
+> TRANSITION QuickReview "<id>" TO waiting
 ```
 
 Wait 5 seconds, then:

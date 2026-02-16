@@ -256,7 +256,7 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRANSITION \"01JMPIPE00000000000000001\" TO running"
+    "smql": "TRANSITION Pipeline \"01JMPIPE00000000000000001\" TO running"
   }'
 ```
 
@@ -266,22 +266,22 @@ curl -s -X POST http://localhost:8080/execute \
 # Start build stage
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMSTG000000000000000001\" TO running"}'
+  -d '{"smql": "TRANSITION Stage \"01JMSTG000000000000000001\" TO running"}'
 
 # Start compile job
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMJOB000000000000000001\" TO running"}'
+  -d '{"smql": "TRANSITION Job \"01JMJOB000000000000000001\" TO running"}'
 
 # Compile job passes
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMJOB000000000000000001\" TO passed"}'
+  -d '{"smql": "TRANSITION Job \"01JMJOB000000000000000001\" TO passed"}'
 
 # Build stage passes (ALL jobs passed)
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMSTG000000000000000001\" TO passed"}'
+  -d '{"smql": "TRANSITION Stage \"01JMSTG000000000000000001\" TO passed"}'
 ```
 
 The stage `running -> passed` guard checks `ALL(jobs, STATE IS passed)`. Since the compile job is the only job in the build stage and it passed, the guard succeeds.
@@ -292,26 +292,26 @@ The stage `running -> passed` guard checks `ALL(jobs, STATE IS passed)`. Since t
 # Start test stage
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMSTG000000000000000002\" TO running"}'
+  -d '{"smql": "TRANSITION Stage \"01JMSTG000000000000000002\" TO running"}'
 
 # Start both test jobs
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMJOB000000000000000002\" TO running"}'
+  -d '{"smql": "TRANSITION Job \"01JMJOB000000000000000002\" TO running"}'
 
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMJOB000000000000000003\" TO running"}'
+  -d '{"smql": "TRANSITION Job \"01JMJOB000000000000000003\" TO running"}'
 
 # Unit tests pass
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMJOB000000000000000002\" TO passed"}'
+  -d '{"smql": "TRANSITION Job \"01JMJOB000000000000000002\" TO passed"}'
 
 # Lint FAILS
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMJOB000000000000000003\" TO failed"}'
+  -d '{"smql": "TRANSITION Job \"01JMJOB000000000000000003\" TO failed"}'
 ```
 
 ### Stage Fails Due to ANY()
@@ -321,7 +321,7 @@ Now try to pass the test stage:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMSTG000000000000000002\" TO passed"}'
+  -d '{"smql": "TRANSITION Stage \"01JMSTG000000000000000002\" TO passed"}'
 ```
 
 ```json
@@ -336,7 +336,7 @@ The `ALL(jobs, STATE IS passed)` guard fails because the lint job is in `failed`
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMSTG000000000000000002\" TO failed"}'
+  -d '{"smql": "TRANSITION Stage \"01JMSTG000000000000000002\" TO failed"}'
 ```
 
 ```json
@@ -358,7 +358,7 @@ With one stage failed, the pipeline cannot pass:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMPIPE00000000000000001\" TO passed"}'
+  -d '{"smql": "TRANSITION Pipeline \"01JMPIPE00000000000000001\" TO passed"}'
 ```
 
 ```json
@@ -373,7 +373,7 @@ Instead, fail the pipeline:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMPIPE00000000000000001\" TO failed"}'
+  -d '{"smql": "TRANSITION Pipeline \"01JMPIPE00000000000000001\" TO failed"}'
 ```
 
 ```json
@@ -394,30 +394,30 @@ If all jobs pass, the pipeline succeeds. Here is the complete sequence for a pas
 
 ```bash
 # 1. Start pipeline
-TRANSITION "<pipeline_id>" TO running
+TRANSITION Pipeline "<pipeline_id>" TO running
 
 # 2. Build stage
-TRANSITION "<build_stage_id>" TO running
-TRANSITION "<compile_job_id>" TO running
-TRANSITION "<compile_job_id>" TO passed
-TRANSITION "<build_stage_id>" TO passed     # ALL(jobs) passed
+TRANSITION Stage "<build_stage_id>" TO running
+TRANSITION Job "<compile_job_id>" TO running
+TRANSITION Job "<compile_job_id>" TO passed
+TRANSITION Stage "<build_stage_id>" TO passed     # ALL(jobs) passed
 
 # 3. Test stage
-TRANSITION "<test_stage_id>" TO running
-TRANSITION "<unit_test_job_id>" TO running
-TRANSITION "<lint_job_id>" TO running
-TRANSITION "<unit_test_job_id>" TO passed
-TRANSITION "<lint_job_id>" TO passed
-TRANSITION "<test_stage_id>" TO passed      # ALL(jobs) passed
+TRANSITION Stage "<test_stage_id>" TO running
+TRANSITION Job "<unit_test_job_id>" TO running
+TRANSITION Job "<lint_job_id>" TO running
+TRANSITION Job "<unit_test_job_id>" TO passed
+TRANSITION Job "<lint_job_id>" TO passed
+TRANSITION Stage "<test_stage_id>" TO passed      # ALL(jobs) passed
 
 # 4. Deploy stage
-TRANSITION "<deploy_stage_id>" TO running
-TRANSITION "<deploy_job_id>" TO running
-TRANSITION "<deploy_job_id>" TO passed
-TRANSITION "<deploy_stage_id>" TO passed    # ALL(jobs) passed
+TRANSITION Stage "<deploy_stage_id>" TO running
+TRANSITION Job "<deploy_job_id>" TO running
+TRANSITION Job "<deploy_job_id>" TO passed
+TRANSITION Stage "<deploy_stage_id>" TO passed    # ALL(jobs) passed
 
 # 5. Pipeline passes
-TRANSITION "<pipeline_id>" TO passed        # ALL(stages) passed
+TRANSITION Pipeline "<pipeline_id>" TO passed        # ALL(stages) passed
 ```
 
 ---
@@ -429,7 +429,7 @@ Stages can be skipped directly from `pending`:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMSTG000000000000000003\" TO skipped"}'
+  -d '{"smql": "TRANSITION Stage \"01JMSTG000000000000000003\" TO skipped"}'
 ```
 
 ```json
@@ -453,7 +453,7 @@ Cancel the entire pipeline and all its children:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRANSITION \"01JMPIPE00000000000000001\" TO cancelled CASCADE"}'
+  -d '{"smql": "TRANSITION Pipeline \"01JMPIPE00000000000000001\" TO cancelled CASCADE"}'
 ```
 
 CASCADE propagates through all three levels:

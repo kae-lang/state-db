@@ -25,7 +25,7 @@ ANY -> triaged {
 Transitions can receive external data via the `WITH` clause at execution time. The `MUTATE` block can reference these values:
 
 ```sql
-TRANSITION "01J5..." TO resolved
+TRANSITION SupportTicket "01J5..." TO resolved
   WITH { resolution_note: "Fixed the issue" }
 ```
 
@@ -50,7 +50,7 @@ This spawns a new `Shipment` instance and stores its reference in the `shipment`
 The `WITH` clause on a transition command provides data that is merged into the instance:
 
 ```sql
-TRANSITION "01J5..." TO resolved
+TRANSITION SupportTicket "01J5..." TO resolved
   WITH { resolution_note: "Customer confirmed fix" }
 ```
 

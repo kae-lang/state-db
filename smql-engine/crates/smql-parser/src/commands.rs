@@ -79,11 +79,12 @@ pub fn parse_transition(parser: &mut Parser) -> SmqlResult<Command> {
         return parse_batch_transition(parser);
     }
 
+    let machine_name = parser.expect_ident()?;
     let instance_id = parser.expect_ident_or_string()?;
     parser.expect_keyword("TO")?;
     let to_state = parser.expect_ident()?;
 
-    let mut cmd = TransitionCommand::new(instance_id, to_state);
+    let mut cmd = TransitionCommand::new(machine_name, instance_id, to_state);
 
     // Parse optional clauses
     loop {
@@ -117,11 +118,12 @@ pub fn parse_try_transition(parser: &mut Parser) -> SmqlResult<Command> {
     parser.expect_keyword("TRY")?;
     parser.expect_keyword("TRANSITION")?;
 
+    let machine_name = parser.expect_ident()?;
     let instance_id = parser.expect_ident_or_string()?;
     parser.expect_keyword("TO")?;
     let to_state = parser.expect_ident()?;
 
-    let mut cmd = TransitionCommand::new(instance_id, to_state);
+    let mut cmd = TransitionCommand::new(machine_name, instance_id, to_state);
 
     loop {
         if parser.try_keyword("WITH") {

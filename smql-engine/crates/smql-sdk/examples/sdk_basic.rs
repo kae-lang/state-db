@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Transition t1
     let tr = client
-        .transition(&t1.id, "in_progress", TransitionOptions::default())
+        .transition("task", &t1.id, "in_progress", TransitionOptions::default())
         .await?;
     println!("Transitioned {} -> {}", tr.from_state, tr.to_state);
 

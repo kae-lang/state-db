@@ -181,7 +181,7 @@ Each child instance has `parent_id` and `parent_machine` fields linking it to th
 ### Try to Send Before Children Are Confirmed
 
 ```bash
-> TRANSITION "01JMINV000000000000000001A" TO sent
+> TRANSITION Invoice "01JMINV000000000000000001A" TO sent
 ```
 
 ```json
@@ -196,14 +196,14 @@ The `ALL(items, STATE IS confirmed)` guard fails because both line items are sti
 ### Confirm the Children
 
 ```bash
-> TRANSITION "01JMLI0000000000000000001A" TO confirmed
-> TRANSITION "01JMLI0000000000000000002A" TO confirmed
+> TRANSITION LineItem "01JMLI0000000000000000001A" TO confirmed
+> TRANSITION LineItem "01JMLI0000000000000000002A" TO confirmed
 ```
 
 ### Now Send the Invoice
 
 ```bash
-> TRANSITION "01JMINV000000000000000001A" TO sent
+> TRANSITION Invoice "01JMINV000000000000000001A" TO sent
 ```
 
 ```json
@@ -238,7 +238,7 @@ When you cancel an invoice, you probably want to cancel all its line items too. 
 ```bash
 > SPAWN Invoice { customer: "Beta Corp", total: 3000 }
 > SPAWN LineItem { product: "Gadget", quantity: 1, price: 3000 } PARENT "<invoice_id>"
-> TRANSITION "<invoice_id>" TO cancelled CASCADE
+> TRANSITION Invoice "<invoice_id>" TO cancelled CASCADE
 ```
 
 CASCADE behavior:

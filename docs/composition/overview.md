@@ -62,7 +62,7 @@ paid -> fulfilled {
 }
 
 -- Cancel order and all children
-TRANSITION "01J5..." TO cancelled CASCADE
+TRANSITION Order "01J5..." TO cancelled CASCADE
 
 -- Child signals parent
 in_transit -> delivered {

@@ -107,7 +107,7 @@ async fn test_transition() {
 
     let inst = client.spawn("counter", serde_json::json!({})).await.unwrap();
     let tr = client
-        .transition(&inst.id, "running", TransitionOptions::default())
+        .transition("counter", &inst.id, "running", TransitionOptions::default())
         .await
         .unwrap();
 
@@ -129,7 +129,7 @@ async fn test_try_transition_guard_failure() {
         .unwrap();
 
     let result = client
-        .try_transition(&inst.id, "closed", TransitionOptions::default())
+        .try_transition("gated", &inst.id, "closed", TransitionOptions::default())
         .await
         .unwrap();
     assert!(result.is_none(), "Guard should have failed");
@@ -149,7 +149,7 @@ async fn test_find_instances() {
 
     // Transition one to running
     client
-        .transition(&inst3.id, "running", TransitionOptions::default())
+        .transition("counter", &inst3.id, "running", TransitionOptions::default())
         .await
         .unwrap();
 
@@ -196,11 +196,11 @@ async fn test_trail() {
 
     let inst = client.spawn("counter", serde_json::json!({})).await.unwrap();
     client
-        .transition(&inst.id, "running", TransitionOptions::default())
+        .transition("counter", &inst.id, "running", TransitionOptions::default())
         .await
         .unwrap();
     client
-        .transition(&inst.id, "done", TransitionOptions::default())
+        .transition("counter", &inst.id, "done", TransitionOptions::default())
         .await
         .unwrap();
 
@@ -275,7 +275,7 @@ async fn test_transition_with_memo() {
         memo: Some("starting up".to_string()),
         ..Default::default()
     };
-    let tr = client.transition(&inst.id, "running", opts).await.unwrap();
+    let tr = client.transition("counter", &inst.id, "running", opts).await.unwrap();
     assert_eq!(tr.to_state, "running");
 
     // Verify memo in trail

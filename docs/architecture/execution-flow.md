@@ -60,7 +60,7 @@ A trail entry is appended with sequence 0, an empty `from_state` (since this is 
 
 ## Transition Pipeline
 
-When the engine receives a `TRANSITION "instance_id" TO state` command, it executes this 10-step pipeline:
+When the engine receives a `TRANSITION MachineName "instance_id" TO state` command, it executes this 10-step pipeline:
 
 ### Step 1: Load instance from storage
 
@@ -124,7 +124,7 @@ for guard in &transition.guards {
 If the transition has a `MUTATE` clause, the engine evaluates each mutation expression. The `WITH` data from the command is also merged into the instance data:
 
 ```
-TRANSITION "abc123" TO resolved WITH { resolution: "Fixed in v2.1" }
+TRANSITION SupportTicket "abc123" TO resolved WITH { resolution: "Fixed in v2.1" }
 ```
 
 The `__spawn` function call is detected at this stage before `eval_expr()` runs, because spawn is an async operation that the synchronous evaluator cannot handle.

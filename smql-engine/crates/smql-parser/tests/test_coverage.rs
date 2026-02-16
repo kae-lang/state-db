@@ -684,10 +684,11 @@ fn parse_spawn_batch_three_items() {
 
 #[test]
 fn parse_transition_through() {
-    let input = r#"TRANSITION "some_id" TO done THROUGH [step1, step2]"#;
+    let input = r#"TRANSITION Machine "some_id" TO done THROUGH [step1, step2]"#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::Transition(t) => {
+            assert_eq!(t.machine, "Machine");
             assert_eq!(t.instance_id, "some_id");
             assert_eq!(t.to_state, "done");
             assert_eq!(t.through, vec!["step1".to_string(), "step2".to_string()]);
@@ -698,7 +699,7 @@ fn parse_transition_through() {
 
 #[test]
 fn parse_transition_through_single_hop() {
-    let input = r#"TRANSITION inst TO final THROUGH [intermediate]"#;
+    let input = r#"TRANSITION Machine inst TO final THROUGH [intermediate]"#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::Transition(t) => {
@@ -712,10 +713,11 @@ fn parse_transition_through_single_hop() {
 
 #[test]
 fn parse_try_transition_basic() {
-    let input = r#"TRY TRANSITION "some_id" TO done"#;
+    let input = r#"TRY TRANSITION Machine "some_id" TO done"#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::TryTransition(t) => {
+            assert_eq!(t.machine, "Machine");
             assert_eq!(t.instance_id, "some_id");
             assert_eq!(t.to_state, "done");
         }
@@ -727,10 +729,11 @@ fn parse_try_transition_basic() {
 
 #[test]
 fn parse_try_transition_with_data_memo_actor() {
-    let input = r#"TRY TRANSITION "some_id" TO resolved WITH { notes: "fixed" } MEMO "attempt" AS "user1""#;
+    let input = r#"TRY TRANSITION Machine "some_id" TO resolved WITH { notes: "fixed" } MEMO "attempt" AS "user1""#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::TryTransition(t) => {
+            assert_eq!(t.machine, "Machine");
             assert_eq!(t.instance_id, "some_id");
             assert_eq!(t.to_state, "resolved");
             assert_eq!(t.with_data.len(), 1);
@@ -744,7 +747,7 @@ fn parse_try_transition_with_data_memo_actor() {
 
 #[test]
 fn parse_try_transition_with_memo_only() {
-    let input = r#"TRY TRANSITION tk TO done MEMO "retry""#;
+    let input = r#"TRY TRANSITION Machine tk TO done MEMO "retry""#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::TryTransition(t) => {
@@ -922,7 +925,7 @@ fn parse_alter_machine_backfill_int() {
 
 #[test]
 fn parse_transition_or_stay() {
-    let input = "TRANSITION tk TO done OR_STAY";
+    let input = "TRANSITION Machine tk TO done OR_STAY";
     let cmd = parse_one_command(input);
     match cmd {
         Command::Transition(t) => {
@@ -937,10 +940,11 @@ fn parse_transition_or_stay() {
 
 #[test]
 fn parse_transition_all_optional_clauses() {
-    let input = r#"TRANSITION "inst1" TO resolved WITH { priority: "high" } MEMO "fix" AS "alice" CASCADE"#;
+    let input = r#"TRANSITION Machine "inst1" TO resolved WITH { priority: "high" } MEMO "fix" AS "alice" CASCADE"#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::Transition(t) => {
+            assert_eq!(t.machine, "Machine");
             assert_eq!(t.instance_id, "inst1");
             assert_eq!(t.to_state, "resolved");
             assert_eq!(t.with_data.len(), 1);
@@ -1454,7 +1458,7 @@ fn parse_multiple_statements() {
     let input = r#"
 SPAWN Machine { x: 1 }
 GET Machine "abc123"
-TRANSITION tk TO done
+TRANSITION Machine tk TO done
 FIND Machine WHERE STATE IS open LIMIT 10
 "#;
     let stmts = smql_parser::parse(input).unwrap();
@@ -1835,7 +1839,7 @@ DEFINE MACHINE Nested (
 
 #[test]
 fn parse_transition_with_through_or_stay_cascade() {
-    let input = r#"TRANSITION inst TO done THROUGH [step1] OR_STAY CASCADE"#;
+    let input = r#"TRANSITION Machine inst TO done THROUGH [step1] OR_STAY CASCADE"#;
     let cmd = parse_one_command(input);
     match cmd {
         Command::Transition(t) => {
@@ -1846,4 +1850,16 @@ fn parse_transition_with_through_or_stay_cascade() {
         }
         other => panic!("Expected Transition, got {:?}", other),
     }
+}
+
+// ---- Old syntax without machine name should fail ----
+
+#[test]
+fn parse_transition_without_machine_name_fails() {
+    // Old syntax: TRANSITION "id" TO state (no machine name) should now fail
+    // because the parser expects: TRANSITION Machine "id" TO state
+    // When given `TRANSITION "id" TO state`, the parser reads the string as ident which fails.
+    let input = r#"TRANSITION "01ABC" TO done"#;
+    let result = smql_parser::parse(input);
+    assert!(result.is_err(), "Old syntax without machine name should fail");
 }

@@ -151,7 +151,7 @@ SMQL validates data at spawn time. If you violate constraints, the spawn is reje
 The `open -> in_progress` guard requires `assignee IS SET`. Since we set `assignee: "alice"` at spawn, this passes:
 
 ```bash
-> TRANSITION "01JMTODO00000000000000001A" TO in_progress
+> TRANSITION TodoItem "01JMTODO00000000000000001A" TO in_progress
 ```
 
 ```json
@@ -169,7 +169,7 @@ The `open -> in_progress` guard requires `assignee IS SET`. Since we set `assign
 Try to move to `done` without setting `notes`:
 
 ```bash
-> TRANSITION "01JMTODO00000000000000001A" TO done AS "alice"
+> TRANSITION TodoItem "01JMTODO00000000000000001A" TO done AS "alice"
 ```
 
 ```json
@@ -186,7 +186,7 @@ The guard `notes IS SET` failed because we never set the `notes` field.
 Use `WITH { ... }` to update data fields during a transition. This lets you satisfy guard requirements and update state in a single atomic operation.
 
 ```bash
-> TRANSITION "01JMTODO00000000000000001A" TO done WITH { notes: "All tests passing" } AS "alice"
+> TRANSITION TodoItem "01JMTODO00000000000000001A" TO done WITH { notes: "All tests passing" } AS "alice"
 ```
 
 ```json
@@ -223,10 +223,10 @@ The `AS` clause sets the **actor** — the person or system performing the trans
 
 ```bash
 -- AS "alice" sets ACTOR to { id: "alice" }
-> TRANSITION "..." TO in_progress AS "alice"
+> TRANSITION TodoItem "..." TO in_progress AS "alice"
 
 -- AS "admin_user" with role in the actor value
-> TRANSITION "..." TO done AS "admin_user"
+> TRANSITION TodoItem "..." TO done AS "admin_user"
 ```
 
 Guards can check actor identity and roles:
@@ -247,7 +247,7 @@ GUARD : ACTOR == assignee OR ACTOR.role == "admin"
 If someone other than the assignee tries to complete a task:
 
 ```bash
-> TRANSITION "01JMTODO00000000000000001A" TO done WITH { notes: "Done" } AS "bob"
+> TRANSITION TodoItem "01JMTODO00000000000000001A" TO done WITH { notes: "Done" } AS "bob"
 ```
 
 ```json
@@ -269,16 +269,16 @@ Save the ID, then:
 
 ```bash
 -- Start work
-> TRANSITION "<id>" TO in_progress
+> TRANSITION TodoItem "<id>" TO in_progress
 
 -- Block with a reason (notes required by guard)
-> TRANSITION "<id>" TO blocked WITH { notes: "Waiting on API team" }
+> TRANSITION TodoItem "<id>" TO blocked WITH { notes: "Waiting on API team" }
 
 -- Unblock (no guard on blocked -> in_progress)
-> TRANSITION "<id>" TO blocked
+> TRANSITION TodoItem "<id>" TO blocked
 
 -- Complete
-> TRANSITION "<id>" TO done WITH { notes: "API fixed, login works" } AS "bob"
+> TRANSITION TodoItem "<id>" TO done WITH { notes: "API fixed, login works" } AS "bob"
 ```
 
 ## Step 7: Admin Override
@@ -287,7 +287,7 @@ The `open -> done` transition has `GUARD: ACTOR.role == "admin"`, allowing admin
 
 ```bash
 > SPAWN TodoItem { title: "Cancelled task" }
-> TRANSITION "<id>" TO done AS "admin_user"
+> TRANSITION TodoItem "<id>" TO done AS "admin_user"
 ```
 
 ::: warning

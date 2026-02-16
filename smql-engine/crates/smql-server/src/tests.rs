@@ -184,7 +184,7 @@ async fn metrics_increment_on_transition() {
     let instance_id = json["result"]["id"].as_str().unwrap();
 
     // Transition
-    let transition_smql = format!(r#"TRANSITION "{}" TO running"#, instance_id);
+    let transition_smql = format!(r#"TRANSITION counter "{}" TO running"#, instance_id);
     let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
@@ -219,7 +219,7 @@ async fn metrics_guard_failure_counter() {
     let instance_id = json["result"]["id"].as_str().unwrap();
 
     // Attempt transition that will fail guard
-    let transition_smql = format!(r#"TRANSITION "{}" TO closed"#, instance_id);
+    let transition_smql = format!(r#"TRANSITION gated "{}" TO closed"#, instance_id);
     let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
@@ -350,7 +350,7 @@ async fn websocket_subscribe_receives_events() {
     let resp = client
         .post(format!("{}/execute", base_url))
         .json(&serde_json::json!({
-            "smql": format!(r#"TRANSITION "{}" TO active"#, instance_id)
+            "smql": format!(r#"TRANSITION ws_test "{}" TO active"#, instance_id)
         }))
         .send()
         .await
@@ -705,7 +705,7 @@ async fn execute_try_transition_guard_fails() {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
 
-    let smql = format!(r#"TRY TRANSITION "{}" TO closed"#, instance_id);
+    let smql = format!(r#"TRY TRANSITION gated "{}" TO closed"#, instance_id);
     let resp = app.clone().oneshot(execute_request(&smql)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
@@ -726,7 +726,7 @@ async fn execute_try_transition_success() {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
 
-    let smql = format!(r#"TRY TRANSITION "{}" TO running"#, instance_id);
+    let smql = format!(r#"TRY TRANSITION counter "{}" TO running"#, instance_id);
     let resp = app.clone().oneshot(execute_request(&smql)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_string(resp.into_body()).await;
@@ -838,7 +838,7 @@ async fn execute_query_paths() {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     let instance_id = json["result"]["id"].as_str().unwrap();
 
-    let transition_smql = format!(r#"TRANSITION "{}" TO running"#, instance_id);
+    let transition_smql = format!(r#"TRANSITION counter "{}" TO running"#, instance_id);
     let resp = app.clone().oneshot(execute_request(&transition_smql)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 

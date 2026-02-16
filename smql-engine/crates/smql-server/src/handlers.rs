@@ -192,7 +192,7 @@ async fn execute_command(
         }
 
         Command::Transition(t_cmd) => {
-            let machine_name = t_cmd.machine.clone().unwrap_or_default();
+            let machine_name = t_cmd.machine.clone();
             let start = Instant::now();
             match state.engine.transition(&t_cmd).await {
                 Ok(result) => {
@@ -248,7 +248,7 @@ async fn execute_command(
         }
 
         Command::TryTransition(t_cmd) => {
-            let machine_name = t_cmd.machine.clone().unwrap_or_default();
+            let machine_name = t_cmd.machine.clone();
             let start = Instant::now();
             match state.engine.try_transition(&t_cmd).await {
                 Ok(Some(result)) => {

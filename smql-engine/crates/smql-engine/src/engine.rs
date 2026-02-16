@@ -171,7 +171,7 @@ impl Engine {
         // Handle THEN TRANSITION if specified
         if let Some(target_state) = &cmd.then_transition {
             let transition_cmd = TransitionCommand {
-                machine: Some(cmd.machine.clone()),
+                machine: cmd.machine.clone(),
                 instance_id: instance.id.as_str(),
                 to_state: target_state.clone(),
                 with_data: Vec::new(),
@@ -321,6 +321,18 @@ impl Engine {
             .get_instance(&id)
             .await?
             .ok_or_else(|| SmqlError::not_found("Instance", &cmd.instance_id))?;
+
+        // Validate machine name matches the instance's actual machine
+        if !cmd.machine.is_empty() && cmd.machine != instance.machine {
+            return Err(SmqlError::ValidationError {
+                message: format!(
+                    "Machine mismatch: command specifies '{}' but instance belongs to '{}'",
+                    cmd.machine, instance.machine
+                ),
+                field: Some("machine".to_string()),
+                hint: Some(format!("Use TRANSITION {} \"{}\" TO ...", instance.machine, cmd.instance_id)),
+            });
+        }
 
         let machine_def = self.catalog.get(&instance.machine)?;
 
@@ -701,7 +713,7 @@ impl Engine {
             // Try to find a transition from current state to the first terminal state
             if let Some(terminal) = child_machine_def.terminal_states.first() {
                 let cmd = TransitionCommand {
-                    machine: Some(child.machine.clone()),
+                    machine: child.machine.clone(),
                     instance_id: child.id.as_str(),
                     to_state: terminal.clone(),
                     with_data: Vec::new(),
@@ -1116,7 +1128,8 @@ impl EngineCallback for EngineCallbackImpl {
             None => return Ok(()), // No parent — no-op
         };
 
-        let cmd = TransitionCommand::new(parent_id.as_str(), target_state.to_string());
+        let parent_machine = child.parent_machine.clone().unwrap_or_default();
+        let cmd = TransitionCommand::new(parent_machine, parent_id.as_str(), target_state.to_string());
         let engine = Engine {
             catalog: self.catalog.clone(),
             storage: self.storage.clone(),

@@ -115,14 +115,14 @@ Move the traffic light from `red` to `green`:
 
 ::: code-group
 ```bash [REPL]
-> TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO green
+> TRANSITION TrafficLight "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO green
 ```
 
 ```bash [curl]
 curl -X POST http://localhost:4200/execute \
   -H 'Content-Type: application/json' \
   -d '{
-    "smql": "TRANSITION \"01J5X7K2P3Q4R5S6T7U8V9W0XY\" TO green"
+    "smql": "TRANSITION TrafficLight \"01J5X7K2P3Q4R5S6T7U8V9W0XY\" TO green"
   }'
 ```
 :::
@@ -150,7 +150,7 @@ The instance moved from `red` to `green`. The trail now has 2 entries and the ve
 Try moving directly from `green` to `red` (skipping `yellow`):
 
 ```bash
-> TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO red
+> TRANSITION TrafficLight "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO red
 ```
 
 ```json
@@ -167,8 +167,8 @@ SMQL enforces the transition graph you defined. Only the transitions you declare
 Continue through the remaining states:
 
 ```bash
-> TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO yellow
-> TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO red
+> TRANSITION TrafficLight "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO yellow
+> TRANSITION TrafficLight "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO red
 ```
 
 The traffic light is back to `red` with `trail_length: 4`.
@@ -268,13 +268,13 @@ Let's define a second machine to see how terminal states work:
     }
   )
 > SPAWN OneShotTask {}
-> TRANSITION "<id>" TO done
+> TRANSITION OneShotTask "<id>" TO done
 ```
 
 Once in `done` (a terminal state), no further transitions are possible:
 
 ```bash
-> TRANSITION "<id>" TO pending
+> TRANSITION OneShotTask "<id>" TO pending
 ```
 
 ```json

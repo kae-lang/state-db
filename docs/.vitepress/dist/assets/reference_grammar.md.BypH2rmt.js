@@ -62,7 +62,7 @@ import{_ as s,o as a,c as t,ag as p}from"./chunks/framework.DEqXEGcv.js";const d
 <span class="line"><span>data_pairs      = data_pair { &quot;,&quot; data_pair } ;</span></span>
 <span class="line"><span>data_pair       = ident &quot;:&quot; expression ;</span></span>
 <span class="line"><span></span></span>
-<span class="line"><span>transition      = TRANSITION string TO ident</span></span>
+<span class="line"><span>transition      = TRANSITION ident string TO ident</span></span>
 <span class="line"><span>                  [ AS &quot;{&quot; data_pairs &quot;}&quot; ]</span></span>
 <span class="line"><span>                  [ WITH &quot;{&quot; data_pairs &quot;}&quot; ]</span></span>
 <span class="line"><span>                  [ MEMO string ]</span></span>
@@ -70,7 +70,7 @@ import{_ as s,o as a,c as t,ag as p}from"./chunks/framework.DEqXEGcv.js";const d
 <span class="line"><span>                  [ OR_STAY ]</span></span>
 <span class="line"><span>                  [ CASCADE ] ;</span></span>
 <span class="line"><span></span></span>
-<span class="line"><span>try_transition  = TRY TRANSITION string TO ident</span></span>
+<span class="line"><span>try_transition  = TRY TRANSITION ident string TO ident</span></span>
 <span class="line"><span>                  [ AS &quot;{&quot; data_pairs &quot;}&quot; ]</span></span>
 <span class="line"><span>                  [ WITH &quot;{&quot; data_pairs &quot;}&quot; ]</span></span>
 <span class="line"><span>                  [ MEMO string ] ;</span></span>

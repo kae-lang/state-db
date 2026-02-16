@@ -5,10 +5,10 @@ The `TRANSITION` command moves an instance from its current state to a new state
 ## Syntax
 
 ```sql
-TRANSITION "instance_id" TO target_state
-TRANSITION "instance_id" TO target_state AS { id: "user-1", role: "admin" }
-TRANSITION "instance_id" TO target_state WITH { field: value }
-TRANSITION "instance_id" TO target_state MEMO "Reason for transition"
+TRANSITION MachineName "instance_id" TO target_state
+TRANSITION MachineName "instance_id" TO target_state AS { id: "user-1", role: "admin" }
+TRANSITION MachineName "instance_id" TO target_state WITH { field: value }
+TRANSITION MachineName "instance_id" TO target_state MEMO "Reason for transition"
 ```
 
 ## Clauses
@@ -56,7 +56,7 @@ If any guard fails, the transition is denied with HTTP 409 Conflict:
 Multi-hop transition through intermediate states:
 
 ```sql
-TRANSITION "01J5..." TO resolved THROUGH in_progress
+TRANSITION SupportTicket "01J5..." TO resolved THROUGH in_progress
 ```
 
 This transitions `open -> in_progress -> resolved` in sequence. Each hop evaluates its own guards.
@@ -66,7 +66,7 @@ This transitions `open -> in_progress -> resolved` in sequence. Each hop evaluat
 If the transition fails, keep the instance in its current state instead of returning an error:
 
 ```sql
-TRANSITION "01J5..." TO resolved OR STAY
+TRANSITION SupportTicket "01J5..." TO resolved OR STAY
 ```
 
 ## CASCADE
@@ -74,7 +74,7 @@ TRANSITION "01J5..." TO resolved OR STAY
 Cascade the transition to child instances:
 
 ```sql
-TRANSITION "01J5..." TO cancelled CASCADE
+TRANSITION SupportTicket "01J5..." TO cancelled CASCADE
 ```
 
 This recursively transitions all children to their first terminal state.
@@ -90,7 +90,7 @@ CASCADE only attempts the first terminal state. If its guard fails, the child re
 curl -X POST http://localhost:4200/execute \
   -H 'Content-Type: application/json' \
   -d '{
-    "smql": "TRANSITION \"01J5X7K2P3Q4R5S6T7U8V9W0XY\" TO triaged AS { id: \"agent-1\", role: \"support\" } WITH { assignee: { id: \"agent-1\", role: \"support\" } }"
+    "smql": "TRANSITION SupportTicket \"01J5X7K2P3Q4R5S6T7U8V9W0XY\" TO triaged AS { id: \"agent-1\", role: \"support\" } WITH { assignee: { id: \"agent-1\", role: \"support\" } }"
   }'
 ```
 

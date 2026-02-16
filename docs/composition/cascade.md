@@ -7,7 +7,7 @@
 Append `CASCADE` to a TRANSITION command:
 
 ```sql
-TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO cancelled CASCADE
+TRANSITION Order "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO cancelled CASCADE
 ```
 
 ## How It Works
@@ -109,7 +109,7 @@ DEFINE MACHINE Order (
 Cancelling with CASCADE:
 
 ```sql
-TRANSITION "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO cancelled CASCADE
+TRANSITION Order "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO cancelled CASCADE
 ```
 
 This will:
@@ -124,7 +124,7 @@ This will:
 CASCADE can be combined with other transition clauses:
 
 ```sql
-TRANSITION "01J5..." TO cancelled CASCADE
+TRANSITION Order "01J5..." TO cancelled CASCADE
   AS { id: "admin-1", role: "admin" }
   WITH { cancellation_reason: "Customer request" }
   MEMO "Cancelled per customer phone call"

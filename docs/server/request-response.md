@@ -98,7 +98,7 @@ Moves an instance from its current state to a target state.
 
 ```json
 {
-  "smql": "TRANSITION \"01HXYZ1234567890ABCDEFGHIJ\" TO assigned AS { id: \"agent-7\", role: \"support\" } WITH { assignee: { id: \"agent-7\", role: \"support\" } }"
+  "smql": "TRANSITION SupportTicket \"01HXYZ1234567890ABCDEFGHIJ\" TO assigned AS { id: \"agent-7\", role: \"support\" } WITH { assignee: { id: \"agent-7\", role: \"support\" } }"
 }
 ```
 
@@ -155,7 +155,7 @@ Attempts a transition but returns success even if the guard fails. Never returns
 
 ```json
 {
-  "smql": "TRY TRANSITION \"01HXYZ1234567890ABCDEFGHIJ\" TO assigned"
+  "smql": "TRY TRANSITION SupportTicket \"01HXYZ1234567890ABCDEFGHIJ\" TO assigned"
 }
 ```
 
