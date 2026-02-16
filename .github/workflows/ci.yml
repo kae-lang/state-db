@@ -22,6 +22,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         features: ["", "rocksdb", "auth", "rocksdb,auth"]
+    env:
+      FEATURES_KEY: ${{ matrix.features && replace(matrix.features, ',', '-') || 'default' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,9 +39,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             smql-engine/target
-          key: ${{ runner.os }}-cargo-${{ matrix.features }}-${{ hashFiles('smql-engine/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ env.FEATURES_KEY }}-${{ hashFiles('smql-engine/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.features }}-
+            ${{ runner.os }}-cargo-${{ env.FEATURES_KEY }}-
             ${{ runner.os }}-cargo-
 
       - name: Build
