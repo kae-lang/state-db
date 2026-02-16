@@ -23,9 +23,5 @@ RUN mkdir -p /data
 
 EXPOSE 4200
 
-ENV SMQL_BIND=0.0.0.0:4200
-ENV SMQL_STORAGE=rocksdb
-ENV SMQL_DB_PATH=/data/smql.db
-
 ENTRYPOINT ["smql"]
-CMD ["serve", "--bind", "0.0.0.0:4200", "--storage", "rocksdb", "--db-path", "/data/smql.db"]
+CMD ["serve", "--bind", "0.0.0.0:4200", "--storage", "/data/smql.db"]

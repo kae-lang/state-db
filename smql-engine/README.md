@@ -28,22 +28,20 @@ Download from [GitHub Releases](https://github.com/kae-lang/state-db/releases/la
 | Linux aarch64 (static) | `smql-{version}-aarch64-unknown-linux-musl.tar.gz` |
 | Windows x86_64 | `smql-{version}-x86_64-pc-windows-msvc.zip` |
 
-All binaries include RocksDB and auth support.
+All prebuilt binaries include RocksDB and JWT auth support.
 
 ### Docker
-
-```bash
-docker run -p 4200:4200 -v smql-data:/data ghcr.io/kae-lang/state-db:latest
-```
-
-Or build locally:
 
 ```bash
 docker build -t smql .
 docker run -p 4200:4200 -v smql-data:/data smql
 ```
 
+The container runs `smql serve` on port 4200 with RocksDB storage at `/data/smql.db` by default.
+
 ### Build from Source
+
+Requires Rust 1.89+ and a C++ compiler (for RocksDB).
 
 ```bash
 git clone https://github.com/kae-lang/state-db.git
@@ -52,9 +50,24 @@ cargo build --release --bin smql --features "rocksdb,auth"
 # Binary at target/release/smql
 ```
 
-## Quick Start
+## Getting Started
 
-### Define a Machine
+### 1. Start the Server
+
+```bash
+# In-memory storage (data lost on restart)
+smql serve
+
+# With RocksDB persistent storage
+smql serve --storage /path/to/smql.db
+
+# Custom bind address
+smql serve --bind 0.0.0.0:8080 --storage ./data.db
+```
+
+### 2. Define a Machine
+
+Save this as `ticket.smql`:
 
 ```smql
 DEFINE MACHINE SupportTicket (
@@ -75,22 +88,125 @@ DEFINE MACHINE SupportTicket (
 )
 ```
 
-### Start the Server
+Load it into the server:
 
 ```bash
-cargo run --bin smql -- serve --bind 127.0.0.1:4200
+smql run ticket.smql
 ```
 
-### Use the CLI
+Or via the HTTP API:
 
 ```bash
-# Execute SMQL via HTTP API
 curl -X POST http://localhost:4200/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "SPAWN SupportTicket { subject: \"Bug report\", priority: \"high\" }"}'
+  -d '{"smql": "DEFINE MACHINE SupportTicket ( STATES { open, closed } INITIAL STATE open TERMINAL STATES { closed } TRANSITIONS { open -> closed {} } )"}'
 ```
 
-### Use the SDK
+### 3. Spawn Instances and Transition
+
+```bash
+# Spawn
+curl -s -X POST http://localhost:4200/execute \
+  -H "Content-Type: application/json" \
+  -d '{"smql": "SPAWN SupportTicket { subject: \"Login broken\", priority: \"high\" }"}'
+
+# Transition (use the instance ID from the spawn response)
+curl -s -X POST http://localhost:4200/execute \
+  -H "Content-Type: application/json" \
+  -d '{"smql": "TRANSITION SupportTicket \"01JEXAMPLE\" TO assigned"}'
+
+# Query
+curl -s -X POST http://localhost:4200/execute \
+  -H "Content-Type: application/json" \
+  -d '{"smql": "FIND SupportTicket WHERE STATE IS open LIMIT 10"}'
+```
+
+### 4. Use the REPL
+
+```bash
+# Interactive REPL with in-memory storage
+smql repl
+
+# REPL with RocksDB
+smql repl --storage ./data.db
+```
+
+```
+smql> DEFINE MACHINE Counter ( STATES { idle, running, done } INITIAL STATE idle TERMINAL STATES { done } TRANSITIONS { idle -> running {} running -> done {} } )
+Machine defined: Counter
+
+smql> SPAWN Counter {}
+Spawned Counter instance: 01JF...
+
+smql> .machines
+Counter
+
+smql> .states Counter
+idle, running, done
+```
+
+Meta-commands: `.help`, `.machines`, `.states <machine>`, `.transitions <machine>`
+
+### 5. Run Script Files
+
+SMQL scripts support `$N` references to refer to previously spawned instance IDs:
+
+```smql
+DEFINE MACHINE Task ( STATES { todo, done } INITIAL STATE todo TERMINAL STATES { done } TRANSITIONS { todo -> done {} } )
+SPAWN Task { title: "First task" }
+SPAWN Task { title: "Second task" }
+TRANSITION Task $1 TO done
+GET $2
+```
+
+```bash
+smql run script.smql
+```
+
+### 6. Execute One-off Statements
+
+```bash
+smql exec "SPAWN Counter {}"
+smql exec "FIND Counter WHERE STATE IS idle" --storage ./data.db
+```
+
+## CLI Reference
+
+```
+smql serve    [--bind 127.0.0.1:4200] [--storage memory]
+smql repl     [--storage memory]
+smql exec     <statement> [--storage memory]
+smql run      <file.smql> [--storage memory]
+smql codegen  --input <path>... [--output src/generated] [--lang rust]
+```
+
+The `--storage` flag accepts either `memory` (default) or a filesystem path, which enables RocksDB persistent storage at that location.
+
+## HTTP API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/execute` | Execute any SMQL statement (`{"smql": "..."}`) |
+| `GET` | `/machines` | List all registered machines |
+| `GET` | `/machines/:name` | Get machine definition |
+| `GET` | `/instances/:id` | Get instance by ULID |
+| `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/subscribe` | WebSocket event stream |
+
+### JWT Auth
+
+When built with the `auth` feature (included in all prebuilt binaries), set the `SMQL_JWT_SECRET` environment variable to enable JWT authentication:
+
+```bash
+SMQL_JWT_SECRET=your-secret-key smql serve --storage ./data.db
+```
+
+All requests (except `/health` and `/metrics`) must include a `Authorization: Bearer <token>` header.
+
+## SDK
+
+The Rust SDK (`smql-sdk`) provides a typed client for the HTTP API:
 
 ```rust
 use smql_sdk::prelude::*;
@@ -130,13 +246,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Generate Typed Code
+### Code Generation
+
+Generate typed Rust structs from `.smql` definitions:
 
 ```bash
-cargo run --bin smql -- codegen --input machines/ --output src/generated/
+smql codegen --input machines/ --output src/generated/
 ```
-
-This parses `.smql` files and generates typed Rust structs, state enums, and machine markers.
 
 ## Architecture
 
@@ -165,87 +281,13 @@ smql-engine/
 - **Hooks**: ON SPAWN, BEFORE/AFTER EACH TRANSITION, ON ENTER/EXIT state, EMIT events
 - **Queries**: FIND (with cursor pagination), GET, TRAIL, AGGREGATE, PATHS, FUNNEL, COMPARE PATHS
 - **Schema evolution**: ALTER MACHINE with live migration (ADD/REMOVE states, transitions, data fields)
-- **Storage backends**: In-memory (default) or RocksDB (feature-gated)
+- **Storage backends**: In-memory (default) or RocksDB (persistent)
 - **Observability**: Prometheus metrics, WebSocket event streaming, structured logging (tracing)
 - **Webhooks**: HTTP POST actions with retry on 5xx/network errors
-- **Auth**: JWT HS256 middleware (feature-gated behind `auth`)
+- **Auth**: JWT HS256 middleware
 - **Timer persistence**: Write-through to storage, automatic restore on startup
 - **SDK**: Ergonomic Rust client with builders, typed instances, WebSocket subscriptions
 - **Codegen**: Generate typed Rust code from `.smql` definitions
-
-## HTTP API
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/execute` | Execute any SMQL statement (`{"smql": "..."}`) |
-| `GET` | `/machines` | List all registered machines |
-| `GET` | `/machines/:name` | Get machine definition |
-| `GET` | `/instances/:id` | Get instance by ULID |
-| `GET` | `/health` | Health check |
-| `GET` | `/metrics` | Prometheus metrics |
-| `GET` | `/subscribe` | WebSocket event stream |
-
-## CLI Commands
-
-```
-smql serve    --bind 127.0.0.1:4200 --storage memory
-smql repl     --storage memory
-smql exec     "SPAWN Counter {}"
-smql run      script.smql
-smql codegen  --input machines/ --output src/generated/
-```
-
-## REPL
-
-```
-smql> FIND SupportTicket WHERE STATE IS open LIMIT 3
-3 results (12ms)
-
-smql> .machines
-SupportTicket, Order, Pipeline
-
-smql> .states SupportTicket
-open, triaged, in_progress, waiting_on_customer, resolved, closed, reopened
-
-smql> .transitions SupportTicket
-open -> triaged, triaged -> in_progress, ...
-```
-
-Meta-commands: `.help`, `.machines`, `.states <machine>`, `.transitions <machine>`
-
-## SDK API
-
-```rust
-// Connection
-let client = SmqlClient::new("http://localhost:4200")?;
-let client = SmqlClient::builder("http://localhost:4200")
-    .timeout(Duration::from_secs(5))
-    .build()?;
-
-// Machines
-client.define_machine(smql).await?;
-client.list_machines().await?;
-client.get_machine("name").await?;
-
-// Instances
-client.spawn("machine", json!({"key": "val"})).await?;
-client.get_instance("id").await?;
-client.transition("id", "state", opts).await?;
-client.try_transition("id", "state", opts).await?;
-client.trail("id").await?;
-
-// Queries
-client.find("machine").in_state("open").limit(10).execute().await?;
-client.aggregate("machine").measure("COUNT()").group_by_state().execute().await?;
-
-// WebSocket
-let mut sub = client.subscribe(Some("machine")).await?;
-let event = sub.next_event().await?;
-
-// Typed (with codegen)
-let inst = client.spawn_typed::<MyMachine>(data).await?;
-let results = client.find_typed::<MyMachine>().in_state("open").execute().await?;
-```
 
 ## Running Tests
 
