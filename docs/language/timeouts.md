@@ -54,12 +54,11 @@ placed -> expired {
 | `1h` | 1 hour |
 | `72h` | 72 hours |
 | `7d` | 7 days |
-| `1w` | 1 week |
 
 ::: info
 Internally, the timer system uses a `BTreeMap<deadline, Vec<entry>>` for efficient scheduling and a `HashMap<key, deadline>` for O(1) cancellation.
 :::
 
-::: warning
-Timers are currently in-memory only. If the server restarts, pending timers are lost. Timer persistence is planned for a future release.
+::: info
+Timers are persisted to storage and automatically restored on server restart via `restore_timers()`. Both memory and RocksDB backends support timer persistence.
 :::

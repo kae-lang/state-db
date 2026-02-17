@@ -37,3 +37,32 @@ pub enum SdkError {
 }
 
 pub type SdkResult<T> = Result<T, SdkError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        let err = SdkError::Server("internal error".to_string());
+        assert_eq!(err.to_string(), "Server error: internal error");
+
+        let err = SdkError::TransitionDenied("guard failed".to_string());
+        assert_eq!(err.to_string(), "Transition denied: guard failed");
+
+        let err = SdkError::NotFound("instance abc not found".to_string());
+        assert_eq!(err.to_string(), "Not found: instance abc not found");
+
+        let err = SdkError::Parse("unexpected token".to_string());
+        assert_eq!(err.to_string(), "Parse error: unexpected token");
+
+        let err = SdkError::Subscription("connection closed".to_string());
+        assert_eq!(err.to_string(), "Subscription error: connection closed");
+
+        let err = SdkError::Deserialize("invalid json".to_string());
+        assert_eq!(err.to_string(), "Deserialization error: invalid json");
+
+        let err = SdkError::InvalidUrl("bad url".to_string());
+        assert_eq!(err.to_string(), "Invalid URL: bad url");
+    }
+}

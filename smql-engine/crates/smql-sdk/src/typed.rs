@@ -110,3 +110,124 @@ impl<'a, M: SmqlMachine> TypedFindBuilder<'a, M> {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::SdkError;
+    use crate::types::InstanceResponse;
+
+    // Test helper: a minimal machine definition
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    struct TestData {
+        name: String,
+    }
+
+    #[derive(Debug, Clone)]
+    enum TestState {
+        Open,
+        Closed,
+    }
+
+    impl SmqlState for TestState {
+        fn from_str(s: &str) -> SdkResult<Self> {
+            match s {
+                "open" => Ok(Self::Open),
+                "closed" => Ok(Self::Closed),
+                other => Err(SdkError::Parse(format!("Unknown state: {}", other))),
+            }
+        }
+        fn as_str(&self) -> &str {
+            match self {
+                Self::Open => "open",
+                Self::Closed => "closed",
+            }
+        }
+        fn is_terminal(&self) -> bool {
+            matches!(self, Self::Closed)
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestMachine;
+    impl SmqlMachine for TestMachine {
+        const MACHINE_NAME: &'static str = "test";
+        type Data = TestData;
+        type State = TestState;
+    }
+
+    fn make_response(state: &str, data: serde_json::Value) -> InstanceResponse {
+        InstanceResponse {
+            id: "01ABCDEFGHIJKLMNOPQRSTUVWX".to_string(),
+            machine: "test".to_string(),
+            state: state.to_string(),
+            data,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            state_entered_at: "2026-01-01T00:00:00Z".to_string(),
+            trail_length: 1,
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn test_from_response_success() {
+        let resp = make_response("open", serde_json::json!({"name": "Alice"}));
+        let typed = TypedInstance::<TestMachine>::from_response(resp).unwrap();
+        assert_eq!(typed.id, "01ABCDEFGHIJKLMNOPQRSTUVWX");
+        assert_eq!(typed.data.name, "Alice");
+        assert!(matches!(typed.state, TestState::Open));
+        assert_eq!(typed.version, 1);
+        assert_eq!(typed.trail_length, 1);
+    }
+
+    #[test]
+    fn test_from_response_invalid_state() {
+        let resp = make_response("unknown_state", serde_json::json!({"name": "Bob"}));
+        let err = TypedInstance::<TestMachine>::from_response(resp).unwrap_err();
+        match err {
+            SdkError::Parse(msg) => assert!(msg.contains("Unknown state")),
+            other => panic!("Expected Parse error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_response_invalid_data() {
+        // Data doesn't match TestData (missing "name" field)
+        let resp = make_response("open", serde_json::json!({"wrong_field": 42}));
+        let err = TypedInstance::<TestMachine>::from_response(resp).unwrap_err();
+        match err {
+            SdkError::Deserialize(msg) => assert!(msg.contains("missing field")),
+            other => panic!("Expected Deserialize error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_response_completely_wrong_data() {
+        // Data is not an object at all
+        let resp = make_response("closed", serde_json::json!("not an object"));
+        let err = TypedInstance::<TestMachine>::from_response(resp).unwrap_err();
+        match err {
+            SdkError::Deserialize(msg) => {
+                assert!(!msg.is_empty());
+            }
+            other => panic!("Expected Deserialize error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_smql_state_methods() {
+        let open = TestState::from_str("open").unwrap();
+        assert_eq!(open.as_str(), "open");
+        assert!(!open.is_terminal());
+
+        let closed = TestState::from_str("closed").unwrap();
+        assert_eq!(closed.as_str(), "closed");
+        assert!(closed.is_terminal());
+    }
+
+    #[test]
+    fn test_smql_machine_const() {
+        assert_eq!(TestMachine::MACHINE_NAME, "test");
+    }
+}

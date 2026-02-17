@@ -5,14 +5,13 @@
 ## Syntax
 
 ```sql
-ALTER MACHINE MachineName (
+ALTER MACHINE MachineName
   ADD STATE new_state
-  REMOVE STATE old_state
-  ADD TRANSITION source -> target { ... }
+  REMOVE STATE old_state MIGRATE TO replacement_state
+  ADD TRANSITION source -> target
   REMOVE TRANSITION source -> target
-  ADD DATA { field : TYPE -> constraints }
+  ADD DATA field : TYPE -> constraints
   REMOVE DATA field_name
-)
 ```
 
 ## Operations
@@ -22,19 +21,17 @@ ALTER MACHINE MachineName (
 Add a new state to the machine:
 
 ```sql
-ALTER MACHINE SupportTicket (
+ALTER MACHINE SupportTicket
   ADD STATE escalated
-)
 ```
 
 ### REMOVE STATE
 
-Remove a state. All transitions involving this state are also removed. Instances currently in this state must be migrated first.
+Remove a state. All transitions involving this state are also removed. The `MIGRATE TO` clause is mandatory and specifies which state existing instances should be moved to.
 
 ```sql
-ALTER MACHINE SupportTicket (
-  REMOVE STATE reopened
-)
+ALTER MACHINE SupportTicket
+  REMOVE STATE reopened MIGRATE TO open
 ```
 
 ::: danger
@@ -46,42 +43,39 @@ REMOVE STATE also removes the state from ANY/EXCEPT lists and terminal_states. E
 Add a new transition:
 
 ```sql
-ALTER MACHINE SupportTicket (
-  ADD TRANSITION triaged -> escalated {
-    GUARD : priority == "critical"
-  }
-)
+ALTER MACHINE SupportTicket
+  ADD TRANSITION triaged -> escalated
 ```
+
+> **Note:** Guard bodies are not supported in `ALTER ADD TRANSITION`. To add guarded transitions, define them in the original `MACHINE` block or use a new machine version.
 
 ### REMOVE TRANSITION
 
 Remove an existing transition:
 
 ```sql
-ALTER MACHINE SupportTicket (
+ALTER MACHINE SupportTicket
   REMOVE TRANSITION reopened -> in_progress
-)
 ```
 
 ### ADD DATA
 
-Add a new data field with BACKFILL for existing instances:
+Add a new data field with inline BACKFILL for existing instances:
 
 ```sql
-ALTER MACHINE SupportTicket (
-  ADD DATA { severity : INT -> DEFAULT(0) }
-  BACKFILL { severity: 0 }
-)
+ALTER MACHINE SupportTicket
+  ADD DATA severity : INT -> DEFAULT(0) BACKFILL 0
 ```
+
+The BACKFILL expression is applied inline after the field definition. For REQUIRED fields without a DEFAULT, you must provide a BACKFILL value.
 
 ### REMOVE DATA
 
 Remove a data field:
 
 ```sql
-ALTER MACHINE SupportTicket (
+ALTER MACHINE SupportTicket
   REMOVE DATA satisfaction
-)
 ```
 
 ## Response
@@ -104,12 +98,9 @@ ALTER MACHINE SupportTicket (
 Operations within a single `ALTER MACHINE` are applied sequentially. Later operations can reference states or transitions added by earlier operations:
 
 ```sql
-ALTER MACHINE SupportTicket (
+ALTER MACHINE SupportTicket
   ADD STATE escalated
-  ADD TRANSITION triaged -> escalated {
-    GUARD : priority == "critical"
-  }
-)
+  ADD TRANSITION triaged -> escalated
 ```
 
 ::: warning

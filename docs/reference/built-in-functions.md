@@ -157,25 +157,22 @@ Returns the maximum value of a numeric field across matching instances.
 AGGREGATE SupportTicket MEASURE MAX(satisfaction) AS highest_score
 ```
 
-### PERCENTILE(field, p)
+### PERCENTILE(field)
 
-Returns the p-th percentile of a numeric field. The percentile value `p` is between 0 and 100.
+Returns the 50th percentile (median) of a numeric field. The engine accepts a single argument (the field name).
 
 **Parameters:**
 - `field` — the data field name
-- `p` — the percentile value (0-100)
 
 **Supported types:** `INT`, `FLOAT`
 
 ```sql
-AGGREGATE SupportTicket
-  MEASURE PERCENTILE(satisfaction, 50) AS p50
-  MEASURE PERCENTILE(satisfaction, 95) AS p95
-  MEASURE PERCENTILE(satisfaction, 99) AS p99
+AGGREGATE SupportTicket MEASURE PERCENTILE(satisfaction)
+AGGREGATE SupportTicket MEASURE PERCENTILE(satisfaction) AS p50
 ```
 
 ::: tip
-Common percentiles: p50 (median), p90, p95, p99. Use these to understand the distribution of values, not just the average.
+PERCENTILE computes the median (p50). Use it alongside AVG to understand whether your distribution is skewed.
 :::
 
 ## Collection Functions
@@ -235,6 +232,6 @@ GUARD : items.count > 0
 | `AVG(field)` | AGGREGATE | Float | Mean of field values |
 | `MIN(field)` | AGGREGATE | Numeric | Minimum field value |
 | `MAX(field)` | AGGREGATE | Numeric | Maximum field value |
-| `PERCENTILE(field, p)` | AGGREGATE | Float | p-th percentile |
+| `PERCENTILE(field)` | AGGREGATE | Float | Median (p50) |
 | `ALL(coll, pred)` | Guard | Bool | All children match |
 | `ANY(coll, pred)` | Guard | Bool | Any child matches |

@@ -6,7 +6,7 @@
 
 ```sql
 TRY TRANSITION MachineName "instance_id" TO target_state
-TRY TRANSITION MachineName "instance_id" TO target_state AS { id: "u1", role: "admin" }
+TRY TRANSITION MachineName "instance_id" TO target_state AS "u1"
 ```
 
 All the same clauses as `TRANSITION` are supported (AS, WITH, MEMO).

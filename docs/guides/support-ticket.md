@@ -20,13 +20,13 @@ The SupportTicket machine captures the full lifecycle of a customer support requ
 DEFINE MACHINE SupportTicket (
 
   DATA {
-    customer_id    : UUID        -> REQUIRED
-    subject        : TEXT        -> REQUIRED, MAX(200)
+    customer_id    : TEXT        -> REQUIRED
+    subject        : TEXT        -> REQUIRED MAX(200)
     description    : TEXT        -> REQUIRED
     priority       : ENUM(low, medium, high, critical) -> DEFAULT(medium)
     assignee       : REF(Agent)  -> OPTIONAL
     tags           : SET(TEXT)   -> DEFAULT({})
-    satisfaction   : INT         -> RANGE(1, 5), OPTIONAL
+    satisfaction   : INT         -> RANGE(1, 5) OPTIONAL
     resolution_note: TEXT        -> OPTIONAL
   }
 
@@ -87,7 +87,7 @@ DEFINE MACHINE SupportTicket (
       EXCEPT FROM { open, closed }
       GUARD  : ACTOR.role IN ("admin", "supervisor")
       MUTATE : priority = critical
-      ACTION : LOG("Escalated by {ACTOR}")
+      ACTION : LOG("Escalated")
     }
   }
 )
@@ -98,7 +98,7 @@ Register it with the server:
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE SupportTicket ( DATA { customer_id: UUID -> REQUIRED, subject: TEXT -> REQUIRED, MAX(200), description: TEXT -> REQUIRED, priority: ENUM(low, medium, high, critical) -> DEFAULT(medium), assignee: REF(Agent) -> OPTIONAL, tags: SET(TEXT) -> DEFAULT({}), satisfaction: INT -> RANGE(1, 5), OPTIONAL, resolution_note: TEXT -> OPTIONAL } STATES { open, triaged, in_progress, waiting_on_customer, resolved, closed, reopened } INITIAL STATE open TERMINAL STATES { closed } TRANSITIONS { open -> triaged { GUARD: assignee IS SET ACTION: NOTIFY(assignee, \"ticket.assigned\") } triaged -> in_progress { GUARD: ACTOR == assignee OR ACTOR.role == \"admin\" } in_progress -> waiting_on_customer { GUARD: ACTOR == assignee TIMEOUT: 72h -> resolved ACTION: NOTIFY(customer_id, \"ticket.needs_response\") } waiting_on_customer -> in_progress { GUARD: ACTOR.id == customer_id OR ACTOR == assignee } in_progress -> resolved { GUARD: resolution_note IS SET GUARD: ACTOR == assignee OR ACTOR.role == \"admin\" TIMEOUT: 7d -> closed ACTION: NOTIFY(customer_id, \"ticket.resolved\") } resolved -> reopened { GUARD: ACTOR.id == customer_id GUARD: elapsed_since(resolved) < 30d } reopened -> in_progress { GUARD: assignee IS SET } resolved -> closed { GUARD: elapsed_since(resolved) >= 7d OR ACTOR.role == \"admin\" } ANY -> triaged { EXCEPT FROM { open, closed } GUARD: ACTOR.role IN (\"admin\", \"supervisor\") MUTATE: priority = critical ACTION: LOG(\"Escalated by {ACTOR}\") } } )"}'
+  -d '{"smql": "DEFINE MACHINE SupportTicket ( DATA { customer_id: TEXT -> REQUIRED subject: TEXT -> REQUIRED MAX(200) description: TEXT -> REQUIRED priority: ENUM(low, medium, high, critical) -> DEFAULT(medium) assignee: REF(Agent) -> OPTIONAL tags: SET(TEXT) -> DEFAULT({}) satisfaction: INT -> RANGE(1, 5) OPTIONAL resolution_note: TEXT -> OPTIONAL } STATES { open, triaged, in_progress, waiting_on_customer, resolved, closed, reopened } INITIAL STATE open TERMINAL STATES { closed } TRANSITIONS { open -> triaged { GUARD: assignee IS SET ACTION: NOTIFY(assignee, \"ticket.assigned\") } triaged -> in_progress { GUARD: ACTOR == assignee OR ACTOR.role == \"admin\" } in_progress -> waiting_on_customer { GUARD: ACTOR == assignee TIMEOUT: 72h -> resolved ACTION: NOTIFY(customer_id, \"ticket.needs_response\") } waiting_on_customer -> in_progress { GUARD: ACTOR.id == customer_id OR ACTOR == assignee } in_progress -> resolved { GUARD: resolution_note IS SET GUARD: ACTOR == assignee OR ACTOR.role == \"admin\" TIMEOUT: 7d -> closed ACTION: NOTIFY(customer_id, \"ticket.resolved\") } resolved -> reopened { GUARD: ACTOR.id == customer_id GUARD: elapsed_since(resolved) < 30d } reopened -> in_progress { GUARD: assignee IS SET } resolved -> closed { GUARD: elapsed_since(resolved) >= 7d OR ACTOR.role == \"admin\" } ANY -> triaged { EXCEPT FROM { open, closed } GUARD: ACTOR.role IN (\"admin\", \"supervisor\") MUTATE: priority = critical ACTION: LOG(\"Escalated\") } } )"}'
 ```
 
 ```json
@@ -114,12 +114,12 @@ Each data field has a type and constraints:
 
 | Field | Type | Constraints | Purpose |
 |---|---|---|---|
-| `customer_id` | `UUID` | `REQUIRED` | Links to the customer who opened the ticket |
-| `subject` | `TEXT` | `REQUIRED, MAX(200)` | Short summary, capped at 200 characters |
+| `customer_id` | `TEXT` | `REQUIRED` | Links to the customer who opened the ticket |
+| `subject` | `TEXT` | `REQUIRED MAX(200)` | Short summary, capped at 200 characters |
 | `priority` | `ENUM(...)` | `DEFAULT(medium)` | Auto-set to `medium` if not provided |
 | `assignee` | `REF(Agent)` | `OPTIONAL` | Reference to the agent working the ticket |
 | `tags` | `SET(TEXT)` | `DEFAULT({})` | Defaults to empty set |
-| `satisfaction` | `INT` | `RANGE(1, 5), OPTIONAL` | Customer satisfaction score, only valid 1-5 |
+| `satisfaction` | `INT` | `RANGE(1, 5) OPTIONAL` | Customer satisfaction score, only valid 1-5 |
 | `resolution_note` | `TEXT` | `OPTIONAL` | Required by guard before resolving |
 
 ---
@@ -174,7 +174,7 @@ curl -s -X POST http://localhost:8080/execute \
 ```json
 {
   "success": false,
-  "error": "Spawn rejected: missing required field 'customer_id'"
+  "error": "Spawn rejected: Required field 'customer_id' is missing and has no default"
 }
 ```
 
@@ -393,6 +393,10 @@ curl -s -X POST http://localhost:8080/execute \
 
 The `closed` state is a **terminal state**. Once a ticket is closed, no further transitions are possible.
 
+::: info
+Guards referencing `ACTOR.role` (such as `ACTOR.role == "admin"` on `resolved -> closed`) require the role to be set via the HTTP API's JSON `as` object (e.g., `{"as": {"id": "admin_user", "role": "admin"}}`). The SMQL `AS` clause only sets the actor's `id`.
+:::
+
 ---
 
 ## Wildcard Escalation
@@ -460,7 +464,7 @@ Every spawn and transition is recorded in an immutable trail:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRAIL OF SupportTicket \"01JMABCDEF1234567890ABCDEF\""
+    "smql": "TRAIL OF \"01JMABCDEF1234567890ABCDEF\""
   }'
 ```
 
@@ -498,9 +502,9 @@ curl -s -X POST http://localhost:8080/execute \
   "success": true,
   "result": {
     "rows": [
-      { "group": { "state": "open" }, "measures": { "count": 5 } },
-      { "group": { "state": "in_progress" }, "measures": { "count": 3 } },
-      { "group": { "state": "resolved" }, "measures": { "count": 2 } }
+      { "group": { "state": "open" }, "measures": { "COUNT": 5 } },
+      { "group": { "state": "in_progress" }, "measures": { "COUNT": 3 } },
+      { "group": { "state": "resolved" }, "measures": { "COUNT": 2 } }
     ]
   }
 }
@@ -514,7 +518,7 @@ Track conversion through the ticket lifecycle:
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "FUNNEL SupportTicket THROUGH open, triaged, in_progress, resolved"
+    "smql": "FUNNEL SupportTicket THROUGH [open, triaged, in_progress, resolved, closed]"
   }'
 ```
 

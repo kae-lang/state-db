@@ -51,7 +51,7 @@ Guards can reference any data field by name:
 
 ```sql
 GUARD : priority == "critical"
-GUARD : count > 0
+GUARD : item_count > 0
 GUARD : assignee IS SET
 ```
 
@@ -68,6 +68,8 @@ GUARD : ACTOR.role IN ("admin", "supervisor")
 
 ::: warning
 `ACTOR` evaluates to a Map with `id` and `role` keys. When comparing `ACTOR == assignee`, the `assignee` field must also be a Map (not plain text). Use `ACTOR.id` for string comparisons.
+
+Note: The SMQL `AS` clause only sets the actor's `id` (e.g., `AS "user-1"` creates `{id: "user-1"}`). To set both `id` and `role`, use the HTTP API's JSON `as` object: `{"as": {"id": "user-1", "role": "admin"}}`.
 :::
 
 ## The SELF Keyword
@@ -82,7 +84,7 @@ ACTION : EMIT("order.placed", { order: SELF })
 
 | Function | Description | Example |
 |----------|-------------|---------|
-| `elapsed_since(state)` | Duration since entering a state | `elapsed_since(resolved) < 30d` |
+| `elapsed_since(state)` | Duration since entering the current state (state argument reserved for future use) | `elapsed_since(resolved) < 30d` |
 | `len(field)` | Length of string or collection | `len(tags) > 0` |
 | `contains(collection, value)` | Check membership | `contains(tags, "urgent")` |
 | `now()` | Current timestamp | `created_at < now() - 7d` |
@@ -108,7 +110,6 @@ Duration values are used in time comparisons:
 | `5m` | 5 minutes |
 | `24h` | 24 hours |
 | `7d` | 7 days |
-| `1w` | 1 week |
 
 ::: tip
 `elapsed_since()` takes a state name, not a timestamp. The engine tracks when each state was entered.

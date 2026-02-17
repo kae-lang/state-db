@@ -138,17 +138,17 @@ Send each definition to the server. The order matters -- child machines referenc
 # Register Order first (parent)
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE Order ( DATA { customer: TEXT -> REQUIRED, total: INT -> REQUIRED, notes: TEXT -> OPTIONAL } STATES { draft, placed, paid, fulfilled, shipped, delivered, cancelled, returned } INITIAL STATE draft TERMINAL STATES { delivered, cancelled, returned } CHILDREN { items: LIST(LineItem) -> MIN(1), shipment: OPTIONAL(Shipment) } TRANSITIONS { draft -> placed { GUARD: total > 0 } placed -> paid {} paid -> fulfilled { GUARD: ALL(items, STATE IS confirmed) } fulfilled -> shipped {} shipped -> delivered {} delivered -> returned {} ANY -> cancelled { EXCEPT FROM { shipped, delivered, returned } } } )"}'
+  -d '{"smql": "DEFINE MACHINE Order ( DATA { customer: TEXT -> REQUIRED total: INT -> REQUIRED notes: TEXT -> OPTIONAL } STATES { draft, placed, paid, fulfilled, shipped, delivered, cancelled, returned } INITIAL STATE draft TERMINAL STATES { delivered, cancelled, returned } CHILDREN { items: LIST(LineItem) -> MIN(1) shipment: OPTIONAL(Shipment) } TRANSITIONS { draft -> placed { GUARD: total > 0 } placed -> paid {} paid -> fulfilled { GUARD: ALL(items, STATE IS confirmed) } fulfilled -> shipped {} shipped -> delivered {} delivered -> returned {} ANY -> cancelled { EXCEPT FROM { shipped, delivered, returned } } } )"}'
 
 # Register LineItem
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE LineItem ( PARENT: Order DATA { product: TEXT -> REQUIRED, quantity: INT -> REQUIRED, price: INT -> REQUIRED } STATES { pending, confirmed, backordered, cancelled } INITIAL STATE pending TERMINAL STATES { confirmed, cancelled } TRANSITIONS { pending -> confirmed { GUARD: quantity > 0 } pending -> backordered {} backordered -> confirmed {} ANY -> cancelled { EXCEPT FROM { confirmed } } } )"}'
+  -d '{"smql": "DEFINE MACHINE LineItem ( PARENT: Order DATA { product: TEXT -> REQUIRED quantity: INT -> REQUIRED price: INT -> REQUIRED } STATES { pending, confirmed, backordered, cancelled } INITIAL STATE pending TERMINAL STATES { confirmed, cancelled } TRANSITIONS { pending -> confirmed { GUARD: quantity > 0 } pending -> backordered {} backordered -> confirmed {} ANY -> cancelled { EXCEPT FROM { confirmed } } } )"}'
 
 # Register Shipment
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE Shipment ( PARENT: Order DATA { tracking: TEXT -> OPTIONAL, carrier: TEXT -> OPTIONAL } STATES { created, dispatched, in_transit, delivered, lost } INITIAL STATE created TERMINAL STATES { delivered, lost } TRANSITIONS { created -> dispatched { GUARD: tracking IS SET GUARD: carrier IS SET } dispatched -> in_transit {} in_transit -> delivered {} in_transit -> lost {} } )"}'
+  -d '{"smql": "DEFINE MACHINE Shipment ( PARENT: Order DATA { tracking: TEXT -> OPTIONAL carrier: TEXT -> OPTIONAL } STATES { created, dispatched, in_transit, delivered, lost } INITIAL STATE created TERMINAL STATES { delivered, lost } TRANSITIONS { created -> dispatched { GUARD: tracking IS SET GUARD: carrier IS SET } dispatched -> in_transit {} in_transit -> delivered { SIGNAL PARENT TO delivered } in_transit -> lost {} } )"}'
 ```
 
 ---
@@ -186,14 +186,16 @@ Save the order ID -- you will need it to spawn child items.
 
 ### Spawn Line Items as Children
 
-Use the `PARENT` clause in the spawn command to link children to the order:
+Child instances are linked to their parent via the engine's composition API. Use the SDK or the `/spawn` endpoint with `parent_id` and `parent_machine` fields:
 
 ```bash
 # Item 1: Widget A, qty 2, $25.00
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN LineItem { product: \"Widget A\", quantity: 2, price: 2500 } PARENT Order \"01JMORDER0000000000000001\""
+    "smql": "SPAWN LineItem { product: \"Widget A\", quantity: 2, price: 2500 }",
+    "parent_id": "01JMORDER0000000000000001",
+    "parent_machine": "Order"
   }'
 ```
 
@@ -220,7 +222,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN LineItem { product: \"Widget B\", quantity: 1, price: 4999 } PARENT Order \"01JMORDER0000000000000001\""
+    "smql": "SPAWN LineItem { product: \"Widget B\", quantity: 1, price: 4999 }",
+    "parent_id": "01JMORDER0000000000000001",
+    "parent_machine": "Order"
   }'
 ```
 
@@ -353,7 +357,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Shipment {} PARENT Order \"01JMORDER0000000000000001\""
+    "smql": "SPAWN Shipment {}",
+    "parent_id": "01JMORDER0000000000000001",
+    "parent_machine": "Order"
   }'
 ```
 
@@ -495,8 +501,8 @@ curl -s -X POST http://localhost:8080/execute \
   "success": true,
   "result": {
     "rows": [
-      { "group": { "state": "pending" }, "measures": { "count": 2 } },
-      { "group": { "state": "confirmed" }, "measures": { "count": 1 } }
+      { "group": { "state": "pending" }, "measures": { "COUNT": 2 } },
+      { "group": { "state": "confirmed" }, "measures": { "COUNT": 1 } }
     ]
   }
 }
@@ -508,7 +514,7 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "TRAIL OF Order \"01JMORDER0000000000000001\""
+    "smql": "TRAIL OF \"01JMORDER0000000000000001\""
   }'
 ```
 

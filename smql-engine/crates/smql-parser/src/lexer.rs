@@ -141,6 +141,7 @@ const KEYWORDS: &[&str] = &[
     "TODAY",
     "OR_STAY",
     "DELETED",
+    "CAN",
 ];
 
 /// Tokenize SMQL input into a token stream.

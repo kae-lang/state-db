@@ -26,7 +26,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/execute", post(execute_smql))
         .route("/machines", get(list_machines))
         .route("/machines/:name", get(get_machine))
-        .route("/instances/:id", get(get_instance))
+        .route("/instances/:id", get(get_instance).delete(delete_instance))
         .route("/metrics", get(metrics_endpoint))
         .route("/subscribe", get(ws_subscribe))
         .with_state(state)
@@ -67,7 +67,7 @@ struct ExecuteRequest {
 }
 
 #[derive(Serialize)]
-struct ExecuteResponse {
+pub(crate) struct ExecuteResponse {
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<serde_json::Value>,
@@ -301,15 +301,79 @@ async fn execute_command(state: &AppState, cmd: Command) -> (StatusCode, Json<Ex
             }
         }
 
-        Command::BatchTransition(_) => (
-            StatusCode::NOT_IMPLEMENTED,
-            Json(ExecuteResponse {
-                success: false,
-                result: None,
-                error: Some("BATCH TRANSITION not yet implemented".to_string()),
-                warnings: None,
-            }),
-        ),
+        Command::BatchTransition(batch_cmd) => {
+            let machine_name = batch_cmd.machine.clone();
+            let to_state = batch_cmd.to_state.clone();
+            let start = Instant::now();
+            match state.engine.batch_transition(&batch_cmd).await {
+                Ok(result) => {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    state
+                        .metrics
+                        .transition_duration_seconds
+                        .with_label_values(&[&machine_name])
+                        .observe(elapsed);
+
+                    // Update per-transition metrics
+                    for (from_state, count) in &result.from_states {
+                        for _ in 0..*count {
+                            state
+                                .metrics
+                                .transitions_total
+                                .with_label_values(&[&machine_name, from_state, &to_state])
+                                .inc();
+                            state
+                                .metrics
+                                .instances_total
+                                .with_label_values(&[&machine_name, from_state])
+                                .dec();
+                            state
+                                .metrics
+                                .instances_total
+                                .with_label_values(&[&machine_name, &to_state])
+                                .inc();
+                        }
+                    }
+                    // Track guard failures
+                    for _ in &result.failures {
+                        state
+                            .metrics
+                            .guard_failures_total
+                            .with_label_values(&[&machine_name])
+                            .inc();
+                    }
+
+                    let failures_json: Vec<serde_json::Value> = result
+                        .failures
+                        .iter()
+                        .map(|f| {
+                            serde_json::json!({
+                                "instance_id": f.instance_id,
+                                "error": f.error,
+                            })
+                        })
+                        .collect();
+
+                    (
+                        StatusCode::OK,
+                        Json(ExecuteResponse {
+                            success: true,
+                            result: Some(serde_json::json!({
+                                "action": "batch_transition",
+                                "machine": machine_name,
+                                "matched": result.matched,
+                                "transitioned": result.transitioned,
+                                "failed": result.failures.len(),
+                                "failures": failures_json,
+                            })),
+                            error: None,
+                            warnings: None,
+                        }),
+                    )
+                }
+                Err(e) => error_response(e),
+            }
+        }
 
         Command::AlterMachine(alter_cmd) => {
             match state.engine.execute_alter_machine(&alter_cmd).await {
@@ -414,6 +478,56 @@ async fn get_instance(State(state): State<AppState>, Path(id): Path<String>) -> 
 
     match state.engine.storage.get_instance(&instance_id).await {
         Ok(Some(inst)) => (StatusCode::OK, Json(instance_to_json(&inst))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": format!("Instance '{}' not found", id) })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn delete_instance(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let instance_id = match smql_storage::InstanceId::from_string(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid instance ID" })),
+            );
+        }
+    };
+
+    // Check instance exists first (to return 404 if not)
+    match state.engine.storage.get_instance(&instance_id).await {
+        Ok(Some(inst)) => {
+            match state.engine.storage.delete_instance(&instance_id).await {
+                Ok(()) => {
+                    // Update metrics: decrement instance gauge
+                    state
+                        .metrics
+                        .instances_total
+                        .with_label_values(&[&inst.machine, &inst.state])
+                        .dec();
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "deleted": true,
+                            "id": id,
+                        })),
+                    )
+                }
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                ),
+            }
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": format!("Instance '{}' not found", id) })),
@@ -565,6 +679,32 @@ fn query_result_to_json(result: QueryResult) -> serde_json::Value {
                 "stages": stages,
             })
         }
+        QueryResult::ComparePaths(compare) => {
+            let segments: Vec<serde_json::Value> = compare
+                .segments
+                .iter()
+                .map(|seg| {
+                    let paths: Vec<serde_json::Value> = seg
+                        .paths
+                        .iter()
+                        .map(|p| {
+                            serde_json::json!({
+                                "path": p.path,
+                                "count": p.count,
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "segment_value": value_to_json(&seg.segment_value),
+                        "paths": paths,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "segment_by": compare.segment_by,
+                "segments": segments,
+            })
+        }
     }
 }
 
@@ -587,6 +727,14 @@ fn error_response(e: smql_ast::SmqlError) -> (StatusCode, Json<ExecuteResponse>)
             warnings: None,
         }),
     )
+}
+
+/// Test-only wrapper exposing error_response to the test module.
+#[cfg(test)]
+pub fn error_response_for_test(
+    e: smql_ast::SmqlError,
+) -> (StatusCode, Json<ExecuteResponse>) {
+    error_response(e)
 }
 
 /// Start a background task that subscribes to EventBus and updates timeout metrics.

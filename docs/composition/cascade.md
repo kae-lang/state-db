@@ -125,7 +125,7 @@ CASCADE can be combined with other transition clauses:
 
 ```sql
 TRANSITION Order "01J5..." TO cancelled CASCADE
-  AS { id: "admin-1", role: "admin" }
+  AS "admin-1"
   WITH { cancellation_reason: "Customer request" }
   MEMO "Cancelled per customer phone call"
 ```

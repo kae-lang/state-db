@@ -85,9 +85,8 @@ DEFINE MACHINE WithMultiRoles (
 }
 
 #[test]
-fn parse_roles_block_with_can_fails() {
-    // CAN is not a keyword in the lexer, so parsing permissions fails.
-    // This exercises the parse_roles_block code path entry.
+fn parse_roles_block_with_can_succeeds() {
+    // CAN is a keyword in the lexer, so ROLES block parses successfully.
     let input = r#"
 DEFINE MACHINE WithRoles (
     STATES { a, b }
@@ -101,9 +100,13 @@ DEFINE MACHINE WithRoles (
 "#;
     let result = smql_parser::parse_machines(input);
     assert!(
-        result.is_err(),
-        "Expected error because CAN is not a keyword"
+        result.is_ok(),
+        "Expected ROLES block to parse: {:?}",
+        result.err()
     );
+    let machines = result.unwrap();
+    assert_eq!(machines.len(), 1);
+    assert!(!machines[0].roles.is_empty());
 }
 
 // ---- 2. Invalid keyword in machine body (error) ----
@@ -1042,11 +1045,10 @@ DEFINE MACHINE WithMutateSpawn (
 }
 
 // ---- CAN ALTER permission in ROLES ----
-// NOTE: Same issue as above — CAN is not a keyword so this fails.
-// We still exercise the ROLES code-path entry.
+// CAN is now a keyword — ROLES block with ALTER permission parses.
 
 #[test]
-fn parse_roles_with_permissions_fails_because_can_not_keyword() {
+fn parse_roles_with_alter_permission() {
     let input = r#"
 DEFINE MACHINE WithAlterRole (
     STATES { a }
@@ -1060,9 +1062,12 @@ DEFINE MACHINE WithAlterRole (
 "#;
     let result = smql_parser::parse_machines(input);
     assert!(
-        result.is_err(),
-        "Expected error because CAN is not a keyword"
+        result.is_ok(),
+        "Expected ROLES block to parse: {:?}",
+        result.err()
     );
+    let machines = result.unwrap();
+    assert!(!machines[0].roles.is_empty());
 }
 
 // ---- ALTER MACHINE with REMOVE STATE (includes MIGRATE TO) ----

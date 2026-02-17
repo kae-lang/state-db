@@ -420,4 +420,40 @@ mod tests {
         assert_eq!(expired.len(), 5);
         assert_eq!(tm.timer_count(), 0);
     }
+
+    #[test]
+    fn timer_manager_default() {
+        let tm = TimerManager::default();
+        assert_eq!(tm.timer_count(), 0);
+        assert!(!tm.has_timers());
+    }
+
+    #[test]
+    fn next_deadline_returns_none_when_empty() {
+        let tm = TimerManager::new();
+        assert!(tm.next_deadline().is_none());
+    }
+
+    #[test]
+    fn get_timer_returns_none_for_nonexistent() {
+        let tm = TimerManager::new();
+        assert!(tm.get_timer("inst_1", "waiting").is_none());
+    }
+
+    #[test]
+    fn cancel_all_no_matching_timers_is_noop() {
+        let tm = TimerManager::new();
+        let dur = SmqlDuration::from_hours(24);
+        tm.register("inst_1", "Ticket", "waiting", &dur, "resolved");
+        // Cancel all for a different instance
+        tm.cancel_all("inst_2");
+        assert_eq!(tm.timer_count(), 1);
+    }
+
+    #[test]
+    fn drain_expired_empty_manager() {
+        let tm = TimerManager::new();
+        let expired = tm.drain_expired();
+        assert!(expired.is_empty());
+    }
 }

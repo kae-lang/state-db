@@ -13,7 +13,7 @@ smql serve --bind 127.0.0.1:4200
 ```sql
 DEFINE MACHINE SupportTicket (
   DATA {
-    customer_id : UUID -> REQUIRED
+    customer_id : TEXT -> REQUIRED
     subject     : TEXT -> REQUIRED
     priority    : ENUM(low, medium, high, critical) -> DEFAULT(medium)
     assignee    : TEXT -> OPTIONAL
@@ -93,24 +93,22 @@ FIND SupportTicket WHERE resolution_note IS NOT SET
 
 ```sql
 -- Find instances that are NOT in a terminal state
-FIND SupportTicket WHERE ALIVE
+FIND SupportTicket WHERE STATE IN {open, triaged, in_progress, resolved}
 
 -- Find instances in a terminal state
-FIND SupportTicket WHERE TERMINATED
-
--- Find instances that have visited a specific state
-FIND SupportTicket WHERE HAS_VISITED in_progress
-
--- Find instances that never reached a state
-FIND SupportTicket WHERE NEVER_VISITED resolved
+FIND SupportTicket WHERE STATE IS closed
 ```
+
+::: info
+`ALIVE`, `TERMINATED`, `HAS_VISITED`, and `NEVER_VISITED` are reserved keywords planned for a future release. Use explicit state filters in the meantime.
+:::
 
 ### Sorting and Pagination
 
 ```sql
 FIND SupportTicket WHERE STATE IS open SORT BY priority DESC
 FIND SupportTicket LIMIT 10 OFFSET 20
-FIND SupportTicket WHERE ALIVE SORT BY priority ASC LIMIT 5
+FIND SupportTicket WHERE STATE IN {open, triaged, in_progress, resolved} SORT BY priority ASC LIMIT 5
 ```
 
 ## AGGREGATE — Grouping & Metrics
@@ -191,16 +189,16 @@ AGGREGATE SupportTicket
 | `AVG(field)` | Average of field values | Yes |
 | `MIN(field)` | Minimum value | Yes |
 | `MAX(field)` | Maximum value | Yes |
-| `PERCENTILE(field, p)` | Percentile (0-100) | Yes |
+| `PERCENTILE(field)` | Median value (50th percentile) | Yes |
 
 ### Percentile
 
 ```sql
 AGGREGATE SupportTicket
-  MEASURE PERCENTILE(satisfaction, 50) AS p50
-  MEASURE PERCENTILE(satisfaction, 95) AS p95
-  MEASURE PERCENTILE(satisfaction, 99) AS p99
+  MEASURE PERCENTILE(satisfaction) AS median
 ```
+
+Note: PERCENTILE currently returns the median (50th percentile). Custom percentile values are not yet supported.
 
 ## TRAIL — Audit History
 
@@ -209,7 +207,7 @@ Every spawn and transition is recorded in an immutable trail.
 ### View an Instance's Trail
 
 ```sql
-TRAIL OF SupportTicket "01JM..."
+TRAIL OF "01JM..."
 ```
 
 ```json
@@ -278,7 +276,7 @@ PATHS helps you identify bottlenecks and unusual flows in your process.
 FUNNEL measures how many instances progress through a sequence of states:
 
 ```sql
-FUNNEL SupportTicket THROUGH open, triaged, in_progress, resolved, closed
+FUNNEL SupportTicket THROUGH [open, triaged, in_progress, resolved, closed]
 ```
 
 ```json
@@ -287,22 +285,22 @@ FUNNEL SupportTicket THROUGH open, triaged, in_progress, resolved, closed
     "stages": [
       { "state": "open", "count": 43, "conversion_rate": 1.0 },
       { "state": "triaged", "count": 38, "conversion_rate": 0.884 },
-      { "state": "in_progress", "count": 35, "conversion_rate": 0.921 },
-      { "state": "resolved", "count": 23, "conversion_rate": 0.657 },
-      { "state": "closed", "count": 15, "conversion_rate": 0.652 }
+      { "state": "in_progress", "count": 35, "conversion_rate": 0.814 },
+      { "state": "resolved", "count": 23, "conversion_rate": 0.535 },
+      { "state": "closed", "count": 15, "conversion_rate": 0.349 }
     ]
   }
 }
 ```
 
 Reading the funnel:
-- **43** tickets were spawned (entered `open`)
-- **38** (88.4%) were triaged — 5 tickets are stuck in `open`
-- **35** (92.1% of triaged) moved to `in_progress`
-- **23** (65.7% of in_progress) were resolved — the biggest drop-off
-- **15** (65.2% of resolved) were closed
+- **43** tickets were spawned (entered `open`) — conversion rate 1.0 (100%)
+- **38** (88.4% of total) were triaged — 5 tickets are stuck in `open`
+- **35** (81.4% of total) moved to `in_progress`
+- **23** (53.5% of total) were resolved — the biggest drop-off
+- **15** (34.9% of total) were closed
 
-The `conversion_rate` is relative to the **previous** stage, making it easy to spot where the biggest bottlenecks are.
+The `conversion_rate` is relative to the **total** (first stage count), showing what fraction of all instances reached each stage.
 
 ::: tip
 Use FUNNEL to identify process bottlenecks. In this example, the `in_progress -> resolved` step has a 65.7% conversion rate — you might want to investigate why a third of tickets stall there.
@@ -330,7 +328,7 @@ AGGREGATE SupportTicket MEASURE COUNT() GROUP BY state
 FIND SupportTicket WHERE STATE IS open SORT BY priority DESC
 
 -- What's the typical lifecycle?
-FUNNEL SupportTicket THROUGH open, triaged, in_progress, resolved, closed
+FUNNEL SupportTicket THROUGH [open, triaged, in_progress, resolved, closed]
 
 -- What paths do high-priority tickets take?
 PATHS FROM SupportTicket WHERE priority == "critical"
@@ -342,8 +340,7 @@ PATHS FROM SupportTicket WHERE priority == "critical"
 |---------|---------|
 | `FIND` | Filter instances by state, data fields, lifecycle status |
 | `SORT BY` / `LIMIT` / `OFFSET` | Ordering and pagination |
-| `ALIVE` / `TERMINATED` | Lifecycle status predicates |
-| `HAS_VISITED` / `NEVER_VISITED` | Historical state predicates |
+| State filters | `STATE IS`, `STATE IN` to filter by lifecycle status |
 | `AGGREGATE` | Compute COUNT, SUM, AVG, MIN, MAX, PERCENTILE |
 | `GROUP BY` | Break aggregations down by state or field |
 | `TRAIL` | Immutable audit log of every state change |

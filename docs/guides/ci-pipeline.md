@@ -38,10 +38,10 @@ This mirrors how real CI systems like GitHub Actions or GitLab CI work.
 ```sql
 DEFINE MACHINE Pipeline (
   DATA {
-    repo     : TEXT -> REQUIRED
-    branch   : TEXT -> REQUIRED
-    commit   : TEXT -> REQUIRED
-    trigger  : ENUM(push, pr, manual, schedule) -> DEFAULT(push)
+    repo    : TEXT -> REQUIRED
+    branch  : TEXT -> REQUIRED
+    commit  : TEXT -> REQUIRED
+    trigger : ENUM(push, pr, manual, schedule) -> DEFAULT(push)
   }
 
   STATES { queued, running, passed, failed, cancelled }
@@ -78,7 +78,7 @@ DEFINE MACHINE Stage (
 
   DATA {
     name  : TEXT -> REQUIRED
-    order : INT  -> REQUIRED
+    order : INT -> REQUIRED
   }
 
   STATES { pending, running, passed, failed, skipped }
@@ -111,7 +111,7 @@ DEFINE MACHINE Job (
   DATA {
     name    : TEXT -> REQUIRED
     image   : TEXT -> OPTIONAL
-    command : TEXT -> REQUIRED
+    command : TEXT  -> REQUIRED
   }
 
   STATES { pending, running, passed, failed }
@@ -134,17 +134,17 @@ Jobs are leaf nodes with no children and no guards. They represent the actual wo
 # Register Pipeline
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE Pipeline ( DATA { repo: TEXT -> REQUIRED, branch: TEXT -> REQUIRED, commit: TEXT -> REQUIRED, trigger: ENUM(push, pr, manual, schedule) -> DEFAULT(push) } STATES { queued, running, passed, failed, cancelled } INITIAL STATE queued TERMINAL STATES { passed, failed, cancelled } CHILDREN { stages: LIST(Stage) -> MIN(1) } TRANSITIONS { queued -> running {} running -> passed { GUARD: ALL(stages, STATE IS passed) } running -> failed { GUARD: ANY(stages, STATE IS failed) } ANY -> cancelled { EXCEPT FROM { passed, failed } } } )"}'
+  -d '{"smql": "DEFINE MACHINE Pipeline ( DATA { repo: TEXT -> REQUIRED branch: TEXT -> REQUIRED commit: TEXT -> REQUIRED trigger: ENUM(push, pr, manual, schedule) -> DEFAULT(push) } STATES { queued, running, passed, failed, cancelled } INITIAL STATE queued TERMINAL STATES { passed, failed, cancelled } CHILDREN { stages: LIST(Stage) -> MIN(1) } TRANSITIONS { queued -> running {} running -> passed { GUARD: ALL(stages, STATE IS passed) } running -> failed { GUARD: ANY(stages, STATE IS failed) } ANY -> cancelled { EXCEPT FROM { passed, failed } } } )"}'
 
 # Register Stage
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE Stage ( PARENT: Pipeline DATA { name: TEXT -> REQUIRED, order: INT -> REQUIRED } STATES { pending, running, passed, failed, skipped } INITIAL STATE pending TERMINAL STATES { passed, failed, skipped } CHILDREN { jobs: LIST(Job) -> MIN(1) } TRANSITIONS { pending -> running {} running -> passed { GUARD: ALL(jobs, STATE IS passed) } running -> failed { GUARD: ANY(jobs, STATE IS failed) } pending -> skipped {} } )"}'
+  -d '{"smql": "DEFINE MACHINE Stage ( PARENT: Pipeline DATA { name: TEXT -> REQUIRED order: INT -> REQUIRED } STATES { pending, running, passed, failed, skipped } INITIAL STATE pending TERMINAL STATES { passed, failed, skipped } CHILDREN { jobs: LIST(Job) -> MIN(1) } TRANSITIONS { pending -> running {} running -> passed { GUARD: ALL(jobs, STATE IS passed) } running -> failed { GUARD: ANY(jobs, STATE IS failed) } pending -> skipped {} } )"}'
 
 # Register Job
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE Job ( PARENT: Stage DATA { name: TEXT -> REQUIRED, image: TEXT -> OPTIONAL, command: TEXT -> REQUIRED } STATES { pending, running, passed, failed } INITIAL STATE pending TERMINAL STATES { passed, failed } TRANSITIONS { pending -> running {} running -> passed {} running -> failed {} } )"}'
+  -d '{"smql": "DEFINE MACHINE Job ( PARENT: Stage DATA { name: TEXT -> REQUIRED image: TEXT -> OPTIONAL command: TEXT -> REQUIRED } STATES { pending, running, passed, failed } INITIAL STATE pending TERMINAL STATES { passed, failed } TRANSITIONS { pending -> running {} running -> passed {} running -> failed {} } )"}'
 ```
 
 ---
@@ -189,7 +189,9 @@ The `trigger` field defaults to `"push"` since we did not provide it.
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Stage { name: \"build\", order: 1 } PARENT Pipeline \"01JMPIPE00000000000000001\""
+    "smql": "SPAWN Stage { name: \"build\", order: 1 } ",
+    "parent_id": "01JMPIPE00000000000000001",
+    "parent_machine": "Pipeline"
   }'
 # Returns id: "01JMSTG000000000000000001"
 
@@ -197,7 +199,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Stage { name: \"test\", order: 2 } PARENT Pipeline \"01JMPIPE00000000000000001\""
+    "smql": "SPAWN Stage { name: \"test\", order: 2 } ",
+    "parent_id": "01JMPIPE00000000000000001",
+    "parent_machine": "Pipeline"
   }'
 # Returns id: "01JMSTG000000000000000002"
 
@@ -205,7 +209,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Stage { name: \"deploy\", order: 3 } PARENT Pipeline \"01JMPIPE00000000000000001\""
+    "smql": "SPAWN Stage { name: \"deploy\", order: 3 } ",
+    "parent_id": "01JMPIPE00000000000000001",
+    "parent_machine": "Pipeline"
   }'
 # Returns id: "01JMSTG000000000000000003"
 ```
@@ -217,7 +223,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Job { name: \"compile\", command: \"cargo build --release\" } PARENT Stage \"01JMSTG000000000000000001\""
+    "smql": "SPAWN Job { name: \"compile\", command: \"cargo build --release\" } ",
+    "parent_id": "01JMSTG000000000000000001",
+    "parent_machine": "Stage"
   }'
 # Returns id: "01JMJOB000000000000000001"
 
@@ -225,7 +233,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Job { name: \"unit-tests\", command: \"cargo test\" } PARENT Stage \"01JMSTG000000000000000002\""
+    "smql": "SPAWN Job { name: \"unit-tests\", command: \"cargo test\" } ",
+    "parent_id": "01JMSTG000000000000000002",
+    "parent_machine": "Stage"
   }'
 # Returns id: "01JMJOB000000000000000002"
 
@@ -233,7 +243,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Job { name: \"lint\", command: \"cargo clippy\" } PARENT Stage \"01JMSTG000000000000000002\""
+    "smql": "SPAWN Job { name: \"lint\", command: \"cargo clippy\" } ",
+    "parent_id": "01JMSTG000000000000000002",
+    "parent_machine": "Stage"
   }'
 # Returns id: "01JMJOB000000000000000003"
 
@@ -241,7 +253,9 @@ curl -s -X POST http://localhost:8080/execute \
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "smql": "SPAWN Job { name: \"deploy-prod\", command: \"kubectl apply -f deploy.yaml\" } PARENT Stage \"01JMSTG000000000000000003\""
+    "smql": "SPAWN Job { name: \"deploy-prod\", command: \"kubectl apply -f deploy.yaml\" } ",
+    "parent_id": "01JMSTG000000000000000003",
+    "parent_machine": "Stage"
   }'
 # Returns id: "01JMJOB000000000000000004"
 ```
@@ -504,9 +518,9 @@ curl -s -X POST http://localhost:8080/execute \
   "success": true,
   "result": {
     "rows": [
-      { "group": { "state": "pending" }, "measures": { "count": 1 } },
-      { "group": { "state": "passed" }, "measures": { "count": 2 } },
-      { "group": { "state": "failed" }, "measures": { "count": 1 } }
+      { "group": { "state": "pending" }, "measures": { "COUNT": 1 } },
+      { "group": { "state": "passed" }, "measures": { "COUNT": 2 } },
+      { "group": { "state": "failed" }, "measures": { "COUNT": 1 } }
     ]
   }
 }
@@ -517,7 +531,7 @@ curl -s -X POST http://localhost:8080/execute \
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "TRAIL OF Pipeline \"01JMPIPE00000000000000001\""}'
+  -d '{"smql": "TRAIL OF \"01JMPIPE00000000000000001\""}'
 ```
 
 ```json

@@ -98,7 +98,7 @@ Moves an instance from its current state to a target state.
 
 ```json
 {
-  "smql": "TRANSITION SupportTicket \"01HXYZ1234567890ABCDEFGHIJ\" TO assigned AS { id: \"agent-7\", role: \"support\" } WITH { assignee: { id: \"agent-7\", role: \"support\" } }"
+  "smql": "TRANSITION SupportTicket \"01HXYZ1234567890ABCDEFGHIJ\" TO assigned AS \"agent-7\" WITH { assignee: { id: \"agent-7\", role: \"support\" } }"
 }
 ```
 
@@ -283,7 +283,7 @@ Search for instances by machine, state, and data filters.
 
 ```json
 {
-  "smql": "FIND SupportTicket IN STATE assigned WHERE priority == 1"
+  "smql": "FIND SupportTicket WHERE STATE IS assigned AND priority == 1"
 }
 ```
 
@@ -317,12 +317,21 @@ Search for instances by machine, state, and data filters.
         "trail_length": 3,
         "version": 3
       }
-    ]
+    ],
+    "next_cursor": "01HABC..."
   }
 }
 ```
 
-A FIND with no matches returns an empty list:
+The `next_cursor` field contains the ULID of the last instance in the result set. Pass it to `AFTER` in the next query for cursor-based pagination:
+
+```json
+{
+  "smql": "FIND SupportTicket WHERE STATE IS assigned LIMIT 20 AFTER \"01HABC...\""
+}
+```
+
+A FIND with no matches returns an empty list (no `next_cursor`):
 
 ```json
 {
@@ -393,7 +402,7 @@ Run aggregate queries with grouping and measures.
 
 ```json
 {
-  "smql": "AGGREGATE SupportTicket GROUP BY state MEASURE COUNT()"
+  "smql": "AGGREGATE SupportTicket MEASURE COUNT() GROUP BY STATE"
 }
 ```
 
@@ -406,26 +415,26 @@ Run aggregate queries with grouping and measures.
     "rows": [
       {
         "group": { "state": "open" },
-        "measures": { "count": 12 }
+        "measures": { "COUNT": 12 }
       },
       {
         "group": { "state": "assigned" },
-        "measures": { "count": 7 }
+        "measures": { "COUNT": 7 }
       },
       {
         "group": { "state": "closed" },
-        "measures": { "count": 45 }
+        "measures": { "COUNT": 45 }
       }
     ]
   }
 }
 ```
 
-Without a GROUP BY clause, AGGREGATE returns a single row:
+Measure keys use the function name in uppercase (`COUNT`, `SUM`, `AVG`, etc.) unless an alias is provided via `AS`:
 
 ```json
 {
-  "smql": "AGGREGATE SupportTicket MEASURE COUNT()"
+  "smql": "AGGREGATE SupportTicket MEASURE COUNT() AS total, SUM(points) AS total_points"
 }
 ```
 
@@ -436,7 +445,7 @@ Without a GROUP BY clause, AGGREGATE returns a single row:
     "rows": [
       {
         "group": {},
-        "measures": { "count": 64 }
+        "measures": { "total": 64, "total_points": 320 }
       }
     ]
   }
@@ -463,21 +472,23 @@ Analyze the state transition paths taken by instances.
   "result": {
     "paths": [
       {
-        "path": ["open", "assigned", "resolved", "closed"],
+        "path": ["", "open", "assigned", "resolved", "closed"],
         "count": 38
       },
       {
-        "path": ["open", "assigned", "closed"],
+        "path": ["", "open", "assigned", "closed"],
         "count": 5
       },
       {
-        "path": ["open", "closed"],
+        "path": ["", "open", "closed"],
         "count": 2
       }
     ]
   }
 }
 ```
+
+Paths start with an empty string `""` representing the spawn event (the initial `from_state` before entering the first state). Results are sorted by `count` descending.
 
 ### FUNNEL
 
@@ -511,12 +522,94 @@ Measure conversion rates through a sequence of states.
       {
         "state": "resolved",
         "count": 72,
-        "conversion_rate": 0.8470588235294118
+        "conversion_rate": 0.72
       },
       {
         "state": "closed",
         "count": 70,
-        "conversion_rate": 0.9722222222222222
+        "conversion_rate": 0.7
+      }
+    ]
+  }
+}
+```
+
+The `conversion_rate` is relative to the **total number of matching instances**, not the previous stage. For example, 72 out of 100 = 0.72. To calculate stage-to-stage drop-off, divide adjacent counts.
+
+### COMPARE PATHS
+
+Analyze transition paths segmented by a data field.
+
+**Request:**
+
+```json
+{
+  "smql": "COMPARE PATHS SupportTicket SEGMENT BY priority"
+}
+```
+
+**Response** `200 OK`:
+
+```json
+{
+  "success": true,
+  "result": {
+    "segment_by": "priority",
+    "segments": [
+      {
+        "segment_value": "high",
+        "paths": [
+          {
+            "path": ["", "open", "triaged", "in_progress", "resolved", "closed"],
+            "count": 25
+          },
+          {
+            "path": ["", "open", "triaged", "in_progress", "escalated", "resolved", "closed"],
+            "count": 8
+          }
+        ]
+      },
+      {
+        "segment_value": "low",
+        "paths": [
+          {
+            "path": ["", "open", "triaged", "resolved", "closed"],
+            "count": 15
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### TRANSITION ALL
+
+Transition all matching instances at once.
+
+**Request:**
+
+```json
+{
+  "smql": "TRANSITION ALL SupportTicket WHERE STATE IS resolved TO closed"
+}
+```
+
+**Response** `200 OK`:
+
+```json
+{
+  "success": true,
+  "result": {
+    "action": "batch_transition",
+    "machine": "SupportTicket",
+    "matched": 15,
+    "transitioned": 12,
+    "failed": 3,
+    "failures": [
+      {
+        "instance_id": "01HXYZ...",
+        "error": "Transition denied: guard condition not met for resolved -> closed"
       }
     ]
   }
@@ -542,4 +635,3 @@ The HTTP status code indicates the error category:
 | `404` | Machine or instance not found |
 | `409` | Guard failure (transition denied), version conflict |
 | `500` | Unexpected internal error |
-| `501` | BATCH TRANSITION (not yet implemented) |

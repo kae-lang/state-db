@@ -93,3 +93,70 @@ impl Drop for SubscriptionHandle {
         self.cancel();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_subscription_handle_cancel() {
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let mut handle = SubscriptionHandle {
+            cancel_tx: Some(cancel_tx),
+        };
+
+        // Cancel should send a signal
+        handle.cancel();
+
+        // The receiver should have gotten the signal
+        assert!(cancel_rx.blocking_recv().is_ok());
+
+        // cancel_tx should be None after cancel
+        assert!(handle.cancel_tx.is_none());
+    }
+
+    #[test]
+    fn test_subscription_handle_cancel_twice() {
+        let (cancel_tx, _cancel_rx) = oneshot::channel::<()>();
+        let mut handle = SubscriptionHandle {
+            cancel_tx: Some(cancel_tx),
+        };
+
+        // First cancel
+        handle.cancel();
+        assert!(handle.cancel_tx.is_none());
+
+        // Second cancel should be a no-op (no panic)
+        handle.cancel();
+        assert!(handle.cancel_tx.is_none());
+    }
+
+    #[test]
+    fn test_subscription_handle_drop_cancels() {
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+
+        // Create handle and immediately drop it
+        {
+            let _handle = SubscriptionHandle {
+                cancel_tx: Some(cancel_tx),
+            };
+        }
+
+        // The receiver should have gotten the signal from drop
+        assert!(cancel_rx.blocking_recv().is_ok());
+    }
+
+    #[test]
+    fn test_subscription_handle_cancel_then_drop() {
+        let (cancel_tx, _cancel_rx) = oneshot::channel::<()>();
+        let mut handle = SubscriptionHandle {
+            cancel_tx: Some(cancel_tx),
+        };
+
+        // Cancel explicitly first
+        handle.cancel();
+
+        // Drop should not panic even though cancel_tx is already taken
+        drop(handle);
+    }
+}

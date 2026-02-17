@@ -103,53 +103,61 @@ data_pairs      = data_pair { "," data_pair } ;
 data_pair       = ident ":" expression ;
 
 transition      = TRANSITION ident string TO ident
-                  [ AS "{" data_pairs "}" ]
+                  [ AS string ]
                   [ WITH "{" data_pairs "}" ]
                   [ MEMO string ]
-                  [ THROUGH ident { "," ident } ]
+                  [ THROUGH "[" ident { "," ident } "]" ]
                   [ OR_STAY ]
                   [ CASCADE ] ;
 
 try_transition  = TRY TRANSITION ident string TO ident
-                  [ AS "{" data_pairs "}" ]
+                  [ AS string ]
                   [ WITH "{" data_pairs "}" ]
                   [ MEMO string ] ;
 
 transition_all  = TRANSITION ALL ident WHERE expression TO ident ;
 
-alter_machine   = ALTER MACHINE ident "(" { alter_op } ")" ;
+alter_machine   = ALTER MACHINE ident { alter_op } ;
 alter_op        = ADD STATE ident
-                | REMOVE STATE ident
-                | ADD TRANSITION ident "->" ident "{" { transition_clause } "}"
+                | REMOVE STATE ident MIGRATE TO ident
+                | ADD TRANSITION ident "->" ident
                 | REMOVE TRANSITION ident "->" ident
-                | ADD DATA "{" data_field "}"
+                | ADD DATA data_field
                 | REMOVE DATA ident
-                | BACKFILL "{" data_pairs "}" ;
+                | BACKFILL ident "=" literal ;
 ```
 
 ## Queries
 
 ```txt
-get             = GET string ;
+get             = GET ident string ;
 
 find            = FIND ident
                   [ WHERE expression ]
-                  [ SORT BY sort_clause { "," sort_clause } ]
+                  [ SORT [ BY ] sort_clause { "," sort_clause } ]
                   [ LIMIT number ]
-                  [ OFFSET number ] ;
+                  [ OFFSET number ]
+                  [ AFTER string ] ;
 sort_clause     = ident ( ASC | DESC ) ;
 
-aggregate       = COUNT ident [ WHERE expression ] [ GROUP BY ident ]
-                | ( SUM | AVG | MIN | MAX ) "(" ident ")" FROM ident
-                  [ WHERE expression ] [ GROUP BY ident ] ;
+aggregate       = AGGREGATE ident
+                  MEASURE measure_def { "," measure_def }
+                  [ WHERE expression ]
+                  [ GROUP BY ( STATE | ident { "," ident } ) ] ;
+measure_def     = agg_func [ AS ident ] ;
+agg_func        = COUNT "(" ")"
+                | ( SUM | AVG | MIN | MAX ) "(" ident ")"
+                | PERCENTILE "(" ident ")" ;
 
-trail           = TRAIL OF string ;
+trail           = TRAIL OF string [ WHERE expression ] ;
 
-paths           = PATHS ident ;
+paths           = PATHS FROM ident [ WHERE expression ] [ LIMIT number ] ;
 
-funnel          = FUNNEL ident THROUGH ident { "," ident } ;
+funnel          = FUNNEL ident THROUGH "[" ident { "," ident } "]"
+                  [ WHERE expression ] ;
 
-compare_paths   = COMPARE PATHS ident SEGMENT BY ident ;
+compare_paths   = COMPARE PATHS ident SEGMENT BY ident
+                  [ WHERE expression ] ;
 ```
 
 ## Expressions
@@ -165,7 +173,7 @@ comparison      = addition [ comp_op addition ]
                 | addition IN "(" expression { "," expression } ")" ;
 comp_op         = "==" | "!=" | ">" | "<" | ">=" | "<=" ;
 addition        = multiplication { ( "+" | "-" ) multiplication } ;
-multiplication  = unary { ( "*" | "/" | "%" ) unary } ;
+multiplication  = unary { ( "*" | "/" ) unary } ;
 unary           = [ "-" ] primary ;
 
 primary         = literal | ident [ "." ident ]
@@ -175,7 +183,7 @@ primary         = literal | ident [ "." ident ]
                 | ALL "(" ident "," expression ")"
                 | ANY "(" ident "," expression ")"
                 | STATE IS ident
-                | STATE IN "(" ident { "," ident } ")"
+                | STATE IN "{" ident { "," ident } "}"
                 | ALIVE | TERMINATED
                 | SELF | ACTOR [ "." ident ] ;
 
@@ -185,7 +193,7 @@ literal         = string | number | float | TRUE | FALSE | NULL | duration ;
 string          = "\"" { char } "\"" ;
 number          = digit { digit } ;
 float           = number "." number ;
-duration        = number ( "s" | "m" | "h" | "d" | "w" ) ;
+duration        = number ( "s" | "m" | "h" | "d" ) ;
 ident           = letter { letter | digit | "_" } ;
 ```
 

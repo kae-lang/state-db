@@ -1152,4 +1152,673 @@ mod tests {
         let event = rx.try_recv().unwrap();
         assert_eq!(event.name, "default_test");
     }
+
+    #[test]
+    fn render_log_template_with_data_and_unknown_placeholders() {
+        let mut data = HashMap::new();
+        data.insert("priority".to_string(), Value::Int(3));
+        data.insert("tags".to_string(), Value::List(vec![Value::Text("bug".into())]));
+        let ctx = HookContext {
+            instance_id: "I1".to_string(),
+            machine: "Ticket".to_string(),
+            from_state: "open".to_string(),
+            to_state: "closed".to_string(),
+            data,
+            actor: Some("bob".to_string()),
+            memo: Some("fixed".to_string()),
+        };
+        let rendered =
+            render_log_template("p={priority} tags={tags} unknown={unknown_field}", &ctx);
+        assert!(rendered.contains("p=3"));
+        assert!(rendered.contains("tags=[\"bug\"]"));
+        assert!(rendered.contains("unknown={unknown_field}"));
+    }
+
+    #[test]
+    fn render_log_template_no_placeholders() {
+        let ctx = test_ctx();
+        let rendered = render_log_template("plain text no placeholders", &ctx);
+        assert_eq!(rendered, "plain text no placeholders");
+    }
+
+    #[test]
+    fn hook_error_display() {
+        let e = HookError::Rejected {
+            reason: "guard failed".to_string(),
+        };
+        assert!(e.to_string().contains("guard failed"));
+
+        let e = HookError::ActionFailed {
+            message: "boom".to_string(),
+        };
+        assert!(e.to_string().contains("boom"));
+
+        let e = HookError::WebhookFailed {
+            url: "https://x.com".to_string(),
+            message: "timeout".to_string(),
+        };
+        assert!(e.to_string().contains("https://x.com"));
+        assert!(e.to_string().contains("timeout"));
+    }
+
+    #[tokio::test]
+    async fn set_webhook_client_enables_webhook_execution() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+
+        // Create a webhook client — we can't actually test HTTP calls but we can set it
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(1),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(100),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        // Webhook to a non-existent URL should fail with network error (not dry-run)
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Webhook {
+            url: "http://127.0.0.1:1/nonexistent".to_string(),
+            payload: None,
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_err()); // Should be a WebhookFailed error, not dry-run OK
+    }
+
+    #[tokio::test]
+    async fn webhook_with_payload_dry_run() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Webhook {
+            url: "https://example.com/hook".to_string(),
+            payload: Some(Value::Map(std::collections::BTreeMap::from([
+                ("key".to_string(), Value::Text("val".to_string())),
+            ]))),
+        }];
+        // No webhook client set → dry-run mode
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fire_hooks_with_empty_hooks_list() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let result = exec
+            .fire_hooks(&[], &HookTrigger::OnSpawn, &ctx, &[])
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fire_hooks_on_spawn_trigger() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let hooks = vec![HookDefinition {
+            trigger: HookTrigger::OnSpawn,
+            actions: vec![Action::Log("spawned".to_string())],
+        }];
+        let resolved = vec![vec![ResolvedAction::Emit {
+            event: "spawn_event".to_string(),
+            payload: None,
+        }]];
+
+        exec.fire_hooks(&hooks, &HookTrigger::OnSpawn, &ctx, &resolved)
+            .await
+            .unwrap();
+
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "spawn_event");
+    }
+
+    // ---------------------------------------------------------------
+    // Additional coverage tests — coverage gaps
+    // ---------------------------------------------------------------
+
+    /// Notify action with a Map target (non-Text) to exercise the Display path for target.
+    #[tokio::test]
+    async fn notify_action_with_map_target() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let mut target_map = std::collections::BTreeMap::new();
+        target_map.insert("id".to_string(), Value::Text("user42".to_string()));
+        target_map.insert("role".to_string(), Value::Text("admin".to_string()));
+        let actions = vec![ResolvedAction::Notify {
+            target: Value::Map(target_map),
+            event: "escalation_alert".to_string(),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// Notify action with a list target.
+    #[tokio::test]
+    async fn notify_action_with_list_target() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Notify {
+            target: Value::List(vec![
+                Value::Text("admin".to_string()),
+                Value::Text("ops".to_string()),
+            ]),
+            event: "multi_notify".to_string(),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// SpawnChild without callback — with data fields to exercise the warn log with machine name.
+    #[tokio::test]
+    async fn spawn_child_no_callback_with_data_fields() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::SpawnChild {
+            machine: "SubTask".to_string(),
+            data: vec![
+                ("assignee".to_string(), Value::Text("bob".to_string())),
+                ("priority".to_string(), Value::Int(3)),
+            ],
+        }];
+        // No callback set — should warn and succeed, not error
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// SignalParent without callback — exercises the warn branch with a specific target_state.
+    #[tokio::test]
+    async fn signal_parent_no_callback_with_target_state() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::SignalParent {
+            target_state: "parent_resolved".to_string(),
+        }];
+        // No callback set — should warn and succeed
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// fire_hooks with multiple hooks that have different triggers — only matching ones fire.
+    #[tokio::test]
+    async fn fire_hooks_mixed_triggers_only_matching_fires() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let hooks = vec![
+            HookDefinition {
+                trigger: HookTrigger::OnSpawn,
+                actions: vec![Action::Log("spawn".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::AfterEachTransition,
+                actions: vec![Action::Log("after".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnEnter("closed".to_string()),
+                actions: vec![Action::Log("enter_closed".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::AfterEachTransition,
+                actions: vec![Action::Log("after2".to_string())],
+            },
+        ];
+
+        let resolved = vec![
+            vec![ResolvedAction::Emit {
+                event: "should_not_fire_spawn".to_string(),
+                payload: None,
+            }],
+            vec![ResolvedAction::Emit {
+                event: "should_fire_after1".to_string(),
+                payload: None,
+            }],
+            vec![ResolvedAction::Emit {
+                event: "should_not_fire_enter".to_string(),
+                payload: None,
+            }],
+            vec![ResolvedAction::Emit {
+                event: "should_fire_after2".to_string(),
+                payload: None,
+            }],
+        ];
+
+        // Fire AfterEachTransition — only hooks[1] and hooks[3] should fire
+        exec.fire_hooks(&hooks, &HookTrigger::AfterEachTransition, &ctx, &resolved)
+            .await
+            .unwrap();
+
+        let e1 = rx.recv().await.unwrap();
+        assert_eq!(e1.name, "should_fire_after1");
+        let e2 = rx.recv().await.unwrap();
+        assert_eq!(e2.name, "should_fire_after2");
+        // No more events
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// fire_hooks: all hooks have non-matching triggers — nothing should execute.
+    #[tokio::test]
+    async fn fire_hooks_all_non_matching_triggers() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let hooks = vec![
+            HookDefinition {
+                trigger: HookTrigger::OnSpawn,
+                actions: vec![Action::Log("spawn".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnEnter("closed".to_string()),
+                actions: vec![Action::Log("enter_closed".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnExit("draft".to_string()),
+                actions: vec![Action::Log("exit_draft".to_string())],
+            },
+        ];
+
+        let resolved = vec![
+            vec![ResolvedAction::Emit {
+                event: "e1".to_string(),
+                payload: None,
+            }],
+            vec![ResolvedAction::Emit {
+                event: "e2".to_string(),
+                payload: None,
+            }],
+            vec![ResolvedAction::Emit {
+                event: "e3".to_string(),
+                payload: None,
+            }],
+        ];
+
+        // Fire BeforeEachTransition — none of the hooks match
+        exec.fire_hooks(
+            &hooks,
+            &HookTrigger::BeforeEachTransition,
+            &ctx,
+            &resolved,
+        )
+        .await
+        .unwrap();
+
+        // No events should have been emitted
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// fire_hooks: OnExit trigger fires only for matching state.
+    #[tokio::test]
+    async fn fire_hooks_on_exit_trigger() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let hooks = vec![
+            HookDefinition {
+                trigger: HookTrigger::OnExit("open".to_string()),
+                actions: vec![Action::Log("exit_open".to_string())],
+            },
+            HookDefinition {
+                trigger: HookTrigger::OnExit("closed".to_string()),
+                actions: vec![Action::Log("exit_closed".to_string())],
+            },
+        ];
+
+        let resolved = vec![
+            vec![ResolvedAction::Emit {
+                event: "exited_open".to_string(),
+                payload: None,
+            }],
+            vec![ResolvedAction::Emit {
+                event: "exited_closed".to_string(),
+                payload: None,
+            }],
+        ];
+
+        // Fire OnExit("open") — only the first hook matches
+        exec.fire_hooks(
+            &hooks,
+            &HookTrigger::OnExit("open".to_string()),
+            &ctx,
+            &resolved,
+        )
+        .await
+        .unwrap();
+
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "exited_open");
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// Webhook action with a webhook client set — hitting an unreachable server returns WebhookFailed.
+    #[tokio::test]
+    async fn webhook_action_with_client_unreachable_server() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(1),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Webhook {
+            url: "http://127.0.0.1:1/unreachable".to_string(),
+            payload: Some(Value::Text("test_payload".to_string())),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HookError::WebhookFailed { url, message } => {
+                assert_eq!(url, "http://127.0.0.1:1/unreachable");
+                assert!(!message.is_empty());
+            }
+            other => panic!("Expected WebhookFailed, got: {:?}", other),
+        }
+    }
+
+    /// Webhook failure in a non-BEFORE hook is fire-and-forget (error swallowed).
+    #[tokio::test]
+    async fn webhook_failure_fire_and_forget_in_after_hook() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(1),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let hooks = vec![HookDefinition {
+            trigger: HookTrigger::AfterEachTransition,
+            actions: vec![Action::Log("after".to_string())],
+        }];
+        let resolved = vec![vec![ResolvedAction::Webhook {
+            url: "http://127.0.0.1:1/fail".to_string(),
+            payload: None,
+        }]];
+
+        // AFTER hook — error is swallowed
+        let result = exec
+            .fire_hooks(&hooks, &HookTrigger::AfterEachTransition, &ctx, &resolved)
+            .await;
+        assert!(
+            result.is_ok(),
+            "Webhook failure in AFTER hook should be fire-and-forget"
+        );
+    }
+
+    /// Webhook failure in a BEFORE hook propagates the error.
+    #[tokio::test]
+    async fn webhook_failure_propagates_in_before_hook() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(1),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let hooks = vec![HookDefinition {
+            trigger: HookTrigger::BeforeEachTransition,
+            actions: vec![Action::Log("before".to_string())],
+        }];
+        let resolved = vec![vec![ResolvedAction::Webhook {
+            url: "http://127.0.0.1:1/fail".to_string(),
+            payload: None,
+        }]];
+
+        // BEFORE hook — error should propagate
+        let result = exec
+            .fire_hooks(
+                &hooks,
+                &HookTrigger::BeforeEachTransition,
+                &ctx,
+                &resolved,
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "Webhook failure in BEFORE hook should propagate"
+        );
+    }
+
+    /// Execute mixed actions: Log, Notify, Emit, SpawnChild (no callback), SignalParent (no callback).
+    /// All should succeed (no callback means warn-and-noop for spawn/signal).
+    #[tokio::test]
+    async fn execute_all_action_types_without_callback() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let actions = vec![
+            ResolvedAction::Log("log msg".to_string()),
+            ResolvedAction::Notify {
+                target: Value::Text("admin".to_string()),
+                event: "alert".to_string(),
+            },
+            ResolvedAction::Emit {
+                event: "mixed_event".to_string(),
+                payload: Some(Value::Int(99)),
+            },
+            ResolvedAction::Webhook {
+                url: "https://example.com/dry".to_string(),
+                payload: None,
+            },
+            ResolvedAction::SpawnChild {
+                machine: "ChildTask".to_string(),
+                data: vec![],
+            },
+            ResolvedAction::SignalParent {
+                target_state: "done".to_string(),
+            },
+        ];
+
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+
+        // Only the Emit should produce a bus event
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "mixed_event");
+        assert_eq!(event.payload, Some(Value::Int(99)));
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// Emit action without payload.
+    #[tokio::test]
+    async fn emit_action_without_payload() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let actions = vec![ResolvedAction::Emit {
+            event: "bare_event".to_string(),
+            payload: None,
+        }];
+        exec.execute_actions(&actions, &ctx).await.unwrap();
+
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "bare_event");
+        assert_eq!(event.payload, None);
+        assert_eq!(event.machine, "Ticket");
+    }
+
+    // ---------------------------------------------------------------
+    // Additional coverage: webhook success path through HookExecutor
+    // (lines 271, 274 — WEBHOOK delivered info log)
+    // ---------------------------------------------------------------
+
+    /// Webhook action with a real client hitting a 200 OK server — exercises
+    /// the success path in execute_action (lines 270-274).
+    #[tokio::test]
+    async fn webhook_action_success_through_executor() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        // Start a local server that returns 200 OK
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(5),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let url = format!("http://127.0.0.1:{}/webhook", addr.port());
+        let actions = vec![ResolvedAction::Webhook {
+            url,
+            payload: Some(Value::Text("hello".to_string())),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok(), "Webhook to 200 OK server should succeed");
+
+        handle.await.unwrap();
+    }
+
+    /// SpawnChild with callback — verify the child_id return is logged (line 311).
+    #[tokio::test]
+    async fn spawn_child_callback_logs_child_id() {
+        let bus = Arc::new(EventBus::new(16));
+        let cb = Arc::new(RecordingCallback::new());
+        let exec = HookExecutor::with_callback(
+            Arc::clone(&bus),
+            Arc::clone(&cb) as Arc<dyn EngineCallback>,
+        );
+        let ctx = test_ctx();
+
+        let actions = vec![ResolvedAction::SpawnChild {
+            machine: "ChildWidget".to_string(),
+            data: vec![("size".to_string(), Value::Int(42))],
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+
+        let calls = cb.spawn_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "ChildWidget");
+    }
+
+    /// SignalParent with callback — exercises line 326.
+    #[tokio::test]
+    async fn signal_parent_callback_succeeds() {
+        let bus = Arc::new(EventBus::new(16));
+        let cb = Arc::new(RecordingCallback::new());
+        let exec = HookExecutor::with_callback(
+            Arc::clone(&bus),
+            Arc::clone(&cb) as Arc<dyn EngineCallback>,
+        );
+        let ctx = test_ctx();
+
+        let actions = vec![ResolvedAction::SignalParent {
+            target_state: "all_done".to_string(),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+
+        let calls = cb.signal_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "INST001");
+        assert_eq!(calls[0].1, "all_done");
+    }
+
+    /// Log action with template that includes machine and from_state (line 236).
+    #[tokio::test]
+    async fn log_action_with_rendered_template() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Log(
+            "{machine}: {from_state} -> {to_state} by {actor} (title={title})".to_string(),
+        )];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// Emit with payload exercises the debug log path (line 251).
+    #[tokio::test]
+    async fn emit_action_with_payload_debug_log() {
+        let (exec, bus) = make_executor();
+        let ctx = test_ctx();
+        let mut rx = bus.subscribe();
+
+        let actions = vec![ResolvedAction::Emit {
+            event: "detailed_event".to_string(),
+            payload: Some(Value::Map(std::collections::BTreeMap::from([
+                ("key".to_string(), Value::Int(99)),
+            ]))),
+        }];
+        exec.execute_actions(&actions, &ctx).await.unwrap();
+
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.name, "detailed_event");
+        assert!(event.payload.is_some());
+    }
+
+    /// Notify action exercises the info log path (line 261).
+    #[tokio::test]
+    async fn notify_action_text_target_info_log() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Notify {
+            target: Value::Text("customer_service".to_string()),
+            event: "ticket_escalated".to_string(),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// Webhook dry-run with payload — exercises lines 294-295.
+    #[tokio::test]
+    async fn webhook_dry_run_with_payload_has_payload() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Webhook {
+            url: "https://example.com/hook".to_string(),
+            payload: Some(Value::List(vec![Value::Int(1), Value::Int(2)])),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
+
+    /// Webhook dry-run without payload — exercises dry-run path with None payload.
+    #[tokio::test]
+    async fn webhook_dry_run_without_payload() {
+        let (exec, _bus) = make_executor();
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Webhook {
+            url: "https://example.com/no_payload".to_string(),
+            payload: None,
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+    }
 }

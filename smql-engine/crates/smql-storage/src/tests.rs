@@ -1082,4 +1082,548 @@ mod memory_storage_tests {
             .unwrap();
         storage.remove_all_timers("nonexistent").await.unwrap();
     }
+
+    // --- Mutation type mismatch tests (silent no-op) ---
+
+    #[tokio::test]
+    async fn increment_on_non_int_is_noop() {
+        let storage = MemoryStorage::new();
+        let mut inst = make_instance("Order", "open");
+        inst.data
+            .insert("label".to_string(), Value::Text("hello".to_string()));
+        let id = inst.id.clone();
+        storage.store_instance(&inst).await.unwrap();
+
+        let mutations = vec![Mutation::IncrementField("label".to_string(), 5)];
+        storage.update_instance(&id, 1, &mutations).await.unwrap();
+
+        let updated = storage.get_instance(&id).await.unwrap().unwrap();
+        assert_eq!(
+            updated.data.get("label"),
+            Some(&Value::Text("hello".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn increment_on_missing_field_is_noop() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        let id = inst.id.clone();
+        storage.store_instance(&inst).await.unwrap();
+
+        let mutations = vec![Mutation::IncrementField("nonexistent".to_string(), 1)];
+        storage.update_instance(&id, 1, &mutations).await.unwrap();
+
+        let updated = storage.get_instance(&id).await.unwrap().unwrap();
+        assert!(!updated.data.contains_key("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn append_to_list_on_non_list_is_noop() {
+        let storage = MemoryStorage::new();
+        let mut inst = make_instance("Order", "open");
+        inst.data.insert("count".to_string(), Value::Int(5));
+        let id = inst.id.clone();
+        storage.store_instance(&inst).await.unwrap();
+
+        let mutations = vec![Mutation::AppendToList(
+            "count".to_string(),
+            Value::Text("item".to_string()),
+        )];
+        storage.update_instance(&id, 1, &mutations).await.unwrap();
+
+        let updated = storage.get_instance(&id).await.unwrap().unwrap();
+        assert_eq!(updated.data.get("count"), Some(&Value::Int(5)));
+    }
+
+    #[tokio::test]
+    async fn append_to_list_on_missing_field_is_noop() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        let id = inst.id.clone();
+        storage.store_instance(&inst).await.unwrap();
+
+        let mutations = vec![Mutation::AppendToList(
+            "no_such_list".to_string(),
+            Value::Int(1),
+        )];
+        storage.update_instance(&id, 1, &mutations).await.unwrap();
+
+        let updated = storage.get_instance(&id).await.unwrap().unwrap();
+        assert!(!updated.data.contains_key("no_such_list"));
+    }
+
+    // --- Bulk update tests ---
+
+    #[tokio::test]
+    async fn bulk_update_instances() {
+        let storage = MemoryStorage::new();
+        for _ in 0..3 {
+            let mut inst = make_instance("Order", "open");
+            inst.data.insert("score".to_string(), Value::Int(0));
+            storage.store_instance(&inst).await.unwrap();
+        }
+        // Also add a different machine
+        let other = make_instance("Ticket", "open");
+        storage.store_instance(&other).await.unwrap();
+
+        let mutations = vec![Mutation::SetField(
+            "score".to_string(),
+            Value::Int(100),
+        )];
+        let count = storage.bulk_update_instances("Order", &mutations).await.unwrap();
+        assert_eq!(count, 3);
+
+        let filter = Filter::default();
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        for r in &results {
+            assert_eq!(r.data.get("score"), Some(&Value::Int(100)));
+        }
+
+        // Ticket should not be updated
+        let ticket = storage.get_instance(&other.id).await.unwrap().unwrap();
+        assert!(!ticket.data.contains_key("score"));
+    }
+
+    // --- Migrate instances state tests ---
+
+    #[tokio::test]
+    async fn migrate_instances_state() {
+        let storage = MemoryStorage::new();
+        for _ in 0..3 {
+            storage
+                .store_instance(&make_instance("Order", "old_state"))
+                .await
+                .unwrap();
+        }
+        storage
+            .store_instance(&make_instance("Order", "other"))
+            .await
+            .unwrap();
+
+        let count = storage
+            .migrate_instances_state("Order", "old_state", "new_state")
+            .await
+            .unwrap();
+        assert_eq!(count, 3);
+
+        let filter = Filter {
+            state: Some("new_state".to_string()),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 3);
+
+        let old_filter = Filter {
+            state: Some("old_state".to_string()),
+            ..Default::default()
+        };
+        let old_results = storage.find_instances("Order", &old_filter).await.unwrap();
+        assert!(old_results.is_empty());
+    }
+
+    // --- Offset beyond results clears ---
+
+    #[tokio::test]
+    async fn find_with_offset_beyond_results() {
+        let storage = MemoryStorage::new();
+        storage
+            .store_instance(&make_instance("Order", "open"))
+            .await
+            .unwrap();
+
+        let filter = Filter {
+            offset: Some(100),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    // --- Get parent of nonexistent child ---
+
+    #[tokio::test]
+    async fn get_parent_nonexistent_child_returns_none() {
+        let storage = MemoryStorage::new();
+        let fake_id = InstanceId::new();
+        let parent = storage.get_parent(&fake_id).await.unwrap();
+        assert!(parent.is_none());
+    }
+
+    // --- InstanceId tests ---
+
+    #[test]
+    fn instance_id_from_string_invalid() {
+        let result = InstanceId::from_string("invalid-ulid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn instance_id_display() {
+        let id = InstanceId::new();
+        let s = format!("{}", id);
+        assert_eq!(s, id.as_str());
+    }
+
+    #[test]
+    fn instance_id_default() {
+        let id = InstanceId::default();
+        assert!(!id.as_str().is_empty());
+    }
+
+    // --- Memory storage default ---
+
+    #[tokio::test]
+    async fn memory_storage_default() {
+        let storage = MemoryStorage::default();
+        let filter = Filter::default();
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    // --- compare_values edge cases ---
+
+    #[test]
+    fn compare_values_text() {
+        use crate::instance::FilterPredicate;
+        let data: HashMap<String, Value> = vec![
+            ("name".to_string(), Value::Text("banana".into())),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(FilterPredicate::Gt("name".to_string(), Value::Text("apple".into())).matches(&data));
+        assert!(FilterPredicate::Lt("name".to_string(), Value::Text("cherry".into())).matches(&data));
+    }
+
+    #[test]
+    fn compare_values_incompatible_types() {
+        use crate::instance::FilterPredicate;
+        let data: HashMap<String, Value> = vec![
+            ("x".to_string(), Value::Int(5)),
+        ]
+        .into_iter()
+        .collect();
+
+        // Int vs Text comparison should return None from compare_values,
+        // so Gt returns false
+        assert!(!FilterPredicate::Gt("x".to_string(), Value::Text("hello".into())).matches(&data));
+    }
+
+    #[test]
+    fn compare_values_float() {
+        use crate::instance::FilterPredicate;
+        let data: HashMap<String, Value> = vec![
+            ("x".to_string(), Value::Float(3.14)),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(FilterPredicate::Gt("x".to_string(), Value::Float(2.0)).matches(&data));
+        assert!(FilterPredicate::Lt("x".to_string(), Value::Float(4.0)).matches(&data));
+    }
+
+    #[test]
+    fn compare_values_datetime() {
+        use crate::instance::FilterPredicate;
+        let now = Utc::now();
+        let earlier = now - chrono::Duration::hours(1);
+        let data: HashMap<String, Value> = vec![
+            ("ts".to_string(), Value::DateTime(now)),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(FilterPredicate::Gt("ts".to_string(), Value::DateTime(earlier)).matches(&data));
+    }
+
+    #[test]
+    fn compare_values_date() {
+        use crate::instance::FilterPredicate;
+        use chrono::NaiveDate;
+        let d1 = NaiveDate::from_ymd_opt(2025, 6, 15).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2025, 6, 14).unwrap();
+        let data: HashMap<String, Value> = vec![
+            ("d".to_string(), Value::Date(d1)),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(FilterPredicate::Gt("d".to_string(), Value::Date(d2)).matches(&data));
+    }
+
+    #[test]
+    fn compare_values_duration() {
+        use crate::instance::FilterPredicate;
+        use smql_ast::value::SmqlDuration;
+        let data: HashMap<String, Value> = vec![
+            ("dur".to_string(), Value::Duration(SmqlDuration::from_hours(2))),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(FilterPredicate::Gt(
+            "dur".to_string(),
+            Value::Duration(SmqlDuration::from_hours(1))
+        )
+        .matches(&data));
+    }
+
+    // --- Ne with missing field ---
+
+    #[test]
+    fn ne_with_missing_field_returns_true() {
+        use crate::instance::FilterPredicate;
+        let data: HashMap<String, Value> = HashMap::new();
+        // Ne should return true when field doesn't exist (None != val)
+        assert!(FilterPredicate::Ne("missing".to_string(), Value::Int(1)).matches(&data));
+    }
+
+    // --- query_trails with from_state and time filters ---
+
+    #[tokio::test]
+    async fn query_trails_by_from_state() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        storage.store_instance(&inst).await.unwrap();
+
+        let entry1 = make_trail_entry(&inst, "open", "processing", 1);
+        let entry2 = make_trail_entry(&inst, "processing", "closed", 2);
+        storage.append_trail_entry(&entry1).await.unwrap();
+        storage.append_trail_entry(&entry2).await.unwrap();
+
+        let filter = TrailFilter {
+            from_state: Some("processing".to_string()),
+            ..Default::default()
+        };
+        let results = storage.query_trails("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].from_state, "processing");
+    }
+
+    #[tokio::test]
+    async fn query_trails_empty_machine() {
+        let storage = MemoryStorage::new();
+        let filter = TrailFilter::default();
+        let results = storage.query_trails("NonExistent", &filter).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn count_by_state_empty_machine() {
+        let storage = MemoryStorage::new();
+        let counts = storage.count_by_state("NonExistent").await.unwrap();
+        assert!(counts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_instance_cleans_up_timers() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        let id = inst.id.clone();
+        storage.store_instance(&inst).await.unwrap();
+
+        let now = Utc::now();
+        let timer = StoredTimer {
+            instance_id: id.as_str(),
+            machine: "Order".to_string(),
+            from_state: "open".to_string(),
+            target_state: "closed".to_string(),
+            deadline: now + chrono::Duration::hours(1),
+            registered_at: now,
+        };
+        storage.store_timer(&timer).await.unwrap();
+        assert_eq!(storage.load_all_timers().await.unwrap().len(), 1);
+
+        storage.delete_instance(&id).await.unwrap();
+        assert_eq!(storage.load_all_timers().await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_instance_fails() {
+        let storage = MemoryStorage::new();
+        let id = InstanceId::new();
+        let mutations = vec![Mutation::SetField("x".to_string(), Value::Int(1))];
+        let result = storage.update_instance(&id, 1, &mutations).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn transition_nonexistent_instance_fails() {
+        let storage = MemoryStorage::new();
+        let id = InstanceId::new();
+        let trail = TrailEntry {
+            instance_id: id.clone(),
+            machine: "Order".to_string(),
+            sequence: 1,
+            from_state: "open".to_string(),
+            to_state: "closed".to_string(),
+            transition_name: None,
+            actor: None,
+            memo: None,
+            timestamp: Utc::now(),
+            data_snapshot: None,
+        };
+        let result = storage
+            .transition_instance(&id, 1, "closed", &[], trail)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_trail_nonexistent_instance() {
+        let storage = MemoryStorage::new();
+        let id = InstanceId::new();
+        let result = storage.get_trail(&id).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn append_trail_entry_creates_trail_if_not_stored() {
+        let storage = MemoryStorage::new();
+        let id = InstanceId::new();
+        let entry = TrailEntry {
+            instance_id: id.clone(),
+            machine: "Order".to_string(),
+            sequence: 0,
+            from_state: "".to_string(),
+            to_state: "open".to_string(),
+            transition_name: None,
+            actor: None,
+            memo: None,
+            timestamp: Utc::now(),
+            data_snapshot: None,
+        };
+        storage.append_trail_entry(&entry).await.unwrap();
+        let trail = storage.get_trail(&id).await.unwrap();
+        assert_eq!(trail.len(), 1);
+    }
+
+    // --- query_trails with time-based filters ---
+
+    #[tokio::test]
+    async fn query_trails_with_after_filter() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        storage.store_instance(&inst).await.unwrap();
+
+        let now = Utc::now();
+        let past = now - chrono::Duration::hours(2);
+        let mid = now - chrono::Duration::hours(1);
+
+        let mut entry1 = make_trail_entry(&inst, "open", "processing", 1);
+        entry1.timestamp = past;
+        let mut entry2 = make_trail_entry(&inst, "processing", "closed", 2);
+        entry2.timestamp = now;
+
+        storage.append_trail_entry(&entry1).await.unwrap();
+        storage.append_trail_entry(&entry2).await.unwrap();
+
+        let filter = TrailFilter {
+            after: Some(mid),
+            ..Default::default()
+        };
+        let results = storage.query_trails("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].to_state, "closed");
+    }
+
+    #[tokio::test]
+    async fn query_trails_with_before_filter() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        storage.store_instance(&inst).await.unwrap();
+
+        let now = Utc::now();
+        let past = now - chrono::Duration::hours(2);
+        let mid = now - chrono::Duration::hours(1);
+
+        let mut entry1 = make_trail_entry(&inst, "open", "processing", 1);
+        entry1.timestamp = past;
+        let mut entry2 = make_trail_entry(&inst, "processing", "closed", 2);
+        entry2.timestamp = now;
+
+        storage.append_trail_entry(&entry1).await.unwrap();
+        storage.append_trail_entry(&entry2).await.unwrap();
+
+        let filter = TrailFilter {
+            before: Some(mid),
+            ..Default::default()
+        };
+        let results = storage.query_trails("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].to_state, "processing");
+    }
+
+    #[tokio::test]
+    async fn query_trails_with_after_and_before() {
+        let storage = MemoryStorage::new();
+        let inst = make_instance("Order", "open");
+        storage.store_instance(&inst).await.unwrap();
+
+        let now = Utc::now();
+        let t1 = now - chrono::Duration::hours(3);
+        let t2 = now - chrono::Duration::hours(2);
+        let t3 = now - chrono::Duration::hours(1);
+
+        let mut entry1 = make_trail_entry(&inst, "open", "processing", 1);
+        entry1.timestamp = t1;
+        let mut entry2 = make_trail_entry(&inst, "processing", "review", 2);
+        entry2.timestamp = t2;
+        let mut entry3 = make_trail_entry(&inst, "review", "closed", 3);
+        entry3.timestamp = now;
+
+        storage.append_trail_entry(&entry1).await.unwrap();
+        storage.append_trail_entry(&entry2).await.unwrap();
+        storage.append_trail_entry(&entry3).await.unwrap();
+
+        // Filter: after t1 and before t3 -- should only get entry2
+        let filter = TrailFilter {
+            after: Some(t1 + chrono::Duration::seconds(1)),
+            before: Some(t3),
+            ..Default::default()
+        };
+        let results = storage.query_trails("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].to_state, "review");
+    }
+
+    #[tokio::test]
+    async fn find_with_offset_within_range() {
+        let storage = MemoryStorage::new();
+        for _ in 0..5 {
+            storage
+                .store_instance(&make_instance("Order", "open"))
+                .await
+                .unwrap();
+        }
+
+        // Offset 3, no limit: should get 2 results
+        let filter = Filter {
+            offset: Some(3),
+            ..Default::default()
+        };
+        let results = storage.find_instances("Order", &filter).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    // --- Instance new_child test ---
+
+    #[test]
+    fn instance_new_child_sets_parent() {
+        let parent_id = InstanceId::new();
+        let child = Instance::new_child(
+            "Item".to_string(),
+            "pending".to_string(),
+            HashMap::new(),
+            parent_id.clone(),
+            "Order".to_string(),
+        );
+        assert_eq!(child.parent_id.as_ref().unwrap(), &parent_id);
+        assert_eq!(child.parent_machine.as_ref().unwrap(), "Order");
+        assert_eq!(child.state, "pending");
+        assert_eq!(child.machine, "Item");
+        assert_eq!(child.version, 1);
+        assert_eq!(child.trail_length, 0);
+    }
 }

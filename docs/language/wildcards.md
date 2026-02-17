@@ -27,16 +27,16 @@ ANY -> cancelled {
 
 This allows transition to `cancelled` from any state **except** `shipped`, `delivered`, and `returned`.
 
-## GROUP
+## Combining Features
 
-Groups name a set of states for use as transition sources:
+Wildcards can include guards, mutations, and actions:
 
 ```sql
 ANY -> triaged {
   EXCEPT FROM { open, closed }
   GUARD  : ACTOR.role IN ("admin", "supervisor")
-  MUTATE : priority = critical
-  ACTION : LOG("Escalated by {ACTOR}")
+  MUTATE : priority = "critical"
+  ACTION : LOG("Escalated")
 }
 ```
 

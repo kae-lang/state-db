@@ -20,3 +20,4 @@ tracing = { workspace = true }
 [dev-dependencies]
 smql-parser = { path = "../smql-parser" }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
+serde_json = { workspace = true }

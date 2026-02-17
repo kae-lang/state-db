@@ -38,7 +38,7 @@ DEFINE MACHINE Task (
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "DEFINE MACHINE Task ( DATA { title: TEXT -> REQUIRED, priority: INT -> DEFAULT(3) } STATES { open, in_progress, done } INITIAL STATE open TERMINAL STATES { done } TRANSITIONS { open -> in_progress {} in_progress -> done {} in_progress -> open {} } )"}'
+  -d '{"smql": "DEFINE MACHINE Task ( DATA { title: TEXT -> REQUIRED priority: INT -> DEFAULT(3) } STATES { open, in_progress, done } INITIAL STATE open TERMINAL STATES { done } TRANSITIONS { open -> in_progress {} in_progress -> done {} in_progress -> open {} } )"}'
 ```
 
 ```json
@@ -120,14 +120,14 @@ Add transitions so tasks can move to and from `blocked`:
 
 ```sql
 ALTER MACHINE Task
-  ADD TRANSITION in_progress -> blocked {}
-  ADD TRANSITION blocked -> in_progress {}
+  ADD TRANSITION in_progress -> blocked
+  ADD TRANSITION blocked -> in_progress
 ```
 
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "ALTER MACHINE Task ADD TRANSITION in_progress -> blocked {} ADD TRANSITION blocked -> in_progress {}"}'
+  -d '{"smql": "ALTER MACHINE Task ADD TRANSITION in_progress -> blocked ADD TRANSITION blocked -> in_progress"}'
 ```
 
 ```json
@@ -395,15 +395,15 @@ You can combine multiple operations in a single ALTER MACHINE command. Operation
 ```sql
 ALTER MACHINE Task
   ADD STATE review
-  ADD TRANSITION in_progress -> review {}
-  ADD TRANSITION review -> done {}
-  ADD TRANSITION review -> in_progress {}
+  ADD TRANSITION in_progress -> review
+  ADD TRANSITION review -> done
+  ADD TRANSITION review -> in_progress
 ```
 
 ```bash
 curl -s -X POST http://localhost:8080/execute \
   -H "Content-Type: application/json" \
-  -d '{"smql": "ALTER MACHINE Task ADD STATE review ADD TRANSITION in_progress -> review {} ADD TRANSITION review -> done {} ADD TRANSITION review -> in_progress {}"}'
+  -d '{"smql": "ALTER MACHINE Task ADD STATE review ADD TRANSITION in_progress -> review ADD TRANSITION review -> done ADD TRANSITION review -> in_progress"}'
 ```
 
 ```json
@@ -462,10 +462,8 @@ The sequential validation is critical here: `ADD TRANSITION in_progress -> revie
 |---|---|---|
 | ADD STATE | `ADD STATE name` | No |
 | REMOVE STATE | `REMOVE STATE name MIGRATE TO target` | Yes -- moves instances to target state |
-| ADD TRANSITION | `ADD TRANSITION from -> to { guards/actions }` | No |
+| ADD TRANSITION | `ADD TRANSITION from -> to` | No |
 | REMOVE TRANSITION | `REMOVE TRANSITION from -> to` | No |
-| MODIFY TRANSITION | `MODIFY TRANSITION from -> to { new guards/actions }` | No |
 | ADD DATA | `ADD DATA field : TYPE -> constraints` | Yes -- backfills with DEFAULT or BACKFILL |
 | ADD DATA + BACKFILL | `ADD DATA field : TYPE BACKFILL expression` | Yes -- evaluates expression for all instances |
 | REMOVE DATA | `REMOVE DATA field_name` | Yes -- removes field from all instances |
-| BACKFILL | `BACKFILL field WITH expression` | Yes -- updates field on all instances |

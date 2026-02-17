@@ -35,6 +35,8 @@ pub enum QueryResult {
     Paths(Vec<PathResult>),
     /// Funnel analysis results
     Funnel(FunnelResult),
+    /// Segmented path comparison results
+    ComparePaths(ComparePathsResult),
 }
 
 /// A row in aggregate query results.
@@ -65,6 +67,20 @@ pub struct FunnelStage {
     pub conversion_rate: f64,
 }
 
+/// Result of COMPARE PATHS — paths segmented by a data field.
+#[derive(Debug, Clone)]
+pub struct ComparePathsResult {
+    pub segment_by: String,
+    pub segments: Vec<PathSegment>,
+}
+
+/// One segment in a COMPARE PATHS result.
+#[derive(Debug, Clone)]
+pub struct PathSegment {
+    pub segment_value: Value,
+    pub paths: Vec<PathResult>,
+}
+
 impl Engine {
     /// Execute a query against the engine.
     #[tracing::instrument(skip(self, query), fields(query_type = %query_type_label(query)))]
@@ -76,13 +92,7 @@ impl Engine {
             Query::Trail(q) => self.execute_trail(q).await,
             Query::Paths(q) => self.execute_paths(q).await,
             Query::Funnel(q) => self.execute_funnel(q).await,
-            Query::ComparePaths(_) => {
-                // Compare paths is a more complex variant of paths
-                Err(SmqlError::QueryError {
-                    message: "COMPARE PATHS not yet implemented".to_string(),
-                    hint: None,
-                })
-            }
+            Query::ComparePaths(q) => self.execute_compare_paths(q).await,
         }
     }
 
@@ -231,7 +241,15 @@ impl Engine {
     /// PATHS FROM Machine — analyze state sequences.
     async fn execute_paths(&self, query: &PathsQuery) -> SmqlResult<QueryResult> {
         let filter = Filter::default();
-        let instances = self.storage.find_instances(&query.machine, &filter).await?;
+        let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
+
+        // Apply WHERE filter
+        if let Some(filter_expr) = &query.filter {
+            instances.retain(|inst| {
+                let ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                eval_guard(filter_expr, &ctx).unwrap_or(false)
+            });
+        }
 
         let mut path_counts: HashMap<Vec<String>, usize> = HashMap::new();
 
@@ -299,6 +317,82 @@ impl Engine {
         }
 
         Ok(QueryResult::Funnel(FunnelResult { stages }))
+    }
+
+    /// COMPARE PATHS Machine SEGMENT BY field — segmented path analysis.
+    async fn execute_compare_paths(&self, query: &ComparePathsQuery) -> SmqlResult<QueryResult> {
+        let filter = Filter::default();
+        let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
+
+        // Apply WHERE filter
+        if let Some(filter_expr) = &query.filter {
+            instances.retain(|inst| {
+                let ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                eval_guard(filter_expr, &ctx).unwrap_or(false)
+            });
+        }
+
+        // Group instances by segment_by field value, then count paths within each segment
+        let mut segment_map: HashMap<String, (Value, HashMap<Vec<String>, usize>)> = HashMap::new();
+
+        for inst in &instances {
+            let segment_val = inst
+                .data
+                .get(&query.segment_by)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let segment_key = format!("{}", segment_val);
+
+            let trail = self.storage.get_trail(&inst.id).await?;
+            if trail.is_empty() {
+                continue;
+            }
+
+            let path: Vec<String> = {
+                let mut p = vec![trail[0].from_state.clone()];
+                for entry in &trail {
+                    if !entry.to_state.is_empty() {
+                        p.push(entry.to_state.clone());
+                    }
+                }
+                p
+            };
+
+            let entry = segment_map
+                .entry(segment_key)
+                .or_insert_with(|| (segment_val, HashMap::new()));
+            *entry.1.entry(path).or_insert(0) += 1;
+        }
+
+        // Convert to result structs
+        let mut segments: Vec<PathSegment> = segment_map
+            .into_values()
+            .map(|(segment_value, path_counts)| {
+                let mut paths: Vec<PathResult> = path_counts
+                    .into_iter()
+                    .map(|(path, count)| PathResult { path, count })
+                    .collect();
+                paths.sort_by(|a, b| b.count.cmp(&a.count));
+                PathSegment {
+                    segment_value,
+                    paths,
+                }
+            })
+            .collect();
+
+        // Sort segments by total count descending, then by segment value for determinism
+        segments.sort_by(|a, b| {
+            let total_a: usize = a.paths.iter().map(|p| p.count).sum();
+            let total_b: usize = b.paths.iter().map(|p| p.count).sum();
+            total_b.cmp(&total_a).then_with(|| {
+                format!("{}", a.segment_value).cmp(&format!("{}", b.segment_value))
+            })
+        });
+
+        Ok(QueryResult::ComparePaths(ComparePathsResult {
+            segment_by: query.segment_by.clone(),
+            segments,
+        }))
     }
 }
 

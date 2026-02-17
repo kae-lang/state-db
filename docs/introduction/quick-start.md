@@ -30,14 +30,17 @@ smql serve --bind 127.0.0.1:4200 --storage ./data
 curl -X POST http://localhost:4200/execute \
   -H 'Content-Type: application/json' \
   -d '{
-    "smql": "DEFINE MACHINE Task ( DATA { title: TEXT -> REQUIRED, assignee: TEXT -> OPTIONAL } STATES { todo, doing, done } INITIAL STATE todo TERMINAL STATES { done } TRANSITIONS { todo -> doing {} doing -> done {} } )"
+    "smql": "DEFINE MACHINE Task ( DATA { title: TEXT -> REQUIRED assignee: TEXT -> OPTIONAL } STATES { todo, doing, done } INITIAL STATE todo TERMINAL STATES { done } TRANSITIONS { todo -> doing {} doing -> done {} } )"
   }'
 ```
 
 ```bash [REPL]
 smql repl
 > DEFINE MACHINE Task (
-    DATA { title: TEXT -> REQUIRED, assignee: TEXT -> OPTIONAL }
+    DATA {
+      title: TEXT -> REQUIRED
+      assignee: TEXT -> OPTIONAL
+    }
     STATES { todo, doing, done }
     INITIAL STATE todo
     TERMINAL STATES { done }
@@ -54,7 +57,10 @@ use smql_sdk::SmqlClient;
 let client = SmqlClient::new("http://localhost:4200")?;
 client.define_machine(r#"
   DEFINE MACHINE Task (
-    DATA { title: TEXT -> REQUIRED, assignee: TEXT -> OPTIONAL }
+    DATA {
+      title: TEXT -> REQUIRED
+      assignee: TEXT -> OPTIONAL
+    }
     STATES { todo, doing, done }
     INITIAL STATE todo
     TERMINAL STATES { done }

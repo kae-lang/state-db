@@ -226,4 +226,166 @@ mod tests {
     fn test_escape_string() {
         assert_eq!(escape_string("hello \"world\""), "hello \\\"world\\\"");
     }
+
+    #[test]
+    fn test_escape_string_with_backslash() {
+        // Backslash should be escaped before quotes
+        assert_eq!(escape_string(r"path\to\file"), r"path\\to\\file");
+        assert_eq!(
+            escape_string(r#"back\and"quote"#),
+            r#"back\\and\"quote"#
+        );
+    }
+
+    #[test]
+    fn test_format_data_fields_non_object() {
+        // Non-object values (array, string, number, etc.) should return empty string
+        assert_eq!(format_data_fields(&serde_json::json!(42)), "");
+        assert_eq!(format_data_fields(&serde_json::json!("hello")), "");
+        assert_eq!(format_data_fields(&serde_json::json!([1, 2, 3])), "");
+        assert_eq!(format_data_fields(&serde_json::json!(null)), "");
+        assert_eq!(format_data_fields(&serde_json::json!(true)), "");
+    }
+
+    #[test]
+    fn test_format_spawn_non_object_data() {
+        // When data is not an object, format_data_fields returns empty string
+        let s = format_spawn("counter", &serde_json::json!(42));
+        assert_eq!(s, "SPAWN counter {}");
+    }
+
+    #[test]
+    fn test_format_find_no_filter_no_sort() {
+        let s = format_find("ticket", None, &[], None, None);
+        assert_eq!(s, "FIND ticket");
+    }
+
+    #[test]
+    fn test_format_find_with_offset_only() {
+        let s = format_find("ticket", None, &[], None, Some(20));
+        assert_eq!(s, "FIND ticket OFFSET 20");
+    }
+
+    #[test]
+    fn test_format_find_multiple_sort_clauses() {
+        let s = format_find(
+            "ticket",
+            None,
+            &[
+                ("priority".to_string(), "DESC".to_string()),
+                ("created_at".to_string(), "ASC".to_string()),
+            ],
+            None,
+            None,
+        );
+        assert_eq!(
+            s,
+            "FIND ticket SORT BY priority DESC, created_at ASC"
+        );
+    }
+
+    #[test]
+    fn test_format_aggregate_no_measure_no_group() {
+        let s = format_aggregate("ticket", None, None);
+        assert_eq!(s, "AGGREGATE ticket");
+    }
+
+    #[test]
+    fn test_format_aggregate_measure_only() {
+        let s = format_aggregate("ticket", Some("AVG(amount)"), None);
+        assert_eq!(s, "AGGREGATE ticket MEASURE AVG(amount)");
+    }
+
+    #[test]
+    fn test_format_aggregate_group_only() {
+        let s = format_aggregate("ticket", None, Some("priority"));
+        assert_eq!(s, "AGGREGATE ticket GROUP BY priority");
+    }
+
+    #[test]
+    fn test_format_transition_with_actor() {
+        let opts = TransitionOptions {
+            with_data: vec![],
+            memo: None,
+            as_actor: Some("admin@example.com".to_string()),
+        };
+        let s = format_transition("Machine", "id1", "next", &opts);
+        assert_eq!(
+            s,
+            "TRANSITION Machine \"id1\" TO next AS \"admin@example.com\""
+        );
+    }
+
+    #[test]
+    fn test_format_transition_all_options() {
+        let opts = TransitionOptions {
+            with_data: vec![
+                ("count".to_string(), serde_json::json!(10)),
+                ("label".to_string(), serde_json::json!("test")),
+            ],
+            memo: Some("full options".to_string()),
+            as_actor: Some("user1".to_string()),
+        };
+        let s = format_transition("M", "id", "done", &opts);
+        assert!(s.contains("WITH { count: 10, label: \"test\" }"));
+        assert!(s.contains("MEMO \"full options\""));
+        assert!(s.contains("AS \"user1\""));
+    }
+
+    #[test]
+    fn test_format_try_transition() {
+        let opts = TransitionOptions::default();
+        let s = format_try_transition("Machine", "abc", "next", &opts);
+        assert_eq!(s, "TRY TRANSITION Machine \"abc\" TO next");
+    }
+
+    #[test]
+    fn test_format_try_transition_with_options() {
+        let opts = TransitionOptions {
+            with_data: vec![("x".to_string(), serde_json::json!(1))],
+            memo: Some("try it".to_string()),
+            as_actor: Some("bot".to_string()),
+        };
+        let s = format_try_transition("M", "id", "done", &opts);
+        assert!(s.starts_with("TRY TRANSITION M"));
+        assert!(s.contains("WITH { x: 1 }"));
+        assert!(s.contains("MEMO \"try it\""));
+        assert!(s.contains("AS \"bot\""));
+    }
+
+    #[test]
+    fn test_value_to_smql_nested_object() {
+        let val = serde_json::json!({"outer": {"inner": 42}});
+        let result = value_to_smql(&val);
+        assert_eq!(result, "{outer: {inner: 42}}");
+    }
+
+    #[test]
+    fn test_value_to_smql_empty_array() {
+        assert_eq!(value_to_smql(&serde_json::json!([])), "[]");
+    }
+
+    #[test]
+    fn test_value_to_smql_empty_object() {
+        assert_eq!(value_to_smql(&serde_json::json!({})), "{}");
+    }
+
+    #[test]
+    fn test_value_to_smql_string_with_quotes() {
+        assert_eq!(
+            value_to_smql(&serde_json::json!("say \"hello\"")),
+            "\"say \\\"hello\\\"\""
+        );
+    }
+
+    #[test]
+    fn test_format_data_fields_with_data() {
+        let data = serde_json::json!({"name": "Alice", "age": 30});
+        let result = format_data_fields(&data);
+        // format_data_fields wraps with spaces: " field1: v1, field2: v2 "
+        assert!(result.starts_with(' '));
+        assert!(result.ends_with(' '));
+        assert!(result.contains("name: \"Alice\""));
+        assert!(result.contains("age: 30"));
+    }
 }

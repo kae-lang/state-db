@@ -1,11 +1,17 @@
 # GET
 
-Retrieve a single instance by its ID.
+Retrieve a single instance by its machine name and ID.
 
 ## Syntax
 
-```sql
-GET "instance_id"
+```smql
+GET MachineName "instance_id"
+```
+
+The instance ID must be a quoted string (ULIDs start with digits, so unquoted form is not valid):
+
+```smql
+GET SupportTicket "01J5X7K2P3Q4R5S6T7U8V9W0XY"
 ```
 
 ## Response
@@ -22,18 +28,18 @@ GET "instance_id"
       "priority": "high",
       "assignee": { "id": "agent-1", "role": "support" }
     },
-    "created_at": "2026-02-16T10:00:00Z",
-    "updated_at": "2026-02-16T12:30:00Z",
-    "state_entered_at": "2026-02-16T11:00:00Z",
+    "created_at": "2026-02-16T10:00:00+00:00",
+    "updated_at": "2026-02-16T12:30:00+00:00",
+    "state_entered_at": "2026-02-16T11:00:00+00:00",
     "trail_length": 3,
     "version": 3
   }
 }
 ```
 
-## Error
+## Errors
 
-If the instance does not exist, returns HTTP 404:
+If the instance does not exist, returns HTTP `404 Not Found`:
 
 ```json
 {
@@ -42,9 +48,11 @@ If the instance does not exist, returns HTTP 404:
 }
 ```
 
+If the instance exists but belongs to a different machine, it also returns `404`.
+
 ## REST Alternative
 
-You can also use the REST endpoint directly:
+You can also use the REST endpoint directly (no machine name needed):
 
 ```
 GET /instances/:id

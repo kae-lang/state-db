@@ -32,7 +32,7 @@ let pending = client.find("Order")
 This generates:
 
 ```sql
-FIND Order IN STATE pending
+FIND Order WHERE STATE IS pending
 ```
 
 ### Stuck-In Filter
@@ -49,10 +49,14 @@ let stale = client.find("SupportTicket")
 This generates:
 
 ```sql
-FIND SupportTicket STUCK_IN open FOR 2d
+FIND SupportTicket WHERE STATE IS open AND elapsed() > 2d
 ```
 
-Duration strings follow SMQL syntax: `30s`, `5m`, `2h`, `1d`, `1w`.
+::: info
+`STUCK_IN` is a reserved keyword planned for a future release. The SDK currently generates an equivalent `WHERE` clause using `elapsed()`.
+:::
+
+Duration strings follow SMQL syntax: `30s`, `5m`, `2h`, `1d`.
 
 ### WHERE Clause
 
@@ -69,7 +73,7 @@ let high_value = client.find("Order")
 This generates:
 
 ```sql
-FIND Order IN STATE confirmed WHERE quantity > 10
+FIND Order WHERE STATE IS confirmed AND quantity > 10
 ```
 
 The expression string uses SMQL expression syntax. Supported operators include `==`, `!=`, `>`, `<`, `>=`, `<=`, `&&`, `||`.
@@ -111,7 +115,7 @@ let results = client.find("Order")
 This generates:
 
 ```sql
-FIND Order IN STATE shipped SORT BY updated_at DESC LIMIT 25 OFFSET 25
+FIND Order WHERE STATE IS shipped SORT BY updated_at DESC LIMIT 25 OFFSET 25
 ```
 
 ### Counting
@@ -127,10 +131,10 @@ let total = client.find("Order")
 println!("Pending orders: {}", total);
 ```
 
-This generates:
+The SDK sends a normal `FIND` query and reads the `count` field from the response:
 
 ```sql
-FIND Order IN STATE pending COUNT
+FIND Order WHERE STATE IS pending
 ```
 
 ### Full Chaining Example
@@ -196,7 +200,7 @@ println!("{}", serde_json::to_string_pretty(&breakdown)?);
 This generates:
 
 ```sql
-AGGREGATE Order MEASURE COUNT GROUP BY STATE
+AGGREGATE Order MEASURE COUNT() GROUP BY STATE
 ```
 
 ### Group by Field
@@ -214,7 +218,7 @@ let by_priority = client.aggregate("SupportTicket")
 This generates:
 
 ```sql
-AGGREGATE SupportTicket MEASURE COUNT GROUP BY priority
+AGGREGATE SupportTicket MEASURE COUNT() GROUP BY priority
 ```
 
 ### Combining Measure and Group By

@@ -115,7 +115,7 @@ TIMEOUT: 30s -> state       -- seconds
 TIMEOUT: 5m -> state        -- minutes
 TIMEOUT: 2h -> state        -- hours
 TIMEOUT: 7d -> state        -- days
-TIMEOUT: 1h 30m -> state    -- combined
+TIMEOUT: 90m -> state       -- 90 minutes (single unit)
 ```
 
 ## Step 3: Walk Through the Lifecycle
@@ -239,7 +239,7 @@ let mut sub = client.subscribe(Some("ReviewRequest")).await?;
 
 loop {
     if let Ok(event) = sub.next_event().await {
-        println!("{}: {} ({})", event.event, event.instance_id, event.machine);
+        println!("{}: {} ({})", event.event, event.instance_id.as_deref().unwrap_or("unknown"), event.machine);
     }
 }
 ```
@@ -287,7 +287,7 @@ Wait 5 seconds, then:
 The system automatically transitioned from `waiting` to `expired` after 5 seconds. The trail shows:
 
 ```bash
-> TRAIL OF QuickReview "<id>"
+> TRAIL OF "<id>"
 ```
 
 ```json

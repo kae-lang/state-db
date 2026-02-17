@@ -154,7 +154,7 @@ fn parse_aggregate_function(parser: &mut Parser) -> SmqlResult<AggregateFunction
                 "AVG" => Ok(AggregateFunction::Avg),
                 "MIN" => Ok(AggregateFunction::Min),
                 "MAX" => Ok(AggregateFunction::Max),
-                "PERCENTILE" => Ok(AggregateFunction::Percentile(0.0)), // TODO: parse actual percentile
+                "PERCENTILE" => Ok(AggregateFunction::Percentile(50.0)), // Default to median (p50)
                 _ => Err(SmqlError::ParseError {
                     message: format!("Unknown aggregate function '{}'", k),
                     span: None,

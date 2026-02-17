@@ -1,6 +1,6 @@
 use smql_ast::types::TypeDefinition;
 use smql_codegen::rust_gen::{to_pascal_case, to_snake_case};
-use smql_codegen::type_map::smql_type_to_rust;
+use smql_codegen::type_map::{smql_type_to_rust, smql_type_to_rust_with_enum};
 use smql_codegen::{CodeGenerator, CodegenError};
 
 fn support_ticket_smql() -> &'static str {
@@ -278,4 +278,378 @@ fn test_no_machines_error() {
         result,
         Err(CodegenError::Parse(_)) | Err(CodegenError::NoMachines)
     ));
+}
+
+// ============================================================
+// Coverage gap tests: generator.rs — from_files()
+// ============================================================
+
+// 11. from_files() — IO error when file does not exist
+#[test]
+fn test_from_files_missing_file() {
+    let result = CodeGenerator::from_files(&["/nonexistent/path/to/machine.smql"]);
+    assert!(result.is_err());
+    match result {
+        Err(CodegenError::Io(_)) => {} // expected
+        Err(other) => panic!("Expected Io error, got: {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
+}
+
+// 12. from_files() — parse error in a valid file with invalid SMQL content
+#[test]
+fn test_from_files_parse_error() {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join("smql_codegen_test_parse_error");
+    let _ = std::fs::create_dir_all(&dir);
+    let file_path = dir.join("bad.smql");
+    let mut f = std::fs::File::create(&file_path).unwrap();
+    write!(f, "THIS IS NOT VALID SMQL AT ALL {{{{").unwrap();
+    drop(f);
+
+    let path_str = file_path.to_str().unwrap();
+    let result = CodeGenerator::from_files(&[path_str]);
+    assert!(result.is_err());
+    match result {
+        Err(CodegenError::Parse(msg)) => {
+            // Verify error message contains the file path
+            assert!(
+                msg.contains("bad.smql"),
+                "Parse error should include file path, got: {}",
+                msg
+            );
+        }
+        Err(other) => panic!("Expected Parse error, got: {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// 13. from_files() — file is readable but contains no machine definitions
+#[test]
+fn test_from_files_no_machines() {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join("smql_codegen_test_no_machines");
+    let _ = std::fs::create_dir_all(&dir);
+    let file_path = dir.join("empty.smql");
+    let mut f = std::fs::File::create(&file_path).unwrap();
+    // A valid but empty-ish file that the parser returns 0 machines for
+    // We write an empty string (parser should return Ok([]) for empty input or error)
+    write!(f, "").unwrap();
+    drop(f);
+
+    let path_str = file_path.to_str().unwrap();
+    let result = CodeGenerator::from_files(&[path_str]);
+    assert!(result.is_err());
+    // Could be Parse or NoMachines depending on how parser handles empty input
+    assert!(
+        matches!(
+            result,
+            Err(CodegenError::Parse(_)) | Err(CodegenError::NoMachines)
+        ),
+        "Expected Parse or NoMachines error"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// 14. from_files() — happy path: valid SMQL file on disk
+#[test]
+fn test_from_files_happy_path() {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join("smql_codegen_test_happy");
+    let _ = std::fs::create_dir_all(&dir);
+    let file_path = dir.join("ticket.smql");
+    let mut f = std::fs::File::create(&file_path).unwrap();
+    write!(f, "{}", support_ticket_smql()).unwrap();
+    drop(f);
+
+    let path_str = file_path.to_str().unwrap();
+    let gen = CodeGenerator::from_files(&[path_str]).unwrap();
+    assert_eq!(gen.machines().len(), 1);
+    assert_eq!(gen.machines()[0].name, "SupportTicket");
+
+    let files = gen.generate_rust();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "support_ticket.rs");
+    assert!(files[0].content.contains("pub mod support_ticket {"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// 15. from_files() — multiple files combined
+#[test]
+fn test_from_files_multiple_files() {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join("smql_codegen_test_multi_files");
+    let _ = std::fs::create_dir_all(&dir);
+
+    let file1 = dir.join("ticket.smql");
+    let mut f1 = std::fs::File::create(&file1).unwrap();
+    write!(f1, "{}", support_ticket_smql()).unwrap();
+    drop(f1);
+
+    let file2 = dir.join("counter.smql");
+    let mut f2 = std::fs::File::create(&file2).unwrap();
+    write!(
+        f2,
+        r#"DEFINE MACHINE SimpleCounter (
+        STATES {{ idle, done }}
+        INITIAL STATE idle
+        TERMINAL STATES {{ done }}
+        TRANSITIONS {{ idle -> done {{}} }}
+    )"#
+    ).unwrap();
+    drop(f2);
+
+    let path1 = file1.to_str().unwrap();
+    let path2 = file2.to_str().unwrap();
+    let gen = CodeGenerator::from_files(&[path1, path2]).unwrap();
+    assert_eq!(gen.machines().len(), 2);
+    assert_eq!(gen.machines()[0].name, "SupportTicket");
+    assert_eq!(gen.machines()[1].name, "SimpleCounter");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ============================================================
+// Coverage gap tests: generator.rs — generate_combined_rust()
+// ============================================================
+
+// 16. generate_combined_rust() has header and multiple modules
+#[test]
+fn test_generate_combined_rust_header_and_structure() {
+    let gen = CodeGenerator::from_source(order_smql()).unwrap();
+    let combined = gen.generate_combined_rust();
+
+    // Header comment
+    assert!(combined.starts_with("// Auto-generated by smql-codegen. Do not edit.\n"));
+
+    // Each machine module should be present
+    assert!(combined.contains("pub mod order {"));
+    assert!(combined.contains("pub mod order_item {"));
+    assert!(combined.contains("pub mod payment {"));
+}
+
+// ============================================================
+// Coverage gap tests: type_map.rs — smql_type_to_rust_with_enum()
+// ============================================================
+
+// 17. smql_type_to_rust_with_enum with Enum variant
+#[test]
+fn test_type_to_rust_with_enum_variant() {
+    let ty = TypeDefinition::Enum(vec!["a".to_string(), "b".to_string()]);
+    let result = smql_type_to_rust_with_enum(&ty, "MyPriority");
+    assert_eq!(result, "MyPriority");
+}
+
+// 18. smql_type_to_rust_with_enum with non-Enum variant (falls through to smql_type_to_rust)
+#[test]
+fn test_type_to_rust_with_enum_non_enum() {
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Text, "Ignored"),
+        "String"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Int, "Ignored"),
+        "i64"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Bool, "Ignored"),
+        "bool"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Float, "Ignored"),
+        "f64"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Blob, "Ignored"),
+        "Vec<u8>"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Json, "Ignored"),
+        "serde_json::Value"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Uuid, "Ignored"),
+        "String"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Date, "Ignored"),
+        "String"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::DateTime, "Ignored"),
+        "String"
+    );
+    assert_eq!(
+        smql_type_to_rust_with_enum(&TypeDefinition::Duration, "Ignored"),
+        "String"
+    );
+}
+
+// ============================================================
+// Coverage gap tests: rust_gen.rs — edge cases
+// ============================================================
+
+// 19. to_pascal_case with consecutive separators (empty parts filtered out)
+#[test]
+fn test_pascal_case_consecutive_separators() {
+    // Double underscore: should skip the empty part
+    assert_eq!(to_pascal_case("foo__bar"), "FooBar");
+    // Leading underscore
+    assert_eq!(to_pascal_case("_foo"), "Foo");
+    // Trailing underscore
+    assert_eq!(to_pascal_case("foo_"), "Foo");
+    // Mixed separators
+    assert_eq!(to_pascal_case("foo-bar_baz"), "FooBarBaz");
+    // Spaces
+    assert_eq!(to_pascal_case("foo bar"), "FooBar");
+    // Triple separator
+    assert_eq!(to_pascal_case("a___b"), "AB");
+}
+
+// 20. to_pascal_case with empty string
+#[test]
+fn test_pascal_case_empty_string() {
+    assert_eq!(to_pascal_case(""), "");
+}
+
+// 21. to_snake_case with dashes and spaces
+#[test]
+fn test_snake_case_dashes_and_spaces() {
+    assert_eq!(to_snake_case("foo-bar"), "foo_bar");
+    assert_eq!(to_snake_case("foo bar"), "foo_bar");
+    // "my-Machine" → dash becomes _, M adds _ → "my__machine"
+    assert_eq!(to_snake_case("my-Machine"), "my__machine");
+    assert_eq!(to_snake_case("ABC"), "a_b_c");
+    assert_eq!(to_snake_case(""), "");
+}
+
+// 22. Machine with no terminal states — the "_ if false => true" branch
+#[test]
+fn test_no_terminal_states() {
+    // A machine that has no terminal states declared
+    // We construct the machine directly to bypass parser validation.
+    use smql_ast::machine::MachineDefinition;
+
+    let mut def = MachineDefinition::new("Forever".to_string(), "running".to_string());
+    def.states.push(smql_ast::machine::StateDefinition::new("running".to_string()));
+    def.states.push(smql_ast::machine::StateDefinition::new("paused".to_string()));
+    def.terminal_states = vec![]; // No terminal states
+    def.transitions.push(smql_ast::machine::TransitionDefinition::new(
+        smql_ast::machine::TransitionSource::State("running".to_string()),
+        "paused".to_string(),
+    ));
+
+    let output = smql_codegen::rust_gen::generate_machine_module(&def);
+
+    // Should contain the fallback is_terminal (no terminal states)
+    assert!(
+        output.contains("_ if false => true"),
+        "Expected fallback is_terminal for no terminal states, got:\n{}",
+        output
+    );
+    assert!(output.contains("pub mod forever {"));
+    assert!(output.contains("Running,"));
+    assert!(output.contains("Paused,"));
+}
+
+// 23. Machine with no data fields — generate_data_struct with empty data
+#[test]
+fn test_machine_no_data_fields_via_direct_construction() {
+    use smql_ast::machine::MachineDefinition;
+
+    let mut def = MachineDefinition::new("Minimal".to_string(), "start".to_string());
+    def.states.push(smql_ast::machine::StateDefinition::new("start".to_string()));
+    def.states.push(smql_ast::machine::StateDefinition::new("end".to_string()));
+    def.terminal_states = vec!["end".to_string()];
+    def.transitions.push(smql_ast::machine::TransitionDefinition::new(
+        smql_ast::machine::TransitionSource::State("start".to_string()),
+        "end".to_string(),
+    ));
+
+    let output = smql_codegen::rust_gen::generate_machine_module(&def);
+
+    // Empty data struct
+    assert!(output.contains("pub struct MinimalData {"));
+    // The struct should close immediately (no fields)
+    assert!(output.contains("pub struct MinimalData {\n    }\n"));
+    assert!(output.contains("pub struct Minimal;"));
+    assert!(output.contains("Self::End"));
+}
+
+// 24. Enum type in smql_type_to_rust returns "String" (not a generated name)
+#[test]
+fn test_type_mapping_enum_returns_string() {
+    let ty = TypeDefinition::Enum(vec!["x".to_string(), "y".to_string()]);
+    // The base smql_type_to_rust maps Enum to "String" (the caller typically
+    // uses smql_type_to_rust_with_enum for actual codegen)
+    assert_eq!(smql_type_to_rust(&ty), "String");
+}
+
+// 25. Nested list/set/map types
+#[test]
+fn test_nested_type_mapping() {
+    // List of lists
+    let nested_list = TypeDefinition::List(Box::new(TypeDefinition::List(Box::new(
+        TypeDefinition::Int,
+    ))));
+    assert_eq!(smql_type_to_rust(&nested_list), "Vec<Vec<i64>>");
+
+    // Set of bools
+    let set_of_bool = TypeDefinition::Set(Box::new(TypeDefinition::Bool));
+    assert_eq!(smql_type_to_rust(&set_of_bool), "Vec<bool>");
+
+    // Map with complex value
+    let complex_map = TypeDefinition::Map(
+        Box::new(TypeDefinition::Text),
+        Box::new(TypeDefinition::List(Box::new(TypeDefinition::Float))),
+    );
+    assert_eq!(
+        smql_type_to_rust(&complex_map),
+        "std::collections::BTreeMap<String, Vec<f64>>"
+    );
+}
+
+// 26. generate_rust() returns individual files with correct content
+#[test]
+fn test_generate_rust_individual_files() {
+    let gen = CodeGenerator::from_source(support_ticket_smql()).unwrap();
+    let files = gen.generate_rust();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "support_ticket.rs");
+    assert!(files[0].content.contains("pub mod support_ticket {"));
+    assert!(files[0].content.contains("pub struct SupportTicketData {"));
+    assert!(files[0].content.contains("pub struct SupportTicket;"));
+}
+
+// 27. CodegenError Display formatting
+#[test]
+fn test_codegen_error_display() {
+    let io_err = CodegenError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "file not found",
+    ));
+    assert!(format!("{}", io_err).contains("file not found"));
+
+    let parse_err = CodegenError::Parse("bad syntax".to_string());
+    assert_eq!(format!("{}", parse_err), "Parse error: bad syntax");
+
+    let no_machines = CodegenError::NoMachines;
+    assert_eq!(format!("{}", no_machines), "No machines found in input");
+}
+
+// 28. GeneratedFile struct fields are accessible
+#[test]
+fn test_generated_file_clone_debug() {
+    let gen = CodeGenerator::from_source(support_ticket_smql()).unwrap();
+    let files = gen.generate_rust();
+    let file = files[0].clone();
+    assert_eq!(file.path, "support_ticket.rs");
+    assert!(!file.content.is_empty());
+    // Debug impl should work
+    let debug_str = format!("{:?}", file);
+    assert!(debug_str.contains("GeneratedFile"));
 }

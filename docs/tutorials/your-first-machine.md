@@ -92,7 +92,7 @@ curl -X POST http://localhost:4200/execute \
     "created_at": "2026-02-16T10:00:00Z",
     "updated_at": "2026-02-16T10:00:00Z",
     "state_entered_at": "2026-02-16T10:00:00Z",
-    "trail_length": 1,
+    "trail_length": 0,
     "version": 1
   }
 }
@@ -102,7 +102,7 @@ Key observations:
 
 - The instance got a unique **ULID** identifier (26 characters, time-sortable)
 - It starts in the **red** state, as declared by `INITIAL STATE`
-- `trail_length: 1` means one event has been recorded (the spawn)
+- `trail_length: 0` — the spawn event is recorded in the trail at sequence 0, but `trail_length` counts transitions only
 - `version: 1` tracks optimistic concurrency
 
 ::: info
@@ -136,14 +136,14 @@ curl -X POST http://localhost:4200/execute \
     "instance": {
       "id": "01J5X7K2P3Q4R5S6T7U8V9W0XY",
       "state": "green",
-      "trail_length": 2,
+      "trail_length": 1,
       "version": 2
     }
   }
 }
 ```
 
-The instance moved from `red` to `green`. The trail now has 2 entries and the version incremented.
+The instance moved from `red` to `green`. The trail now has 2 entries (spawn + 1 transition) and the version incremented.
 
 ### What Happens When You Try an Invalid Transition?
 
@@ -156,7 +156,7 @@ Try moving directly from `green` to `red` (skipping `yellow`):
 ```json
 {
   "success": false,
-  "error": "No transition defined from 'green' to 'red'"
+  "error": "Transition denied: Transition green -> red denied for instance ...\n  Hint: No transition defined from 'green' to 'red' in machine 'TrafficLight'"
 }
 ```
 
@@ -171,7 +171,7 @@ Continue through the remaining states:
 > TRANSITION TrafficLight "01J5X7K2P3Q4R5S6T7U8V9W0XY" TO red
 ```
 
-The traffic light is back to `red` with `trail_length: 4`.
+The traffic light is back to `red` with `trail_length: 3` (three transitions after spawn).
 
 ## Step 5: Query the Instance
 
@@ -199,7 +199,7 @@ curl -X POST http://localhost:4200/execute \
     "machine": "TrafficLight",
     "state": "red",
     "data": {},
-    "trail_length": 4,
+    "trail_length": 3,
     "version": 4
   }
 }
@@ -210,7 +210,7 @@ curl -X POST http://localhost:4200/execute \
 Every transition is recorded in an immutable audit trail:
 
 ```bash
-> TRAIL OF TrafficLight "01J5X7K2P3Q4R5S6T7U8V9W0XY"
+> TRAIL OF "01J5X7K2P3Q4R5S6T7U8V9W0XY"
 ```
 
 ```json
@@ -280,7 +280,7 @@ Once in `done` (a terminal state), no further transitions are possible:
 ```json
 {
   "success": false,
-  "error": "Instance is in terminal state 'done'"
+  "error": "Transition denied: Transition done -> pending denied for instance ...\n  Hint: No transition defined from 'done' to 'pending' in machine 'OneShotTask'"
 }
 ```
 

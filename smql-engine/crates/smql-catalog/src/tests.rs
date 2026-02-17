@@ -305,4 +305,95 @@ mod validation_tests {
         let result = catalog.register(m);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn catalog_default() {
+        let catalog = MachineCatalog::default();
+        assert!(catalog.list().is_empty());
+    }
+
+    #[test]
+    fn register_unchecked() {
+        let catalog = MachineCatalog::new();
+        let m = base_machine();
+        catalog.register_unchecked(m);
+        assert!(catalog.contains("Test"));
+        let def = catalog.get("Test").unwrap();
+        assert_eq!(def.initial_state, "open");
+    }
+
+    #[test]
+    fn update_nonexistent_machine() {
+        let catalog = MachineCatalog::new();
+        let m = base_machine();
+        // update on a machine that doesn't exist: alter passes validation
+        // but the machine doesn't exist in catalog
+        let result = catalog.update(m);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn version_nonexistent_machine() {
+        let catalog = MachineCatalog::new();
+        let result = catalog.version("DoesNotExist");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn group_transition_source_validation() {
+        let catalog = MachineCatalog::new();
+        let mut m = base_machine();
+        m.transitions.push(smql_ast::machine::TransitionDefinition::new(
+            smql_ast::machine::TransitionSource::Group("open_group".into()),
+            "closed".into(),
+        ));
+        // Group sources are resolved at runtime — validation should pass
+        let result = catalog.register(m);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ref_to_self_machine_no_warning() {
+        let catalog = MachineCatalog::new();
+        let mut m = base_machine();
+        m.data.push(DataFieldDefinition {
+            name: "parent".into(),
+            field_type: TypeDefinition::Ref("Test".into()), // Same machine name
+            constraints: vec![],
+        });
+        let warnings = catalog.register(m).unwrap();
+        // Self-reference should NOT produce a warning
+        assert!(!warnings.iter().any(|w| w.message.contains("Test")));
+    }
+
+    #[test]
+    fn child_referencing_self_no_warning() {
+        let catalog = MachineCatalog::new();
+        let mut m = base_machine();
+        m.children.push(smql_ast::machine::ChildDefinition {
+            name: "sub_tests".into(),
+            machine: "Test".into(), // Self-reference
+            cardinality: smql_ast::machine::ChildCardinality::List {
+                min: None,
+                max: None,
+            },
+        });
+        let warnings = catalog.register(m).unwrap();
+        assert!(!warnings.iter().any(|w| w.message.contains("Test")));
+    }
+
+    #[test]
+    fn deserialize_invalid_json() {
+        let result = MachineCatalog::deserialize("not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validation_warning_debug() {
+        let w = crate::ValidationWarning {
+            message: "test warning".into(),
+        };
+        let debug = format!("{:?}", w);
+        assert!(debug.contains("test warning"));
+    }
 }

@@ -49,11 +49,11 @@ A **transition** moves an instance from one state to another. Transitions can in
 | Component | Purpose | Example |
 |-----------|---------|---------|
 | **Guard** | Precondition that must be true | `GUARD : assignee IS SET` |
-| **Mutate** | Data modification during transition | `MUTATE : priority = critical` |
+| **Mutate** | Data modification during transition | `MUTATE : priority = "critical"` |
 | **Action** | Side effect after transition | `ACTION : NOTIFY(assignee, "assigned")` |
 | **Timeout** | Automatic transition after duration | `TIMEOUT : 7d -> closed` |
 | **Memo** | Human-readable note (per execution) | `MEMO "Resolved by customer"` |
-| **Actor** | Identity performing the transition | `AS { id: "u1", role: "admin" }` |
+| **Actor** | Identity performing the transition | `AS "u1"` |
 
 ```sql
 in_progress -> resolved {
@@ -93,11 +93,11 @@ Multiple guards on a transition are combined with AND — all must pass.
 
 ## Actor
 
-An **actor** is the identity performing a transition. Actors are maps with `id` and `role` fields, specified with the `AS` clause:
+An **actor** is the identity performing a transition. In SMQL syntax, actors are specified as a string identifier with the `AS` clause. In the HTTP API, actors can be full JSON objects with `id` and `role` fields:
 
 ```sql
 TRANSITION SupportTicket "01J5..." TO resolved
-  AS { id: "user-42", role: "admin" }
+  AS "user-42"
 ```
 
 Guards reference the actor with the `ACTOR` keyword: `ACTOR.role == "admin"`.

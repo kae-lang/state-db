@@ -11,6 +11,7 @@ All endpoints are served from a single axum router. The default base URL is `htt
 | `GET` | `/machines` | List all registered machines | `application/json` |
 | `GET` | `/machines/:name` | Get machine definition info | `application/json` |
 | `GET` | `/instances/:id` | Get an instance by ID | `application/json` |
+| `DELETE` | `/instances/:id` | Delete an instance | `application/json` |
 | `GET` | `/metrics` | Prometheus metrics | `text/plain` |
 | `GET` | `/subscribe` | WebSocket upgrade | WebSocket |
 
@@ -37,7 +38,7 @@ POST /execute
 Content-Type: application/json
 ```
 
-The primary endpoint. Accepts any single SMQL statement -- commands (`DEFINE`, `SPAWN`, `TRANSITION`, `TRY TRANSITION`, `ALTER MACHINE`) and queries (`GET`, `FIND`, `TRAIL`, `AGGREGATE`, `PATHS`, `FUNNEL`).
+The primary endpoint. Accepts any single SMQL statement -- commands (`DEFINE`, `SPAWN`, `TRANSITION`, `TRY TRANSITION`, `TRANSITION ALL`, `ALTER MACHINE`) and queries (`GET`, `FIND`, `TRAIL`, `AGGREGATE`, `PATHS`, `FUNNEL`, `COMPARE PATHS`).
 
 **Request body:**
 
@@ -70,7 +71,6 @@ Fields `result`, `error`, and `warnings` are omitted when `null`.
 | `404` | Not Found | Machine or instance does not exist |
 | `409` | Conflict | Transition denied (guard failure), version conflict |
 | `500` | Internal Server Error | Unexpected engine error |
-| `501` | Not Implemented | `BATCH TRANSITION` (not yet supported) |
 
 See [Request & Response Formats](./request-response) for detailed examples of each command and query type.
 
@@ -145,6 +145,42 @@ Returns the full state of an instance. The `:id` parameter must be a valid ULID 
   "state_entered_at": "2026-02-16T10:05:00+00:00",
   "trail_length": 2,
   "version": 2
+}
+```
+
+**Response** `400 Bad Request` -- invalid ID format:
+
+```json
+{
+  "error": "Invalid instance ID"
+}
+```
+
+**Response** `404 Not Found`:
+
+```json
+{
+  "error": "Instance '01HXYZ1234567890ABCDEFGHIJ' not found"
+}
+```
+
+## Delete Instance
+
+```
+DELETE /instances/:id
+```
+
+Permanently deletes an instance and its associated data (trail entries, timers).
+
+**Response** `200 OK`
+
+```json
+{
+  "success": true,
+  "result": {
+    "deleted": true,
+    "id": "01HXYZ1234567890ABCDEFGHIJ"
+  }
 }
 ```
 

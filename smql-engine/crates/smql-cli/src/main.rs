@@ -253,6 +253,58 @@ fn resolve_ref(id: &str, spawned_ids: &[String]) -> String {
     id.to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_ref_dollar_1() {
+        let spawned = vec!["ABC123".to_string(), "DEF456".to_string()];
+        assert_eq!(resolve_ref("$1", &spawned), "ABC123");
+        assert_eq!(resolve_ref("$2", &spawned), "DEF456");
+    }
+
+    #[test]
+    fn resolve_ref_no_dollar() {
+        let spawned = vec!["ABC".to_string()];
+        assert_eq!(resolve_ref("plain_id", &spawned), "plain_id");
+    }
+
+    #[test]
+    fn resolve_ref_out_of_range() {
+        let spawned = vec!["ABC".to_string()];
+        // $5 is out of range — should return "$5" as-is (with warning printed)
+        assert_eq!(resolve_ref("$5", &spawned), "$5");
+    }
+
+    #[test]
+    fn resolve_ref_zero_index() {
+        let spawned = vec!["ABC".to_string()];
+        // $0 is not valid (1-indexed) — n >= 1 check fails
+        assert_eq!(resolve_ref("$0", &spawned), "$0");
+    }
+
+    #[test]
+    fn resolve_ref_non_numeric() {
+        let spawned = vec!["ABC".to_string()];
+        // $abc is not parseable as usize
+        assert_eq!(resolve_ref("$abc", &spawned), "$abc");
+    }
+
+    #[test]
+    fn resolve_ref_empty_spawned() {
+        let spawned: Vec<String> = vec![];
+        assert_eq!(resolve_ref("$1", &spawned), "$1");
+    }
+
+    #[test]
+    fn create_storage_memory() {
+        let storage = create_storage("memory");
+        // Just verify it returns successfully
+        assert!(std::sync::Arc::strong_count(&storage) >= 1);
+    }
+}
+
 async fn run_statements(input: &str, storage: Arc<dyn Storage>) {
     use smql_ast::command::{Command, Statement};
 

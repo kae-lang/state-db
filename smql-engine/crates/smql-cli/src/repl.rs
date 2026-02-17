@@ -211,9 +211,18 @@ async fn execute_command(cmd: Command, engine: &Engine) {
             Err(e) => eprintln!("Error: {}", e),
         },
 
-        Command::BatchTransition(_) => {
-            eprintln!("BATCH TRANSITION not yet implemented");
-        }
+        Command::BatchTransition(batch_cmd) => match engine.batch_transition(&batch_cmd).await {
+            Ok(result) => {
+                println!(
+                    "Batch transition: {} matched, {} transitioned, {} failed.",
+                    result.matched, result.transitioned, result.failures.len()
+                );
+                for f in &result.failures {
+                    println!("  FAILED {}: {}", f.instance_id, f.error);
+                }
+            }
+            Err(e) => eprintln!("Error: {}", e),
+        },
 
         Command::AlterMachine(alter_cmd) => match engine.execute_alter_machine(&alter_cmd).await {
             Ok(result) => {
@@ -326,6 +335,19 @@ fn print_query_result(result: QueryResult) {
                 );
             }
         }
+
+        QueryResult::ComparePaths(compare) => {
+            println!(
+                "Path comparison (segmented by '{}'):",
+                compare.segment_by
+            );
+            for seg in &compare.segments {
+                println!("  [{}]", seg.segment_value);
+                for p in &seg.paths {
+                    println!("    {} -> count: {}", p.path.join(" -> "), p.count);
+                }
+            }
+        }
     }
 }
 
@@ -398,5 +420,197 @@ mod tests {
         // More closes than opens — the counts happen to match if same number,
         // but here closes > opens so it is unbalanced
         assert!(!is_complete_statement("}}"));
+    }
+
+    #[test]
+    fn handle_dot_command_help() {
+        // Just verify it doesn't panic (output goes to stdout)
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        handle_dot_command(".help", &engine);
+        handle_dot_command(".h", &engine);
+    }
+
+    #[test]
+    fn handle_dot_command_machines_empty() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        handle_dot_command(".machines", &engine);
+        handle_dot_command(".m", &engine);
+    }
+
+    #[test]
+    fn handle_dot_command_machines_with_entries() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let mut m = smql_ast::machine::MachineDefinition::new("Test".into(), "init".into());
+        m.states = vec![
+            smql_ast::machine::StateDefinition::new("init".into()),
+            smql_ast::machine::StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.transitions = vec![smql_ast::machine::TransitionDefinition::new(
+            smql_ast::machine::TransitionSource::State("init".into()),
+            "done".into(),
+        )];
+        catalog.register(m).unwrap();
+        let engine = Engine::new(catalog, storage);
+        handle_dot_command(".machines", &engine);
+    }
+
+    #[test]
+    fn handle_dot_command_unknown() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        handle_dot_command(".unknown_cmd", &engine);
+    }
+
+    #[tokio::test]
+    async fn execute_input_parse_error() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        // Invalid SMQL should print error, not panic
+        execute_input("COMPLETELY INVALID SMQL @@@", &engine).await;
+    }
+
+    #[tokio::test]
+    async fn execute_input_define_machine() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        let input = r#"DEFINE MACHINE TestM (
+            STATES { a, b }
+            INITIAL STATE a
+            TERMINAL STATES { b }
+            TRANSITIONS { a -> b {} }
+        )"#;
+        execute_input(input, &engine).await;
+        assert!(engine.catalog.contains("TestM"));
+    }
+
+    #[tokio::test]
+    async fn execute_input_spawn_and_transition() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        engine.wire_callback();
+
+        let define = r#"DEFINE MACHINE Ticket (
+            DATA { title : TEXT }
+            STATES { open, closed }
+            INITIAL STATE open
+            TERMINAL STATES { closed }
+            TRANSITIONS { open -> closed {} }
+        )"#;
+        execute_input(define, &engine).await;
+
+        let spawn = r#"SPAWN Ticket { title: "bug" }"#;
+        execute_input(spawn, &engine).await;
+    }
+
+    #[tokio::test]
+    async fn execute_input_query() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        engine.wire_callback();
+
+        let define = r#"DEFINE MACHINE Counter (
+            STATES { idle, running, done }
+            INITIAL STATE idle
+            TERMINAL STATES { done }
+            TRANSITIONS { idle -> running {}, running -> done {} }
+        )"#;
+        execute_input(define, &engine).await;
+        execute_input("SPAWN Counter {}", &engine).await;
+        execute_input("FIND Counter", &engine).await;
+        execute_input("AGGREGATE Counter MEASURE COUNT()", &engine).await;
+    }
+
+    #[tokio::test]
+    async fn execute_command_public_define() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+
+        let stmts = smql_parser::parse(r#"DEFINE MACHINE Z (
+            STATES { a }
+            INITIAL STATE a
+            TERMINAL STATES { a }
+            TRANSITIONS {}
+        )"#).unwrap();
+        if let smql_ast::command::Statement::Command(cmd) = &stmts[0] {
+            execute_command_public(cmd.clone(), &engine).await;
+        }
+        assert!(engine.catalog.contains("Z"));
+    }
+
+    #[tokio::test]
+    async fn execute_query_public_get_not_found() {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+
+        let mut m = smql_ast::machine::MachineDefinition::new("Q".into(), "a".into());
+        m.states = vec![smql_ast::machine::StateDefinition::new("a".into())];
+        m.terminal_states = vec!["a".into()];
+        engine.catalog.register_unchecked(m);
+
+        let query = smql_ast::query::Query::Get(smql_ast::query::GetQuery {
+            machine: "Q".into(),
+            instance_id: "nonexistent".into(),
+        });
+        // Should print error, not panic
+        execute_query_public(query, &engine).await;
+    }
+
+    #[tokio::test]
+    async fn print_query_result_via_engine() {
+        // Test all QueryResult variants by running actual queries through the engine
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+        engine.wire_callback();
+
+        let define = r#"DEFINE MACHINE PrintTest (
+            DATA { tag : TEXT }
+            STATES { open, in_progress, closed }
+            INITIAL STATE open
+            TERMINAL STATES { closed }
+            TRANSITIONS {
+                open -> in_progress {}
+                in_progress -> closed {}
+            }
+        )"#;
+        execute_input(define, &engine).await;
+
+        // SPAWN to create instance
+        execute_input(r#"SPAWN PrintTest { tag: "alpha" }"#, &engine).await;
+        execute_input(r#"SPAWN PrintTest { tag: "beta" }"#, &engine).await;
+
+        // GET — prints Instance result
+        let insts = engine.storage.find_instances("PrintTest", &smql_storage::Filter::default()).await.unwrap();
+        let id = insts[0].id.to_string();
+        execute_input(&format!("GET PrintTest \"{}\"", id), &engine).await;
+
+        // FIND — prints Instances result
+        execute_input("FIND PrintTest", &engine).await;
+
+        // TRAIL — prints Trail result (with actor and memo if present)
+        execute_input(&format!("TRAIL OF \"{}\"", id), &engine).await;
+
+        // AGGREGATE — prints Aggregate result (with/without group key)
+        execute_input("AGGREGATE PrintTest MEASURE COUNT()", &engine).await;
+        execute_input("AGGREGATE PrintTest MEASURE COUNT() GROUP BY STATE", &engine).await;
+
+        // PATHS — prints Paths result
+        execute_input("PATHS PrintTest", &engine).await;
+
+        // FUNNEL — prints Funnel result
+        execute_input("FUNNEL PrintTest THROUGH open, in_progress, closed", &engine).await;
     }
 }

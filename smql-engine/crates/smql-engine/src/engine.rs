@@ -1,5 +1,5 @@
 use chrono::Utc;
-use smql_ast::command::{SpawnCommand, TransitionCommand};
+use smql_ast::command::{BatchTransitionCommand, SpawnCommand, TransitionCommand};
 use smql_ast::error::{GuardFailure, TransitionDeniedError};
 use smql_ast::machine::{Action, HookTrigger, MachineDefinition, TransitionSource};
 use smql_ast::types::{Constraint, DefaultValue, TypeDefinition};
@@ -7,7 +7,7 @@ use smql_ast::value::Value;
 use smql_ast::{SmqlError, SmqlResult};
 use smql_catalog::MachineCatalog;
 use smql_hooks::{EngineCallback, EventBus, HookContext, HookError, HookExecutor, ResolvedAction};
-use smql_storage::instance::{Instance, Mutation, TrailEntry};
+use smql_storage::instance::{Filter, Instance, Mutation, TrailEntry};
 use smql_storage::traits::Storage;
 use smql_timer::TimerManager;
 use std::collections::HashMap;
@@ -35,6 +35,23 @@ pub struct TransitionResult {
     pub instance: Instance,
     pub from_state: String,
     pub to_state: String,
+}
+
+/// Result of a batch transition operation.
+#[derive(Debug, Clone)]
+pub struct BatchTransitionResult {
+    pub matched: usize,
+    pub transitioned: usize,
+    pub failures: Vec<BatchTransitionFailure>,
+    /// from_state counts for metric updates (state -> count).
+    pub from_states: HashMap<String, usize>,
+}
+
+/// A single failure in a batch transition.
+#[derive(Debug, Clone)]
+pub struct BatchTransitionFailure {
+    pub instance_id: String,
+    pub error: String,
 }
 
 impl Engine {
@@ -687,6 +704,72 @@ impl Engine {
             Err(SmqlError::TransitionDenied(_)) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Execute a batch transition — transition all matching instances.
+    ///
+    /// Best-effort: transitions what it can and reports failures.
+    #[tracing::instrument(skip(self, cmd), fields(machine = %cmd.machine, to_state = %cmd.to_state))]
+    pub async fn batch_transition(
+        &self,
+        cmd: &BatchTransitionCommand,
+    ) -> SmqlResult<BatchTransitionResult> {
+        // Validate machine exists
+        let _machine_def = self.catalog.get(&cmd.machine)?;
+
+        // Find all instances for this machine
+        let filter = Filter::default();
+        let instances = self.storage.find_instances(&cmd.machine, &filter).await?;
+
+        // Apply WHERE filter
+        let matching: Vec<&Instance> = instances
+            .iter()
+            .filter(|inst| {
+                let ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                eval_guard(&cmd.filter, &ctx).unwrap_or(false)
+            })
+            .collect();
+
+        let matched = matching.len();
+        let mut transitioned = 0;
+        let mut failures = Vec::new();
+        let mut from_states: HashMap<String, usize> = HashMap::new();
+
+        for inst in matching {
+            let from_state = inst.state.clone();
+            let t_cmd = TransitionCommand {
+                machine: cmd.machine.clone(),
+                instance_id: inst.id.as_str(),
+                to_state: cmd.to_state.clone(),
+                with_data: cmd.with_data.clone(),
+                memo: cmd.memo.clone(),
+                as_actor: cmd.as_actor.clone(),
+                through: Vec::new(),
+                or_stay: false,
+                cascade: false,
+            };
+
+            match self.transition(&t_cmd).await {
+                Ok(_) => {
+                    transitioned += 1;
+                    *from_states.entry(from_state).or_insert(0) += 1;
+                }
+                Err(e) => {
+                    failures.push(BatchTransitionFailure {
+                        instance_id: inst.id.as_str(),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        tracing::info!(matched, transitioned, failed = failures.len(), "batch transition complete");
+        Ok(BatchTransitionResult {
+            matched,
+            transitioned,
+            failures,
+            from_states,
+        })
     }
 
     /// Execute a multi-hop transition through intermediate states.
