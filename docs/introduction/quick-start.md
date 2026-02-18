@@ -2,14 +2,50 @@
 
 Get SMQL running and manage your first state machine in 5 minutes.
 
-## Build from Source
+## Install
+
+### curl (recommended)
 
 ```bash
-git clone <repo-url> && cd smql-engine
-cargo build --release
+curl -fsSL https://raw.githubusercontent.com/kae-lang/state-db/main/install.sh | sh
+```
+
+This detects your OS and architecture, downloads the latest release, verifies the checksum, and installs to `/usr/local/bin`.
+
+**Custom install directory:**
+
+```bash
+SMQL_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/kae-lang/state-db/main/install.sh | sh
+```
+
+**Pin a specific version:**
+
+```bash
+SMQL_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/kae-lang/state-db/main/install.sh | sh
+```
+
+### wget
+
+```bash
+wget -qO- https://raw.githubusercontent.com/kae-lang/state-db/main/install.sh | sh
+```
+
+### Build from Source
+
+If you prefer to build from source (requires Rust 1.89+ and a C++ compiler):
+
+```bash
+git clone https://github.com/kae-lang/state-db.git && cd state-db/smql-engine
+cargo build --release --bin smql --features "rocksdb,auth"
 ```
 
 The binary is at `target/release/smql`.
+
+### Verify
+
+```bash
+smql --help
+```
 
 ## Start the Server
 
