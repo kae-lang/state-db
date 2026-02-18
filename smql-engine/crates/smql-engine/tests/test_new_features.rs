@@ -67,6 +67,7 @@ async fn spawn_task(engine: &Engine, category: &str, priority: &str) -> String {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     engine.spawn(&cmd).await.expect("spawn task").instance.id.as_str()
 }
@@ -519,6 +520,7 @@ DEFINE MACHINE GuardedTask (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let cmd2 = smql_ast::command::SpawnCommand {
         machine: "GuardedTask".to_string(),
@@ -528,6 +530,7 @@ DEFINE MACHINE GuardedTask (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     engine.spawn(&cmd1).await.unwrap();
     engine.spawn(&cmd2).await.unwrap();
@@ -953,6 +956,7 @@ DEFINE MACHINE Approval (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let spawn_result = engine.spawn(&cmd).await.expect("spawn");
     let id = spawn_result.instance.id.as_str();
@@ -1017,6 +1021,7 @@ DEFINE MACHINE Approval2 (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let spawn_result = engine.spawn(&cmd).await.expect("spawn");
     let id = spawn_result.instance.id.as_str();
@@ -1134,6 +1139,7 @@ DEFINE MACHINE SetDefaults (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("tags"), Some(&Value::Set(Vec::new())));
@@ -1174,6 +1180,7 @@ DEFINE MACHINE ListDefaults (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("items"), Some(&Value::List(Vec::new())));
@@ -1214,6 +1221,7 @@ DEFINE MACHINE NullDefaults (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("description"), Some(&Value::Null));
@@ -1256,6 +1264,7 @@ DEFINE MACHINE NumericDefaults (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("count"), Some(&Value::Int(42)));
@@ -1299,6 +1308,7 @@ DEFINE MACHINE StringDefaults (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(
@@ -1344,6 +1354,7 @@ DEFINE MACHINE MapDefaults (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     // EmptyMap or EmptySet — both parse as DEFAULT({}).

@@ -67,6 +67,7 @@ fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }
 }
 
@@ -87,6 +88,7 @@ fn spawn_child_cmd(
         batch_data: Vec::new(),
         parent_id: Some(parent_id.to_string()),
         parent_machine: Some(parent_machine.to_string()),
+        as_actor: None,
     }
 }
 

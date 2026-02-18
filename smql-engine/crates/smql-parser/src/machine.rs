@@ -3,8 +3,241 @@ use crate::expr;
 use crate::lexer::TokenKind;
 use crate::Parser;
 use smql_ast::machine::*;
+use smql_ast::rule::{RuleDefinition, RuleTrigger};
+use smql_ast::saga::{CompensationStep, SagaDefinition, SagaStep, SagaTrigger};
+use smql_ast::subscription::{SubscriptionDefinition, SubscriptionEvent};
 use smql_ast::types::*;
 use smql_ast::{SmqlError, SmqlResult};
+
+/// Parse DEFINE POLICY Name { GUARD : expr ... }.
+pub fn parse_define_policy(parser: &mut Parser) -> SmqlResult<PolicyDefinition> {
+    parser.expect_keyword("DEFINE")?;
+    parser.expect_keyword("POLICY")?;
+    let name = parser.expect_ident()?;
+    parser.expect_punct("{")?;
+    let mut guards = Vec::new();
+    while !parser.check_punct("}") {
+        if parser.try_keyword("GUARD") {
+            parser.expect_punct(":")?;
+            let guard = expr::parse_expression(parser)?;
+            guards.push(guard);
+        } else {
+            parser.advance()?;
+        }
+    }
+    parser.expect_punct("}")?;
+    Ok(PolicyDefinition { name, guards })
+}
+
+/// Parse DEFINE RULE Name BEFORE|AFTER TRANSITION ON Machine { INVARIANT: expr [MESSAGE: "..."] }.
+pub fn parse_define_rule(parser: &mut Parser) -> SmqlResult<RuleDefinition> {
+    parser.expect_keyword("DEFINE")?;
+    parser.expect_keyword("RULE")?;
+    let name = parser.expect_ident()?;
+
+    let trigger = if parser.try_keyword("BEFORE") {
+        if parser.try_keyword("ANY") {
+            parser.expect_keyword("TRANSITION")?;
+            RuleTrigger::BeforeAnyTransition
+        } else if parser.try_keyword("SPAWN") {
+            parser.expect_keyword("ON")?;
+            let machine = parser.expect_ident()?;
+            RuleTrigger::BeforeSpawn { machine }
+        } else {
+            parser.expect_keyword("TRANSITION")?;
+            parser.expect_keyword("ON")?;
+            let machine = parser.expect_ident()?;
+            RuleTrigger::BeforeTransition { machine }
+        }
+    } else if parser.try_keyword("AFTER") {
+        parser.expect_keyword("TRANSITION")?;
+        parser.expect_keyword("ON")?;
+        let machine = parser.expect_ident()?;
+        RuleTrigger::AfterTransition { machine }
+    } else {
+        return Err(SmqlError::parse("Expected BEFORE or AFTER in DEFINE RULE"));
+    };
+
+    parser.expect_punct("{")?;
+    let mut invariant = None;
+    let mut message = None;
+
+    while !parser.check_punct("}") {
+        if parser.try_keyword("INVARIANT") {
+            parser.expect_punct(":")?;
+            invariant = Some(expr::parse_expression(parser)?);
+        } else if parser.try_keyword("MESSAGE") {
+            parser.expect_punct(":")?;
+            message = Some(common::parse_string_literal(parser)?);
+        } else {
+            parser.advance()?;
+        }
+    }
+    parser.expect_punct("}")?;
+
+    let invariant = invariant.ok_or_else(|| SmqlError::parse("DEFINE RULE requires INVARIANT"))?;
+    Ok(RuleDefinition { name, trigger, invariant, message })
+}
+
+/// Parse DEFINE SUBSCRIPTION Name ON ENTER|EXIT|SPAWN|TRANSITION ... { ACTION: ... }.
+pub fn parse_define_subscription(parser: &mut Parser) -> SmqlResult<SubscriptionDefinition> {
+    parser.expect_keyword("DEFINE")?;
+    parser.expect_keyword("SUBSCRIPTION")?;
+    let name = parser.expect_ident()?;
+
+    let event = if parser.try_keyword("ON") {
+        if parser.try_keyword("ENTER") {
+            let state = parser.expect_ident()?;
+            parser.expect_keyword("ON")?;
+            let machine = parser.expect_ident()?;
+            SubscriptionEvent::OnEnter { machine, state }
+        } else if parser.try_keyword("EXIT") {
+            let state = parser.expect_ident()?;
+            parser.expect_keyword("ON")?;
+            let machine = parser.expect_ident()?;
+            SubscriptionEvent::OnExit { machine, state }
+        } else if parser.try_keyword("SPAWN") {
+            let machine = parser.expect_ident()?;
+            SubscriptionEvent::OnSpawn { machine }
+        } else if parser.try_keyword("TRANSITION") {
+            let machine = parser.expect_ident()?;
+            let from_state = if parser.try_keyword("FROM") {
+                let s = parser.expect_ident()?;
+                if s == "*" { None } else { Some(s) }
+            } else {
+                None
+            };
+            let to_state = if parser.try_keyword("TO") {
+                let s = parser.expect_ident()?;
+                if s == "*" { None } else { Some(s) }
+            } else {
+                None
+            };
+            SubscriptionEvent::OnTransition { machine, from_state, to_state }
+        } else {
+            return Err(SmqlError::parse(
+                "Expected ENTER, EXIT, SPAWN, or TRANSITION after ON in DEFINE SUBSCRIPTION",
+            ));
+        }
+    } else {
+        return Err(SmqlError::parse("Expected ON in DEFINE SUBSCRIPTION"));
+    };
+
+    parser.expect_punct("{")?;
+    let mut actions = Vec::new();
+    while !parser.check_punct("}") {
+        let kw = parser.peek_kind();
+        if matches!(kw, Some(TokenKind::Keyword(k)) if k == "ACTION") {
+            parser.advance()?;
+            if parser.try_keyword("WHEN") {
+                let condition = expr::parse_expression(parser)?;
+                parser.expect_punct(":")?;
+                let inner = parse_action(parser)?;
+                actions.push(Action::Conditional {
+                    condition,
+                    action: Box::new(inner),
+                });
+                continue;
+            }
+            parser.expect_punct(":")?;
+        }
+        let action = parse_action(parser)?;
+        actions.push(action);
+    }
+    parser.expect_punct("}")?;
+
+    Ok(SubscriptionDefinition { name, event, actions })
+}
+
+/// Parse DEFINE SAGA Name TRIGGER ... { STEP ... }.
+pub fn parse_define_saga(parser: &mut Parser) -> SmqlResult<SagaDefinition> {
+    parser.expect_keyword("DEFINE")?;
+    parser.expect_keyword("SAGA")?;
+    let name = parser.expect_ident()?;
+
+    // Parse TRIGGER clause
+    let trigger = if parser.try_keyword("TRIGGER") {
+        if parser.try_keyword("ON") {
+            if parser.try_keyword("ENTER") {
+                let state = parser.expect_ident()?;
+                parser.expect_keyword("ON")?;
+                let machine = parser.expect_ident()?;
+                SagaTrigger::OnEnter { machine, state }
+            } else if parser.try_keyword("SPAWN") {
+                let machine = parser.expect_ident()?;
+                SagaTrigger::OnSpawn { machine }
+            } else {
+                SagaTrigger::Manual
+            }
+        } else if parser.try_keyword("MANUAL") {
+            SagaTrigger::Manual
+        } else {
+            SagaTrigger::Manual
+        }
+    } else {
+        SagaTrigger::Manual
+    };
+
+    parser.expect_punct("{")?;
+    let mut steps = Vec::new();
+    let mut on_complete = Vec::new();
+    let mut on_failure = Vec::new();
+
+    while !parser.check_punct("}") {
+        if parser.try_keyword("STEP") {
+            let step_name = parser.expect_ident()?;
+            parser.expect_keyword("TRANSITION")?;
+            let machine = parser.expect_ident()?;
+            let instance_expr = expr::parse_expression(parser)?;
+            parser.expect_keyword("TO")?;
+            let to_state = parser.expect_ident()?;
+
+            let when = if parser.try_keyword("WHEN") {
+                Some(expr::parse_expression(parser)?)
+            } else {
+                None
+            };
+
+            let compensate = if parser.try_keyword("COMPENSATE") {
+                let comp_machine = parser.expect_ident()?;
+                let comp_expr = expr::parse_expression(parser)?;
+                parser.expect_keyword("TO")?;
+                let comp_state = parser.expect_ident()?;
+                Some(CompensationStep {
+                    machine: comp_machine,
+                    instance_expr: comp_expr,
+                    to_state: comp_state,
+                })
+            } else {
+                None
+            };
+
+            steps.push(SagaStep {
+                name: step_name,
+                machine,
+                instance_expr,
+                to_state,
+                compensate,
+                when,
+            });
+        } else if parser.try_keyword("ON") {
+            if parser.try_keyword("COMPLETE") {
+                parser.expect_punct(":")?;
+                on_complete.push(parse_action(parser)?);
+            } else if parser.try_keyword("FAILURE") {
+                parser.expect_punct(":")?;
+                on_failure.push(parse_action(parser)?);
+            } else {
+                parser.advance()?;
+            }
+        } else {
+            parser.advance()?;
+        }
+    }
+    parser.expect_punct("}")?;
+
+    Ok(SagaDefinition { name, trigger, steps, on_complete, on_failure })
+}
 
 /// Parse DEFINE MACHINE Name ( ... ).
 pub fn parse_define_machine(parser: &mut Parser) -> SmqlResult<MachineDefinition> {
@@ -220,10 +453,16 @@ fn parse_single_constraint(parser: &mut Parser) -> SmqlResult<Constraint> {
                     parser.expect_punct(")")?;
                     Ok(Constraint::Pattern(regex))
                 }
+                "COMPUTED" => {
+                    parser.expect_punct("(")?;
+                    let expr = expr::parse_expression(parser)?;
+                    parser.expect_punct(")")?;
+                    Ok(Constraint::Computed(expr))
+                }
                 _ => Err(SmqlError::ParseError {
                     message: format!("Unknown constraint '{}'", k),
                     span: None,
-                    hint: Some("Valid constraints: REQUIRED, OPTIONAL, MAX(n), MIN(n), RANGE(lo, hi), DEFAULT(val), UNIQUE, PATTERN(regex)".into()),
+                    hint: Some("Valid constraints: REQUIRED, OPTIONAL, MAX(n), MIN(n), RANGE(lo, hi), DEFAULT(val), UNIQUE, PATTERN(regex), COMPUTED(expr)".into()),
                 }),
             }
         }
@@ -363,9 +602,20 @@ fn parse_transition_def(parser: &mut Parser) -> SmqlResult<TransitionDefinition>
                     }
                     "ACTION" => {
                         parser.advance()?;
-                        parser.expect_punct(":")?;
-                        let action = parse_action(parser)?;
-                        transition.actions.push(action);
+                        // Check for ACTION WHEN <expr> : <action>
+                        if parser.try_keyword("WHEN") {
+                            let condition = expr::parse_expression(parser)?;
+                            parser.expect_punct(":")?;
+                            let inner = parse_action(parser)?;
+                            transition.actions.push(Action::Conditional {
+                                condition,
+                                action: Box::new(inner),
+                            });
+                        } else {
+                            parser.expect_punct(":")?;
+                            let action = parse_action(parser)?;
+                            transition.actions.push(action);
+                        }
                     }
                     "TIMEOUT" => {
                         parser.advance()?;
@@ -442,6 +692,18 @@ fn parse_transition_def(parser: &mut Parser) -> SmqlResult<TransitionDefinition>
                         transition
                             .actions
                             .push(Action::SignalParent { target_state });
+                    }
+                    "APPLY" => {
+                        parser.advance()?;
+                        parser.expect_keyword("POLICY")?;
+                        let policy_name = parser.expect_ident()?;
+                        transition.policies.push(policy_name);
+                    }
+                    "REACTIVE" => {
+                        parser.advance()?;
+                        parser.expect_keyword("WHEN")?;
+                        let condition = expr::parse_expression(parser)?;
+                        transition.reactive = Some(smql_ast::machine::ReactiveClause { condition });
                     }
                     _ => {
                         // Skip unknown tokens in transition body
@@ -655,6 +917,17 @@ fn parse_hooks_block(parser: &mut Parser) -> SmqlResult<Vec<HookDefinition>> {
             let kw = parser.peek_kind();
             if matches!(kw, Some(TokenKind::Keyword(k)) if k == "ACTION") {
                 parser.advance()?;
+                // Check for ACTION WHEN <expr> : <action>
+                if parser.try_keyword("WHEN") {
+                    let condition = expr::parse_expression(parser)?;
+                    parser.expect_punct(":")?;
+                    let inner = parse_action(parser)?;
+                    actions.push(Action::Conditional {
+                        condition,
+                        action: Box::new(inner),
+                    });
+                    continue;
+                }
                 parser.expect_punct(":")?;
             }
             let action = parse_action(parser)?;
@@ -705,6 +978,18 @@ fn parse_hook_trigger(parser: &mut Parser) -> SmqlResult<HookTrigger> {
     }
 }
 
+/// Parse { field1, field2, ... } field name set for role permissions.
+fn parse_field_set(parser: &mut Parser) -> SmqlResult<Vec<String>> {
+    parser.expect_punct("{")?;
+    let mut fields = Vec::new();
+    while !parser.check_punct("}") {
+        fields.push(parser.expect_ident()?);
+        parser.try_punct(",");
+    }
+    parser.expect_punct("}")?;
+    Ok(fields)
+}
+
 /// Parse ROLES { ... } block.
 fn parse_roles_block(parser: &mut Parser) -> SmqlResult<Vec<RoleDefinition>> {
     parser.expect_keyword("ROLES")?;
@@ -715,32 +1000,61 @@ fn parse_roles_block(parser: &mut Parser) -> SmqlResult<Vec<RoleDefinition>> {
         parser.expect_punct("{")?;
         let mut permissions = Vec::new();
         while !parser.check_punct("}") {
-            // Parse permissions like CAN SPAWN, CAN TRANSITION [states], CAN QUERY
-            parser.expect_keyword("CAN")?;
-            let perm_kw = parser.expect_ident()?;
-            match perm_kw.to_uppercase().as_str() {
-                "SPAWN" => permissions.push(RolePermission::CanSpawn),
-                "TRANSITION" => {
-                    if parser.check_punct("[") {
-                        parser.expect_punct("[")?;
-                        let mut states = Vec::new();
-                        while !parser.check_punct("]") {
-                            states.push(parser.expect_ident()?);
-                            parser.try_punct(",");
-                        }
-                        parser.expect_punct("]")?;
-                        permissions.push(RolePermission::CanTransition(states));
-                    } else {
-                        permissions.push(RolePermission::CanTransition(vec![]));
+            // Parse permissions: CAN ..., CANNOT ...
+            if parser.try_keyword("CANNOT") {
+                let perm_kw = parser.expect_ident()?;
+                match perm_kw.to_uppercase().as_str() {
+                    "READ" => {
+                        let fields = parse_field_set(parser)?;
+                        permissions.push(RolePermission::CannotReadFields(fields));
+                    }
+                    "WRITE" => {
+                        let fields = parse_field_set(parser)?;
+                        permissions.push(RolePermission::CannotWriteFields(fields));
+                    }
+                    _ => {
+                        return Err(SmqlError::parse(format!(
+                            "Unknown CANNOT permission '{}'",
+                            perm_kw
+                        )));
                     }
                 }
-                "QUERY" => permissions.push(RolePermission::CanQuery),
-                "ALTER" => permissions.push(RolePermission::CanAlter),
-                _ => {
-                    return Err(SmqlError::parse(format!(
-                        "Unknown permission '{}'",
-                        perm_kw
-                    )));
+            } else {
+                parser.expect_keyword("CAN")?;
+                let perm_kw = parser.expect_ident()?;
+                match perm_kw.to_uppercase().as_str() {
+                    "SPAWN" => permissions.push(RolePermission::CanSpawn),
+                    "TRANSITION" => {
+                        if parser.check_punct("[") {
+                            parser.expect_punct("[")?;
+                            let mut states = Vec::new();
+                            while !parser.check_punct("]") {
+                                states.push(parser.expect_ident()?);
+                                parser.try_punct(",");
+                            }
+                            parser.expect_punct("]")?;
+                            permissions.push(RolePermission::CanTransition(states));
+                        } else {
+                            permissions.push(RolePermission::CanTransition(vec![]));
+                        }
+                    }
+                    "QUERY" => permissions.push(RolePermission::CanQuery),
+                    "ALTER" => permissions.push(RolePermission::CanAlter),
+                    "ALL" => permissions.push(RolePermission::CanAll),
+                    "READ" => {
+                        let fields = parse_field_set(parser)?;
+                        permissions.push(RolePermission::CanReadFields(fields));
+                    }
+                    "WRITE" => {
+                        let fields = parse_field_set(parser)?;
+                        permissions.push(RolePermission::CanWriteFields(fields));
+                    }
+                    _ => {
+                        return Err(SmqlError::parse(format!(
+                            "Unknown permission '{}'",
+                            perm_kw
+                        )));
+                    }
                 }
             }
         }

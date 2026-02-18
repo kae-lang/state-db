@@ -41,6 +41,7 @@ fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }
 }
 
@@ -61,6 +62,7 @@ fn spawn_child_cmd(
         batch_data: Vec::new(),
         parent_id: Some(parent_id.to_string()),
         parent_machine: Some(parent_machine.to_string()),
+        as_actor: None,
     }
 }
 
@@ -247,6 +249,7 @@ async fn spawn_order_with_line_items() {
     let q = Query::Get(GetQuery {
         machine: "Order".into(),
         instance_id: order_id.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -260,6 +263,7 @@ async fn spawn_order_with_line_items() {
     let q = Query::Get(GetQuery {
         machine: "LineItem".into(),
         instance_id: item1,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -272,6 +276,7 @@ async fn spawn_order_with_line_items() {
     let q = Query::Get(GetQuery {
         machine: "LineItem".into(),
         instance_id: item2,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => assert_eq!(inst.state, "pending"),
@@ -355,7 +360,8 @@ async fn cascade_cancel_order() {
         let q = Query::Get(GetQuery {
             machine: "LineItem".into(),
             instance_id: item_id.to_string(),
-        });
+        as_actor: None,
+    });
         match engine.execute_query(&q).await.unwrap() {
             QueryResult::Instance(inst) => {
                 assert!(
@@ -477,6 +483,7 @@ async fn find_line_items_by_state() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -493,6 +500,7 @@ async fn find_line_items_by_state() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -570,6 +578,7 @@ async fn multiple_orders_lifecycle() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -586,6 +595,7 @@ async fn multiple_orders_lifecycle() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -879,6 +889,7 @@ async fn signal_parent_from_shipment_delivery() {
     let q = Query::Get(GetQuery {
         machine: "SigOrder".into(),
         instance_id: order_id.to_string(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {

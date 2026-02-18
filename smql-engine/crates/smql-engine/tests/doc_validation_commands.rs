@@ -144,6 +144,7 @@ async fn spawn_support_ticket_via_api(engine: &Engine) -> String {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     engine
         .spawn(&cmd)

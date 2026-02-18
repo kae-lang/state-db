@@ -99,8 +99,15 @@ impl Engine {
     }
 
     /// Spawn a new machine instance.
+    pub fn spawn<'a>(
+        &'a self,
+        cmd: &'a SpawnCommand,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SmqlResult<SpawnResult>> + Send + 'a>> {
+        Box::pin(self.spawn_inner(cmd))
+    }
+
     #[tracing::instrument(skip(self, cmd), fields(machine = %cmd.machine))]
-    pub async fn spawn(&self, cmd: &SpawnCommand) -> SmqlResult<SpawnResult> {
+    async fn spawn_inner(&self, cmd: &SpawnCommand) -> SmqlResult<SpawnResult> {
         let machine_def = self.catalog.get(&cmd.machine)?;
 
         // Evaluate data expressions and collect into HashMap
@@ -111,8 +118,82 @@ impl Engine {
             data.insert(field.clone(), val);
         }
 
+        // Reject computed fields provided in spawn data
+        for field_def in &machine_def.data {
+            use smql_ast::types::Constraint;
+            let is_computed = field_def.constraints.iter().any(|c| matches!(c, Constraint::Computed(_)));
+            if is_computed && data.contains_key(&field_def.name) {
+                return Err(SmqlError::SpawnRejected {
+                    message: format!("Field '{}' is COMPUTED and cannot be set directly", field_def.name),
+                    field: Some(field_def.name.clone()),
+                    hint: Some("Remove this field from SPAWN data — it is auto-derived".to_string()),
+                });
+            }
+        }
+
+        // Check field-level write permissions on spawn data
+        let spawn_actor_role = cmd.as_actor.as_deref();
+        for (field, _) in &data {
+            if !self.can_write_field(&machine_def, field, spawn_actor_role) {
+                return Err(SmqlError::SpawnRejected {
+                    message: format!(
+                        "Role '{}' cannot write field '{}' on spawn",
+                        spawn_actor_role.unwrap_or("unknown"),
+                        field
+                    ),
+                    field: Some(field.clone()),
+                    hint: Some(format!("Add CAN WRITE {{ {} }} to the role definition", field)),
+                });
+            }
+        }
+
         // Validate data against machine DATA definition
         self.validate_spawn_data(&machine_def, &mut data)?;
+
+        // Evaluate DEFINE RULE BeforeSpawn invariants
+        {
+            use smql_ast::rule::RuleTrigger;
+            use smql_ast::error::GuardFailure;
+            let spawn_ctx = EvalContext::new(data.clone(), machine_def.initial_state.clone());
+            let applicable_rules = self.catalog.rules_for_machine(&cmd.machine);
+            let mut rule_failures: Vec<GuardFailure> = Vec::new();
+            for rule in &applicable_rules {
+                if matches!(&rule.trigger, RuleTrigger::BeforeSpawn { machine: m } if m == &cmd.machine) {
+                    match eval_guard(&rule.invariant, &spawn_ctx) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            rule_failures.push(GuardFailure {
+                                guard_expr: format!("[RULE {}] {}", rule.name, rule.invariant),
+                                actual_value: None,
+                                expected: Some("true".to_string()),
+                                hint: rule.message.clone().or_else(|| Some(format!("Rule '{}' invariant failed on spawn", rule.name))),
+                            });
+                        }
+                        Err(e) => {
+                            rule_failures.push(GuardFailure {
+                                guard_expr: format!("[RULE {}] {}", rule.name, rule.invariant),
+                                actual_value: Some(e.to_string()),
+                                expected: None,
+                                hint: None,
+                            });
+                        }
+                    }
+                }
+            }
+            if !rule_failures.is_empty() {
+                return Err(SmqlError::SpawnRejected {
+                    message: format!(
+                        "Spawn rejected by rule invariant: {}",
+                        rule_failures.iter().map(|f| f.guard_expr.clone()).collect::<Vec<_>>().join("; ")
+                    ),
+                    field: None,
+                    hint: rule_failures.first().and_then(|f| f.hint.clone()),
+                });
+            }
+        }
+
+        // Evaluate COMPUTED fields after validation
+        self.evaluate_computed_fields(&machine_def, &mut data, &machine_def.initial_state);
 
         // Create instance (with optional parent linkage)
         let instance = if let (Some(parent_id_str), Some(parent_machine)) =
@@ -187,6 +268,32 @@ impl Engine {
                 &resolved,
             )
             .await;
+
+        // --- Register dwell timers for initial state ---
+        let instance_id_str = instance.id.as_str();
+        self.register_dwell_timers(
+            &instance_id_str,
+            &cmd.machine,
+            &machine_def.initial_state,
+            &machine_def,
+        );
+
+        // --- Fire ON SPAWN subscriptions ---
+        let spawn_eval_ctx = EvalContext::new(instance.data.clone(), machine_def.initial_state.clone());
+        self.fire_subscriptions_for_spawn(&hook_ctx, &cmd.machine, &spawn_eval_ctx).await;
+
+        // --- Auto-trigger OnSpawn sagas ---
+        {
+            let sagas = self.catalog.sagas_for_spawn(&cmd.machine);
+            for saga in sagas {
+                let saga_name = saga.name.clone();
+                let iid = instance.id.as_str().to_string();
+                let result = self.execute_saga(&saga_name, Some(&iid)).await;
+                if let Err(e) = result {
+                    tracing::warn!(saga = %saga_name, error = %e, "OnSpawn saga failed");
+                }
+            }
+        }
 
         // Handle THEN TRANSITION if specified
         if let Some(target_state) = &cmd.then_transition {
@@ -321,8 +428,28 @@ impl Engine {
         Box::pin(self.transition_inner(cmd))
     }
 
+    /// Execute a transition and then check for REACTIVE WHEN auto-transitions.
+    pub async fn transition_reactive(
+        &self,
+        cmd: &TransitionCommand,
+    ) -> SmqlResult<TransitionResult> {
+        let result = self.transition_inner(cmd).await?;
+        let iid = result.instance.id.to_string();
+        let machine = result.instance.machine.clone();
+        let new_state = result.to_state.clone();
+        self.check_and_fire_reactive(&iid, &machine, &new_state).await;
+        Ok(result)
+    }
+
+    fn transition_inner<'a>(
+        &'a self,
+        cmd: &'a TransitionCommand,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SmqlResult<TransitionResult>> + Send + 'a>> {
+        Box::pin(self.transition_inner_impl(cmd))
+    }
+
     #[tracing::instrument(skip(self, cmd), fields(instance_id = %cmd.instance_id, to_state = %cmd.to_state))]
-    async fn transition_inner(&self, cmd: &TransitionCommand) -> SmqlResult<TransitionResult> {
+    async fn transition_inner_impl(&self, cmd: &TransitionCommand) -> SmqlResult<TransitionResult> {
         // Handle THROUGH (multi-hop)
         if !cmd.through.is_empty() {
             return self.transition_through(cmd).await;
@@ -434,7 +561,45 @@ impl Engine {
         }
 
         // --- 2. Evaluate ALL guard conditions — collect ALL failures ---
+        // First expand APPLY POLICY guards, then evaluate inline guards
         let mut guard_failures = Vec::new();
+
+        for policy_name in &transition_def.policies {
+            match self.catalog.get_policy(policy_name) {
+                Ok(policy) => {
+                    for guard in &policy.guards {
+                        match eval_guard(guard, &ctx) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                guard_failures.push(GuardFailure {
+                                    guard_expr: format!("[POLICY {}] {}", policy_name, guard),
+                                    actual_value: None,
+                                    expected: Some("true".to_string()),
+                                    hint: Some(format!("Guard from policy '{}'", policy_name)),
+                                });
+                            }
+                            Err(e) => {
+                                guard_failures.push(GuardFailure {
+                                    guard_expr: format!("[POLICY {}] {}", policy_name, guard),
+                                    actual_value: Some(e.to_string()),
+                                    expected: None,
+                                    hint: None,
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    guard_failures.push(GuardFailure {
+                        guard_expr: format!("APPLY POLICY {}", policy_name),
+                        actual_value: Some(format!("Policy '{}' not found", policy_name)),
+                        expected: None,
+                        hint: Some(format!("Register policy '{}' with DEFINE POLICY", policy_name)),
+                    });
+                }
+            }
+        }
+
         for guard in &transition_def.guards {
             match eval_guard(guard, &ctx) {
                 Ok(true) => {}
@@ -449,6 +614,30 @@ impl Engine {
                 Err(e) => {
                     guard_failures.push(GuardFailure {
                         guard_expr: guard.to_string(),
+                        actual_value: Some(e.to_string()),
+                        expected: None,
+                        hint: None,
+                    });
+                }
+            }
+        }
+
+        // --- 2b. Evaluate DEFINE RULE invariants (always, not just when guards fail) ---
+        let applicable_rules = self.catalog.rules_for_machine(&instance.machine);
+        for rule in &applicable_rules {
+            match eval_guard(&rule.invariant, &ctx) {
+                Ok(true) => {}
+                Ok(false) => {
+                    guard_failures.push(GuardFailure {
+                        guard_expr: format!("[RULE {}] {}", rule.name, rule.invariant),
+                        actual_value: None,
+                        expected: Some("true".to_string()),
+                        hint: rule.message.clone().or_else(|| Some(format!("Rule '{}' invariant failed", rule.name))),
+                    });
+                }
+                Err(e) => {
+                    guard_failures.push(GuardFailure {
+                        guard_expr: format!("[RULE {}] {}", rule.name, rule.invariant),
                         actual_value: Some(e.to_string()),
                         expected: None,
                         hint: None,
@@ -493,6 +682,25 @@ impl Engine {
         }
 
         // --- 3. Build mutations from WITH data and MUTATE clauses ---
+        // Check field-level write permissions first
+        let actor_role = cmd.as_actor.as_deref();
+        for (field, _) in &cmd.with_data {
+            if !self.can_write_field(&machine_def, field, actor_role) {
+                return Err(SmqlError::TransitionDenied(TransitionDeniedError {
+                    instance_id: cmd.instance_id.clone(),
+                    from_state: instance.state.clone(),
+                    to_state: cmd.to_state.clone(),
+                    guard_failures: vec![GuardFailure {
+                        guard_expr: format!("WRITE permission for field '{}'", field),
+                        actual_value: Some(format!("Role '{}' cannot write field '{}'", actor_role.unwrap_or("unknown"), field)),
+                        expected: None,
+                        hint: Some(format!("Add CAN WRITE {{ {} }} to the role definition", field)),
+                    }],
+                    hint: None,
+                }));
+            }
+        }
+
         let mut mutations = Vec::new();
         for (field, expr) in &cmd.with_data {
             let val = eval_expr(expr, &ctx)?;
@@ -545,6 +753,7 @@ impl Engine {
                             batch_data: Vec::new(),
                             parent_id: Some(cmd.instance_id.clone()),
                             parent_machine: Some(instance.machine.clone()),
+                            as_actor: None,
                         };
                         match self.spawn(&child_cmd).await {
                             Ok(result) => {
@@ -573,6 +782,20 @@ impl Engine {
         for m in &mutations {
             if let Mutation::SetField(field, val) = m {
                 ctx.data.insert(field.clone(), val.clone());
+            }
+        }
+
+        // Evaluate COMPUTED fields after mutations, add them as additional mutations
+        let mut computed_data = ctx.data.clone();
+        self.evaluate_computed_fields(&machine_def, &mut computed_data, &cmd.to_state);
+        for field_def in &machine_def.data {
+            use smql_ast::types::Constraint;
+            let is_computed = field_def.constraints.iter().any(|c| matches!(c, Constraint::Computed(_)));
+            if is_computed {
+                if let Some(val) = computed_data.get(&field_def.name) {
+                    mutations.push(Mutation::SetField(field_def.name.clone(), val.clone()));
+                    ctx.data.insert(field_def.name.clone(), val.clone());
+                }
             }
         }
 
@@ -612,8 +835,9 @@ impl Engine {
             )
             .await;
 
-        // --- 6. Cancel old timeout, register new one ---
+        // --- 6. Cancel old timeout, cancel old dwell timers, register new ones ---
         self.timer_manager.cancel(&cmd.instance_id, &instance.state);
+        self.timer_manager.cancel_dwell_for_state(&cmd.instance_id, &instance.state);
         let _ = self
             .storage
             .remove_timer(&cmd.instance_id, &instance.state)
@@ -664,6 +888,9 @@ impl Engine {
             )
             .await;
 
+        // --- 8b. Register dwell timers for the new state ---
+        self.register_dwell_timers(&cmd.instance_id, &instance.machine, &cmd.to_state, &machine_def);
+
         // --- 9. AFTER EACH TRANSITION hooks (fire-and-forget) ---
         let _ = self
             .hook_executor
@@ -674,6 +901,51 @@ impl Engine {
                 &resolved_hook_actions,
             )
             .await;
+
+        // --- 10. Fire matching DEFINE SUBSCRIPTION actions ---
+        self.fire_subscriptions_for_transition(
+            &hook_ctx,
+            &instance.machine,
+            &instance.state,
+            &cmd.to_state,
+            &ctx,
+        )
+        .await;
+
+        // --- 10b. Auto-trigger sagas on state entry ---
+        {
+            let sagas = self.catalog.sagas_for_enter(&instance.machine, &cmd.to_state);
+            for saga in sagas {
+                let saga_name = saga.name.clone();
+                let iid = cmd.instance_id.to_string();
+                let result = self.execute_saga(&saga_name, Some(&iid)).await;
+                if let Err(e) = result {
+                    tracing::warn!(saga = %saga_name, error = %e, "OnEnter saga failed");
+                }
+            }
+        }
+
+        // --- 11. Refresh OnTransition projections (fire-and-forget) ---
+        {
+            use smql_ast::view::RefreshPolicy;
+            let proj_names = self.catalog.list_projections();
+            for proj_name in proj_names {
+                if let Ok(proj) = self.catalog.get_projection_def(&proj_name) {
+                    if proj.refresh == RefreshPolicy::OnTransition
+                        && proj.query.machine == instance.machine
+                    {
+                        let q = smql_ast::query::GetProjectionQuery { name: proj_name.clone() };
+                        let _ = self.execute_get_projection(&q).await;
+                        tracing::debug!(projection = %proj_name, "OnTransition projection refreshed");
+                    }
+                }
+            }
+        }
+
+        // --- 12. Check REACTIVE WHEN clauses on the new state (fire-and-forget) ---
+        // We cannot call check_and_fire_reactive directly (needs Arc<Self>),
+        // so we store the info and let the caller handle it via the result.
+        // The reactive check is triggered by the public transition() wrapper via spawn.
 
         // --- 10. CASCADE: transition all children to terminal states ---
         if cmd.cascade {
@@ -947,6 +1219,9 @@ impl Engine {
             let eval_ctx = EvalContext::new(instance.data.clone(), instance.state.clone());
             let resolved = self.resolve_hooks_actions(&machine_def.hooks, &eval_ctx);
 
+            // Cancel dwell timers for the old state
+            self.timer_manager.cancel_dwell_for_state(instance_id, &instance.state);
+
             // ON EXIT(old_state)
             let _ = self
                 .hook_executor
@@ -1001,6 +1276,9 @@ impl Engine {
                     &resolved,
                 )
                 .await;
+
+            // Register dwell timers for the new state
+            self.register_dwell_timers(instance_id, &instance.machine, target_state, &machine_def);
 
             // AFTER EACH TRANSITION
             let _ = self
@@ -1077,6 +1355,8 @@ impl Engine {
             let mut interval = tokio::time::interval(check_interval);
             loop {
                 interval.tick().await;
+
+                // Fire expired timeout transitions
                 let expired = engine.timer_manager.drain_expired();
                 for entry in expired {
                     // Handle race condition: instance may have already transitioned
@@ -1086,6 +1366,14 @@ impl Engine {
                             &entry.from_state,
                             &entry.target_state,
                         )
+                        .await;
+                }
+
+                // Fire expired dwell hooks (no state transition, just actions)
+                let expired_dwell = engine.timer_manager.drain_expired_dwell();
+                for entry in expired_dwell {
+                    engine
+                        .fire_dwell_hook(&entry.instance_id, &entry.state, &entry.duration)
                         .await;
                 }
             }
@@ -1119,6 +1407,476 @@ impl Engine {
     // -----------------------------------------------------------------------
     // Hook / Action resolution helpers
     // -----------------------------------------------------------------------
+
+    /// Execute a named saga: run each step in order, compensating on failure.
+    pub async fn execute_saga(
+        &self,
+        saga_name: &str,
+        trigger_instance_id: Option<&str>,
+    ) -> Result<(), String> {
+        let saga = self.catalog.get_saga(saga_name).map_err(|e| e.to_string())?;
+
+        let mut completed_steps: Vec<usize> = Vec::new();
+
+        for (i, step) in saga.steps.iter().enumerate() {
+            // Evaluate WHEN guard if present
+            if let Some(when_expr) = &step.when {
+                let ctx = EvalContext::new(std::collections::HashMap::new(), String::new());
+                match eval_guard(when_expr, &ctx) {
+                    Ok(false) => {
+                        tracing::info!(saga = saga_name, step = %step.name, "SAGA step skipped (WHEN false)");
+                        continue;
+                    }
+                    Err(e) => {
+                        tracing::warn!(saga = saga_name, step = %step.name, error = %e, "SAGA step WHEN evaluation error");
+                        continue;
+                    }
+                    Ok(true) => {}
+                }
+            }
+
+            // Evaluate instance_expr to get the instance ID
+            let ctx = EvalContext::new(std::collections::HashMap::new(), String::new());
+            let instance_id_val = eval_expr(&step.instance_expr, &ctx)
+                .map_err(|e| format!("SAGA step '{}' instance_expr error: {}", step.name, e))?;
+            let instance_id = match instance_id_val {
+                Value::Text(s) => s,
+                other => format!("{}", other),
+            };
+
+            let cmd = TransitionCommand {
+                machine: step.machine.clone(),
+                instance_id: instance_id.clone(),
+                to_state: step.to_state.clone(),
+                with_data: Vec::new(),
+                memo: Some(format!("SAGA {} step {}", saga_name, step.name)),
+                as_actor: Some("System".to_string()),
+                through: Vec::new(),
+                or_stay: false,
+                cascade: false,
+            };
+
+            match self.transition_inner(&cmd).await {
+                Ok(_) => {
+                    tracing::info!(saga = saga_name, step = %step.name, "SAGA step completed");
+                    completed_steps.push(i);
+                }
+                Err(e) => {
+                    tracing::warn!(saga = saga_name, step = %step.name, error = %e, "SAGA step failed — compensating");
+
+                    // Run compensation for all completed steps in reverse order
+                    for &ci in completed_steps.iter().rev() {
+                        if let Some(comp) = &saga.steps[ci].compensate {
+                            let comp_ctx = EvalContext::new(std::collections::HashMap::new(), String::new());
+                            if let Ok(comp_id_val) = eval_expr(&comp.instance_expr, &comp_ctx) {
+                                let comp_id = match comp_id_val {
+                                    Value::Text(s) => s,
+                                    other => format!("{}", other),
+                                };
+                                let comp_cmd = TransitionCommand {
+                                    machine: comp.machine.clone(),
+                                    instance_id: comp_id,
+                                    to_state: comp.to_state.clone(),
+                                    with_data: Vec::new(),
+                                    memo: Some(format!("SAGA {} compensation for step {}", saga_name, saga.steps[ci].name)),
+                                    as_actor: Some("System".to_string()),
+                                    through: Vec::new(),
+                                    or_stay: false,
+                                    cascade: false,
+                                };
+                                let _ = self.transition_inner(&comp_cmd).await;
+                            }
+                        }
+                    }
+
+                    return Err(format!("SAGA '{}' failed at step '{}': {}", saga_name, step.name, e));
+                }
+            }
+        }
+
+        tracing::info!(saga = saga_name, "SAGA completed successfully");
+        Ok(())
+    }
+
+    /// Check for REACTIVE WHEN clauses on transitions from the current state.
+    /// If a reactive condition is true, auto-fire the transition (as "System").
+    /// Uses an iterative loop (depth-limited) to prevent infinite reactive chains.
+    pub async fn check_and_fire_reactive(
+        &self,
+        instance_id: &str,
+        machine: &str,
+        initial_state: &str,
+    ) {
+        let mut current_state = initial_state.to_string();
+        let mut depth: u8 = 0;
+
+        loop {
+            if depth > 8 {
+                tracing::warn!(instance_id, "REACTIVE chain depth limit reached");
+                return;
+            }
+
+            let machine_def = match self.catalog.get(machine) {
+                Ok(m) => m,
+                Err(_) => return,
+            };
+
+            let id = match smql_storage::InstanceId::from_string(instance_id) {
+                Ok(id) => id,
+                Err(_) => return,
+            };
+
+            let instance = match self.storage.get_instance(&id).await {
+                Ok(Some(inst)) => inst,
+                _ => return,
+            };
+
+            if instance.state != current_state {
+                return; // State changed externally
+            }
+
+            let ctx = EvalContext::new(instance.data.clone(), instance.state.clone());
+            let mut fired = false;
+
+            for transition in &machine_def.transitions {
+                let from_matches = match &transition.from {
+                    smql_ast::machine::TransitionSource::State(s) => s == &current_state,
+                    smql_ast::machine::TransitionSource::Any { except } => {
+                        !except.contains(&current_state)
+                    }
+                    smql_ast::machine::TransitionSource::Group(_) => false,
+                };
+
+                if !from_matches {
+                    continue;
+                }
+
+                if let Some(reactive) = &transition.reactive {
+                    match eval_guard(&reactive.condition, &ctx) {
+                        Ok(true) => {
+                            tracing::info!(
+                                instance_id,
+                                from = %current_state,
+                                to = %transition.to,
+                                "REACTIVE auto-transition firing"
+                            );
+                            let cmd = TransitionCommand {
+                                machine: machine.to_string(),
+                                instance_id: instance_id.to_string(),
+                                to_state: transition.to.clone(),
+                                with_data: Vec::new(),
+                                memo: Some("REACTIVE auto-transition".to_string()),
+                                as_actor: Some("System".to_string()),
+                                through: Vec::new(),
+                                or_stay: false,
+                                cascade: false,
+                            };
+                            if let Ok(result) = self.transition_inner(&cmd).await {
+                                current_state = result.to_state;
+                                depth += 1;
+                                fired = true;
+                            }
+                            break; // Only fire the first matching reactive transition per loop
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                instance_id,
+                                error = %e,
+                                "REACTIVE condition evaluation error"
+                            );
+                        }
+                    }
+                }
+            }
+
+            if !fired {
+                break; // No reactive transition fired — done
+            }
+        }
+    }
+
+    /// Fire DEFINE SUBSCRIPTION actions that match a transition event.
+    async fn fire_subscriptions_for_transition(
+        &self,
+        hook_ctx: &HookContext,
+        machine: &str,
+        from_state: &str,
+        to_state: &str,
+        eval_ctx: &EvalContext,
+    ) {
+        use smql_ast::subscription::SubscriptionEvent;
+        let subs = self.catalog.subscriptions_for_machine(machine);
+        for sub in &subs {
+            let matches = match &sub.event {
+                SubscriptionEvent::OnEnter { machine: m, state } => {
+                    m == machine && state == to_state
+                }
+                SubscriptionEvent::OnExit { machine: m, state } => {
+                    m == machine && state == from_state
+                }
+                SubscriptionEvent::OnTransition { machine: m, from_state: fs, to_state: ts } => {
+                    m == machine
+                        && fs.as_deref().map_or(true, |s| s == from_state)
+                        && ts.as_deref().map_or(true, |s| s == to_state)
+                }
+                SubscriptionEvent::OnSpawn { .. } => false,
+            };
+            if matches {
+                let resolved = self.resolve_actions(&sub.actions, eval_ctx);
+                if let Err(e) = self.hook_executor.execute_actions(&resolved, hook_ctx).await {
+                    tracing::warn!(
+                        subscription = %sub.name,
+                        error = %e,
+                        "DEFINE SUBSCRIPTION action failed"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Fire DEFINE SUBSCRIPTION actions that match an ON SPAWN event.
+    async fn fire_subscriptions_for_spawn(
+        &self,
+        hook_ctx: &HookContext,
+        machine: &str,
+        eval_ctx: &EvalContext,
+    ) {
+        use smql_ast::subscription::SubscriptionEvent;
+        let subs = self.catalog.subscriptions_for_machine(machine);
+        for sub in &subs {
+            if matches!(&sub.event, SubscriptionEvent::OnSpawn { machine: m } if m == machine) {
+                let resolved = self.resolve_actions(&sub.actions, eval_ctx);
+                if let Err(e) = self.hook_executor.execute_actions(&resolved, hook_ctx).await {
+                    tracing::warn!(
+                        subscription = %sub.name,
+                        error = %e,
+                        "DEFINE SUBSCRIPTION ON SPAWN action failed"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Filter instance data based on actor role's field-level read permissions.
+    /// Returns a filtered copy of the data map.
+    pub fn filter_readable_fields(
+        &self,
+        machine_def: &MachineDefinition,
+        data: &HashMap<String, Value>,
+        actor_role: Option<&str>,
+    ) -> HashMap<String, Value> {
+        use smql_ast::machine::RolePermission;
+
+        let role_def = actor_role.and_then(|role_name| {
+            machine_def.roles.iter().find(|r| r.name == role_name)
+        });
+
+        let Some(role) = role_def else {
+            return data.clone(); // No role restriction — return all fields
+        };
+
+        // Check for CAN ALL
+        if role.permissions.iter().any(|p| matches!(p, RolePermission::CanAll)) {
+            return data.clone();
+        }
+
+        // Check for explicit CAN READ allowlist
+        let can_read: Option<&Vec<String>> = role.permissions.iter().find_map(|p| {
+            if let RolePermission::CanReadFields(fields) = p { Some(fields) } else { None }
+        });
+
+        // Check for CANNOT READ denylist
+        let cannot_read: Option<&Vec<String>> = role.permissions.iter().find_map(|p| {
+            if let RolePermission::CannotReadFields(fields) = p { Some(fields) } else { None }
+        });
+
+        data.iter()
+            .filter(|(field, _)| {
+                // If there's an allowlist, only include listed fields
+                if let Some(allowed) = can_read {
+                    return allowed.contains(field);
+                }
+                // If there's a denylist, exclude denied fields
+                if let Some(denied) = cannot_read {
+                    return !denied.contains(field);
+                }
+                // No field restrictions — include all
+                true
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Check if an actor role can write a specific field.
+    pub fn can_write_field(
+        &self,
+        machine_def: &MachineDefinition,
+        field: &str,
+        actor_role: Option<&str>,
+    ) -> bool {
+        use smql_ast::machine::RolePermission;
+
+        let role_def = actor_role.and_then(|role_name| {
+            machine_def.roles.iter().find(|r| r.name == role_name)
+        });
+
+        let Some(role) = role_def else {
+            return true; // No role restriction — allow all writes
+        };
+
+        // Check for CAN ALL
+        if role.permissions.iter().any(|p| matches!(p, RolePermission::CanAll)) {
+            return true;
+        }
+
+        // Check for explicit CAN WRITE allowlist
+        let can_write: Option<&Vec<String>> = role.permissions.iter().find_map(|p| {
+            if let RolePermission::CanWriteFields(fields) = p { Some(fields) } else { None }
+        });
+
+        // Check for CANNOT WRITE denylist
+        let cannot_write: Option<&Vec<String>> = role.permissions.iter().find_map(|p| {
+            if let RolePermission::CannotWriteFields(fields) = p { Some(fields) } else { None }
+        });
+
+        if let Some(allowed) = can_write {
+            return allowed.contains(&field.to_string());
+        }
+        if let Some(denied) = cannot_write {
+            return !denied.contains(&field.to_string());
+        }
+        true
+    }
+
+    /// Evaluate all COMPUTED fields in a machine definition and update the data map.
+    /// Called after spawn data validation and after each transition mutation.
+    fn evaluate_computed_fields(
+        &self,
+        machine_def: &MachineDefinition,
+        data: &mut HashMap<String, Value>,
+        state: &str,
+    ) {
+        use smql_ast::types::Constraint;
+        for field_def in &machine_def.data {
+            let computed_expr = field_def.constraints.iter().find_map(|c| {
+                if let Constraint::Computed(expr) = c {
+                    Some(expr)
+                } else {
+                    None
+                }
+            });
+            if let Some(expr) = computed_expr {
+                let ctx = EvalContext::new(data.clone(), state.to_string());
+                match eval_expr(expr, &ctx) {
+                    Ok(val) => {
+                        data.insert(field_def.name.clone(), val);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            field = %field_def.name,
+                            error = %e,
+                            "COMPUTED field evaluation failed"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Register dwell timers for all ON DWELL hooks matching the given state.
+    fn register_dwell_timers(
+        &self,
+        instance_id: &str,
+        machine: &str,
+        state: &str,
+        machine_def: &MachineDefinition,
+    ) {
+        for hook in &machine_def.hooks {
+            if let HookTrigger::OnDwell { state: dwell_state, duration } = &hook.trigger {
+                if dwell_state == state {
+                    self.timer_manager.register_dwell(instance_id, machine, state, duration);
+                }
+            }
+        }
+    }
+
+    /// Fire dwell hook actions for an instance that has dwelled in a state.
+    /// This does NOT transition the instance — it only fires actions.
+    pub async fn fire_dwell_hook(
+        &self,
+        instance_id: &str,
+        expected_state: &str,
+        duration: &smql_ast::value::SmqlDuration,
+    ) {
+        let id = match smql_storage::InstanceId::from_string(instance_id) {
+            Ok(id) => id,
+            Err(_) => return,
+        };
+
+        let instance = match self.storage.get_instance(&id).await {
+            Ok(Some(inst)) => inst,
+            _ => return,
+        };
+
+        // Race condition: instance already left the state
+        if instance.state != expected_state {
+            return;
+        }
+
+        let machine_def = match self.catalog.get(&instance.machine) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+
+        // Find matching ON DWELL hooks for this state + duration
+        let matching_hooks: Vec<&smql_ast::machine::HookDefinition> = machine_def
+            .hooks
+            .iter()
+            .filter(|h| {
+                matches!(
+                    &h.trigger,
+                    HookTrigger::OnDwell { state, duration: d }
+                    if state == expected_state && d.seconds == duration.seconds
+                )
+            })
+            .collect();
+
+        if matching_hooks.is_empty() {
+            return;
+        }
+
+        let hook_ctx = HookContext {
+            instance_id: instance_id.to_string(),
+            machine: instance.machine.clone(),
+            from_state: instance.state.clone(),
+            to_state: instance.state.clone(),
+            data: instance.data.clone(),
+            actor: Some("System".to_string()),
+            memo: None,
+        };
+
+        let eval_ctx = EvalContext::new(instance.data.clone(), instance.state.clone());
+
+        for hook in matching_hooks {
+            let resolved = self.resolve_actions(&hook.actions, &eval_ctx);
+            if let Err(e) = self.hook_executor.execute_actions(&resolved, &hook_ctx).await {
+                tracing::warn!(
+                    instance_id = %instance_id,
+                    state = %expected_state,
+                    error = %e,
+                    "ON DWELL hook action failed"
+                );
+            }
+        }
+
+        tracing::info!(
+            instance_id = %instance_id,
+            state = %expected_state,
+            duration_secs = %duration.seconds,
+            "ON DWELL hook fired"
+        );
+    }
 
     /// Resolve a list of AST Actions into ResolvedActions using the eval context.
     fn resolve_actions(&self, actions: &[Action], ctx: &EvalContext) -> Vec<ResolvedAction> {
@@ -1175,6 +1933,13 @@ impl Engine {
             Action::SignalParent { target_state } => Ok(ResolvedAction::SignalParent {
                 target_state: target_state.clone(),
             }),
+            Action::Conditional { condition, action } => {
+                match eval_guard(condition, ctx) {
+                    Ok(true) => self.resolve_action(action, ctx),
+                    Ok(false) => Err(SmqlError::internal("__conditional_skip")),
+                    Err(_) => Err(SmqlError::internal("__conditional_skip")),
+                }
+            }
         }
     }
 
@@ -1250,6 +2015,7 @@ impl EngineCallback for EngineCallbackImpl {
             batch_data: Vec::new(),
             parent_id: Some(parent_instance_id.to_string()),
             parent_machine: Some(parent.machine.clone()),
+            as_actor: None,
         };
 
         // Create a temporary engine to perform the spawn

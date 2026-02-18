@@ -2,7 +2,7 @@
 
 ## The Complete Developer Guide
 
-**Version 0.2.0 — Language Specification & Developer Reference**
+**Version 0.3.0 — Language Specification & Developer Reference**
 
 ---
 
@@ -129,6 +129,7 @@ priority    : ENUM(low, medium, high) -> DEFAULT(medium)
 | `RANGE(lo, hi)` | Inclusive numeric range |
 | `UNIQUE` | Must be unique across all instances |
 | `PATTERN("regex")` | Regex validation on text fields |
+| `COMPUTED(expr)` | Derived field — auto-calculated, read-only. See [Section 23](#23-computed-fields). |
 
 ### 3.3 — Defining Transitions
 
@@ -817,8 +818,9 @@ DEFINE MACHINE SupportTicket (
 | `AFTER EACH TRANSITION` | After any transition commits | No (fire-and-forget) |
 | `ON ENTER state` | When entering a specific state | No |
 | `ON EXIT state` | When exiting a specific state | No |
+| `ON DWELL(state, > duration)` | After dwelling in a state for the given duration (repeating) | No |
 
-> **Planned:** `ON DWELL(state, > duration)` — fire after dwelling in a state for a specified duration (defined in AST, not yet active).
+> `ON DWELL(state, > duration)` — fires after an instance has dwelled in a state for the specified duration. Repeating: fires again every `duration` until the instance leaves the state. See [Section 20 — ON DWELL Hooks](#20-on-dwell-hooks).
 
 ---
 
@@ -895,6 +897,7 @@ ALTER MACHINE SupportTicket
 | Remove state | `REMOVE STATE state_name MIGRATE TO target` |
 | Add transition | `ADD TRANSITION from -> to { ... }` |
 | Remove transition | `REMOVE TRANSITION from -> to` |
+| Modify transition | `MODIFY TRANSITION from -> to { ... }` |
 | Add data field | `ADD DATA field : Type -> constraints [BACKFILL expr]` |
 | Remove data field | `REMOVE DATA field_name` |
 | Backfill data | `BACKFILL field = expression` |
@@ -943,6 +946,11 @@ DEFINE MACHINE SupportTicket (
 | `CAN TRANSITION [states]` | Can initiate transitions involving listed states |
 | `CAN QUERY` | Can query instances |
 | `CAN ALTER` | Can alter the machine schema |
+| `CAN ALL` | Shorthand for all permissions (SPAWN, TRANSITION all states, QUERY, ALTER) |
+| `CAN READ { fields }` | Allowlist of fields visible in GET/FIND responses |
+| `CANNOT READ { fields }` | Denylist of fields stripped from GET/FIND responses |
+| `CAN WRITE { fields }` | Allowlist of fields settable via SPAWN/WITH |
+| `CANNOT WRITE { fields }` | Denylist of fields that cannot be set via SPAWN/WITH |
 
 ### 9.2 — JWT Authentication Middleware
 
@@ -1298,13 +1306,14 @@ For persistent, production-grade storage, enable the `rocksdb` feature:
 cargo run --bin smql --features rocksdb -- serve --storage rocksdb --data-dir ./data
 ```
 
-RocksDB uses 6 column families:
+RocksDB uses 7 column families:
 - `instances` — instance data
 - `state_index` — index by current state
 - `machine_index` — index by machine name
 - `trails` — transition history
 - `parent_index` — parent-child relationships
 - `id_index` — ULID-based lookups
+- `projections` — cached materialized projection results (key: projection name, value: serialized aggregate result)
 
 Key features:
 - Composite keys with NUL (`\x00`) separators
@@ -1382,6 +1391,41 @@ SpawnRejected {
     { field: "customer_id", error: "REQUIRED but not provided" },
     { field: "priority", error: "Value 'urgent' not in ENUM(low, medium, high, critical)" }
   ]
+}
+```
+
+### 17.3 — Rule Violation Errors
+
+When a `DEFINE RULE` invariant fails, the transition or spawn is rejected:
+
+```
+RuleViolated {
+  rule    : "MaxOpenTicketsPerCustomer"
+  message : "Customer already has 3 open tickets. Resolve existing tickets before opening new ones."
+}
+```
+
+All rule violations are collected and reported together — not just the first failure.
+
+### 17.4 — Field Write Permission Errors
+
+When an actor attempts to write a field their role cannot write:
+
+```
+WritePermissionDenied {
+  field : "customer_id"
+  role  : "customer"
+  hint  : "Role 'customer' cannot write field 'customer_id' on SupportTicket"
+}
+```
+
+Attempting to write a `COMPUTED` field directly produces the same error:
+
+```
+WritePermissionDenied {
+  field : "total_price"
+  role  : "(any)"
+  hint  : "Field 'total_price' is COMPUTED and cannot be set directly"
 }
 ```
 
@@ -1495,8 +1539,36 @@ DEFINE MACHINE Name (
   CHILDREN { child : LIST(Machine) -> MIN(1) }
   PARENT : ParentMachine
   HOOKS { ON SPAWN { ACTION : EMIT("created") } }
-  ROLES { admin { CAN SPAWN CAN TRANSITION [state1, state2] CAN QUERY CAN ALTER } }
+  ROLES { admin { CAN ALL } }
+  REACTIVE { WHEN ANY(items, STATE CHANGED) : TRY TRANSITION TO fulfilled }
 )
+
+DEFINE POLICY PolicyName
+  GUARD : expression
+
+DEFINE RULE RuleName
+  ON MACHINE MachineName
+  BEFORE SPAWN
+  GUARD : expression
+  ERROR : "message"
+
+DEFINE VIEW ViewName AS
+  FIND Machine WHERE condition SORT BY field ASC
+
+DEFINE PROJECTION ProjectionName AS
+  AGGREGATE Machine
+    MEASURE COUNT() AS total
+    GROUP BY STATE
+  REFRESH ON TRANSITION
+
+DEFINE SUBSCRIPTION SubName
+  ON ENTER state ON Machine
+  ACTION : WEBHOOK("https://example.com/hook")
+
+DEFINE SAGA SagaName
+  TRIGGER : ON ENTER state ON Machine
+  STEP 1 : TRANSITION Machine instance_expr TO state
+  ON COMPLETE : ACTION : EMIT("saga.done")
 ```
 
 ### Spawn
@@ -1524,13 +1596,17 @@ TRANSITION ALL Machine WHERE condition TO state AS "actor"
 
 ```smql
 GET Machine instance_id
+GET Machine instance_id AS "role"          -- field-level filtering by role
 FIND Machine WHERE condition SORT BY field ASC LIMIT n OFFSET n
 FIND Machine WHERE condition AFTER "cursor_ulid"
+FIND Machine WHERE condition AS "role"      -- field-level filtering by role
 TRAIL OF instance_id
 AGGREGATE Machine MEASURE COUNT() AS total GROUP BY STATE
 PATHS FROM Machine WHERE condition LIMIT n
 FUNNEL Machine THROUGH [state1, state2, state3] WHERE condition
 COMPARE PATHS Machine SEGMENT BY field WHERE condition
+GET VIEW ViewName
+GET PROJECTION ProjectionName
 ```
 
 ### Schema Evolution
@@ -1548,6 +1624,785 @@ ALTER MACHINE Name
 
 ---
 
+## 20. ON DWELL Hooks
+
+`ON DWELL` fires when an instance has been sitting in a specific state for longer than a declared duration. Unlike `TIMEOUT`, dwell hooks do **not** transition the instance — they run side effects while the instance stays put. They repeat: the hook fires again every `duration` until the instance leaves the state.
+
+**Eliminates:** polling cron jobs that check for stale records.
+
+### 20.1 — Syntax
+
+```smql
+HOOKS {
+  ON DWELL(state_name, > duration) {
+    ACTION : <effect>
+    MUTATE : field = expression
+  }
+}
+```
+
+The `> duration` clause means "after more than this duration has elapsed in this state." Duration literals: `60s`, `30m`, `24h`, `7d`.
+
+### 20.2 — Example: Stale Ticket Escalation
+
+```smql
+DEFINE MACHINE SupportTicket (
+
+  -- ... DATA, STATES, TRANSITIONS ...
+
+  HOOKS {
+    ON DWELL(in_progress, > 48h) {
+      ACTION : NOTIFY(assignee, "ticket.stale_warning")
+      ACTION : EMIT("ticket.stale", { id: SELF, age: elapsed() })
+    }
+
+    ON DWELL(in_progress, > 7d) {
+      MUTATE : priority = "critical"
+      ACTION : NOTIFY(ACTOR.supervisor, "ticket.escalation_required")
+    }
+  }
+)
+```
+
+### 20.3 — Behaviour Rules
+
+- **Repeating:** the hook fires every `duration` as long as the instance remains in the state. A ticket in `in_progress` for 10 days with a `> 48h` dwell hook will fire on day 2, day 4, day 6, day 8, and day 10.
+- **Cancelled on exit:** when the instance leaves the state, all dwell timers for that state are cancelled immediately.
+- **MUTATE is allowed:** dwell hooks can write data without transitioning. The mutation is atomic but does **not** produce a trail entry (no state change occurred).
+- **Cannot reject:** dwell hooks are fire-and-forget. They cannot block or roll back anything.
+- **Multiple dwell hooks:** you can declare multiple `ON DWELL` hooks on the same state with different durations. Each runs independently.
+
+### 20.4 — Dwell vs. Timeout
+
+| | `TIMEOUT` | `ON DWELL` |
+|---|---|---|
+| **Effect** | Transitions to a new state | Runs actions, stays in state |
+| **Repeats** | No (fires once) | Yes (every `duration`) |
+| **Can MUTATE** | Via transition MUTATE | Yes |
+| **Trail entry** | Yes | No |
+| **Cancellable** | Yes (on state exit) | Yes (on state exit) |
+
+---
+
+## 21. Conditional Actions (`ACTION WHEN`)
+
+`ACTION WHEN` makes an action conditional on an expression evaluated at transition time. The action fires only if the condition is truthy; otherwise it is silently skipped.
+
+**Eliminates:** branching logic in webhook handlers and downstream consumers.
+
+### 21.1 — Syntax
+
+```smql
+ACTION WHEN <expression> : <action>
+```
+
+The condition is any valid SMQL expression — it has access to the full evaluation context: `SELF`, `ACTOR`, `elapsed()`, data fields, and child predicates.
+
+### 21.2 — Example
+
+```smql
+in_progress -> resolved {
+  ACTION : NOTIFY(customer_id, "ticket.resolved")
+
+  -- Only notify on-call if this was a critical ticket
+  ACTION WHEN priority == "critical" : NOTIFY(oncall_team, "critical.resolved")
+
+  -- Only emit SLA breach if the ticket took too long
+  ACTION WHEN elapsed() > 48h : EMIT("ticket.sla_breached", { id: SELF })
+
+  -- Conditional webhook based on customer tier
+  ACTION WHEN customer_tier == "enterprise" : WEBHOOK("https://api.example.com/enterprise-hook")
+}
+```
+
+### 21.3 — In Hooks
+
+`ACTION WHEN` works inside hook bodies too:
+
+```smql
+HOOKS {
+  AFTER EACH TRANSITION {
+    ACTION WHEN ACTOR.role == "admin" : EMIT("admin.action", { actor: ACTOR, instance: SELF })
+  }
+
+  ON DWELL(in_progress, > 48h) {
+    ACTION WHEN priority != "critical" : NOTIFY(assignee, "ticket.stale_warning")
+    ACTION WHEN priority == "critical" : NOTIFY(oncall_team, "critical.stale")
+  }
+}
+```
+
+### 21.4 — Behaviour Rules
+
+- The condition is evaluated **after** the transition commits and mutations are applied — so `MUTATE`d field values are visible.
+- A false condition produces no error and no log entry.
+- Conditions can use `AND`, `OR`, `NOT`, and nested expressions.
+- `ACTION WHEN` can wrap any action type: `NOTIFY`, `EMIT`, `WEBHOOK`, `LOG`, `SIGNAL PARENT TO`.
+
+---
+
+## 22. `DEFINE POLICY` — Reusable Guard Bundles
+
+A `POLICY` is a named, reusable set of guard expressions. Instead of copy-pasting the same guards across many transitions, you define them once and `APPLY` them by name.
+
+**Eliminates:** copy-pasted guard expressions across transitions.
+
+### 22.1 — Defining a Policy
+
+```smql
+DEFINE POLICY AdminOrSupervisor
+  GUARD : ACTOR.role IN ("admin", "supervisor")
+
+DEFINE POLICY BusinessHoursOnly
+  GUARD : NOW().hour >= 9 AND NOW().hour < 17
+
+DEFINE POLICY NoOpenTicketsLimit
+  GUARD : COUNT(SupportTicket WHERE STATE IN {open, triaged} AND customer_id == SELF.customer_id) < 10
+```
+
+A policy can contain multiple `GUARD` clauses — all must pass, just like inline guards.
+
+### 22.2 — Applying a Policy
+
+Use `APPLY POLICY` inside any transition body:
+
+```smql
+open -> triaged {
+  APPLY POLICY AdminOrSupervisor
+  APPLY POLICY BusinessHoursOnly
+  GUARD  : assignee IS SET
+  ACTION : NOTIFY(assignee, "ticket.assigned")
+}
+```
+
+Policies are expanded at guard evaluation time. The above is equivalent to having three inline `GUARD` clauses. All guards — inline and from policies — must pass for the transition to proceed.
+
+### 22.3 — Policy Scope
+
+- Policies are **global** — registered in the catalog and available to any machine.
+- A single transition can apply multiple policies.
+- Policies can reference `SELF`, `ACTOR`, `NOW()`, `elapsed()`, and cross-instance `COUNT(...)`.
+- Unknown policy names are caught at registration time, not at runtime.
+
+### 22.4 — Full Example
+
+```smql
+DEFINE POLICY SeniorAgentOnly
+  GUARD : ACTOR.role IN ("senior_agent", "admin")
+  GUARD : ACTOR.tenure_days >= 90
+
+DEFINE MACHINE SupportTicket (
+  -- ...
+  TRANSITIONS {
+    triaged -> in_progress {
+      APPLY POLICY SeniorAgentOnly
+      ACTION : NOTIFY(customer_id, "ticket.in_progress")
+    }
+
+    in_progress -> resolved {
+      APPLY POLICY SeniorAgentOnly
+      GUARD  : resolution_note IS SET
+      ACTION : NOTIFY(customer_id, "ticket.resolved")
+    }
+  }
+)
+```
+
+---
+
+## 23. `COMPUTED` Fields
+
+A `COMPUTED` field is a derived data field whose value is automatically calculated from an expression. It is always up to date — recalculated on every spawn and every transition. It cannot be set directly.
+
+**Eliminates:** derived-value sync logic in application services.
+
+### 23.1 — Syntax
+
+```smql
+DATA {
+  field_name : Type -> COMPUTED(expression)
+}
+```
+
+The expression has access to all other fields in the same machine's `DATA` block, plus child aggregates.
+
+### 23.2 — Example
+
+```smql
+DEFINE MACHINE OrderLine (
+  DATA {
+    quantity    : INT        -> REQUIRED
+    unit_price  : MONEY(USD) -> REQUIRED
+    discount    : FLOAT      -> DEFAULT(0.0)
+
+    -- Derived fields — never set by the caller
+    subtotal    : MONEY(USD) -> COMPUTED(quantity * unit_price)
+    final_price : MONEY(USD) -> COMPUTED(subtotal * (1.0 - discount))
+    item_count  : INT        -> COMPUTED(count(items))
+  }
+  -- ...
+)
+```
+
+### 23.3 — Behaviour Rules
+
+- **Populated on spawn:** computed fields are evaluated after initial data is written. They do not need to be (and cannot be) provided in the `SPAWN` data block.
+- **Updated on transition:** after every `WITH` mutation and `MUTATE` clause, all computed fields are re-evaluated and written atomically in the same write batch.
+- **Read-only:** any attempt to set a computed field via `SPAWN`, `WITH`, or `MUTATE` is rejected with a `WritePermissionDenied` error.
+- **Available in guards:** computed fields are fully readable in `GUARD` expressions, `FIND WHERE` clauses, and hook conditions.
+- **Expression scope:** the expression can reference other fields in the same machine, child counts (`count(children)`), and arithmetic operations.
+
+### 23.4 — Using Computed Fields in Guards
+
+```smql
+TRANSITIONS {
+  draft -> placed {
+    -- Guard on a computed field
+    GUARD : total_price > 0
+    GUARD : item_count >= 1
+  }
+}
+```
+
+```smql
+-- Query on a computed field
+FIND OrderLine WHERE final_price > 100.00
+```
+
+---
+
+## 24. Field-Level Access Control
+
+Beyond transition-level permissions, SMQL's `ROLES` block supports per-field read and write control. This lets you expose different views of the same instance data to different roles without any application-layer filtering.
+
+**Eliminates:** field-filtering in API gateways and projection layers.
+
+### 24.1 — Syntax
+
+```smql
+ROLES {
+  role_name {
+    CAN READ { field1, field2, field3 }
+    CANNOT READ { internal_field, cost_center }
+    CAN WRITE { field1 }
+    CANNOT WRITE { customer_id, created_by }
+    CAN ALL
+  }
+}
+```
+
+### 24.2 — Full Example
+
+```smql
+DEFINE MACHINE SupportTicket (
+  DATA {
+    customer_id    : UUID -> REQUIRED
+    subject        : TEXT -> REQUIRED
+    priority       : ENUM(low, medium, high, critical) -> DEFAULT(medium)
+    assignee       : REF(Agent) -> OPTIONAL
+    internal_notes : TEXT -> OPTIONAL
+    cost_center    : TEXT -> OPTIONAL
+    resolution_note: TEXT -> OPTIONAL
+  }
+
+  -- ...
+
+  ROLES {
+    customer {
+      CAN SPAWN
+      CAN QUERY
+      CAN READ { subject, priority, resolution_note }
+      CANNOT READ { internal_notes, cost_center, assignee }
+      CAN WRITE { subject }
+    }
+
+    agent {
+      CAN ALL
+      CANNOT WRITE { customer_id }
+    }
+
+    admin {
+      CAN ALL
+    }
+  }
+)
+```
+
+### 24.3 — How It Works
+
+**On read (`GET` / `FIND`):** pass `AS "role"` to apply field filtering:
+
+```smql
+GET SupportTicket tk_00123 AS "customer"
+-- Returns: subject, priority, resolution_note only
+
+FIND SupportTicket WHERE STATE IS open AS "customer"
+-- Each result has internal_notes and cost_center stripped
+```
+
+**On write (`SPAWN` / `TRANSITION WITH`):** the engine checks write permissions before applying mutations:
+
+```smql
+-- This will be rejected if the actor's role cannot write customer_id
+SPAWN SupportTicket {
+  customer_id : "c_001"
+  subject     : "Login broken"
+} AS "customer"
+-- Error: WritePermissionDenied { field: "customer_id", role: "customer" }
+```
+
+### 24.4 — Permission Resolution Rules
+
+- `CAN READ { fields }` — only listed fields are returned; all others are stripped.
+- `CANNOT READ { fields }` — listed fields are stripped; all others are returned.
+- If both `CAN READ` and `CANNOT READ` are declared, `CAN READ` takes precedence (allowlist wins).
+- `CAN ALL` grants full access to all fields and all operations. Individual `CANNOT WRITE` or `CANNOT READ` clauses can still restrict specific fields even when `CAN ALL` is set.
+- Roles with no field-level permissions see all fields (backward compatible).
+
+### 24.5 — Error Format
+
+```
+WritePermissionDenied {
+  field : "customer_id"
+  role  : "customer"
+  hint  : "Role 'customer' cannot write field 'customer_id' on SupportTicket"
+}
+```
+
+---
+
+## 25. `DEFINE VIEW` and `DEFINE PROJECTION`
+
+Named views and projections let you define reusable queries at the schema level. Instead of repeating complex `FIND` or `AGGREGATE` queries in every client, you define them once in SMQL and query them by name.
+
+**Eliminates:** read-model services, dashboard aggregation services.
+
+### 25.1 — `DEFINE VIEW` (Live Query)
+
+A `VIEW` is a named `FIND` query. It executes against live data every time it is called — always reflects the current state of instances.
+
+```smql
+DEFINE VIEW OpenTicketQueue AS
+  FIND SupportTicket
+    WHERE STATE IN {open, triaged}
+    SORT BY priority DESC, created_at ASC
+```
+
+```smql
+DEFINE VIEW CriticalInProgress AS
+  FIND SupportTicket
+    WHERE STATE IS in_progress
+      AND priority == "critical"
+    SORT BY created_at ASC
+    LIMIT 50
+```
+
+**Query a view:**
+
+```smql
+GET VIEW OpenTicketQueue
+GET VIEW CriticalInProgress
+```
+
+### 25.2 — `DEFINE PROJECTION` (Materialized Aggregate)
+
+A `PROJECTION` is a named `AGGREGATE` query with a refresh policy. The result is cached and served from storage — no re-computation on every read.
+
+```smql
+DEFINE PROJECTION TicketMetrics AS
+  AGGREGATE SupportTicket
+    MEASURE COUNT() AS total, AVG(elapsed()) AS avg_age
+    GROUP BY STATE, priority
+  REFRESH ON TRANSITION
+
+DEFINE PROJECTION DailyTicketVolume AS
+  AGGREGATE SupportTicket
+    MEASURE COUNT() AS total
+    GROUP BY STATE
+  REFRESH ON INTERVAL 300s
+
+DEFINE PROJECTION ManualSnapshot AS
+  AGGREGATE SupportTicket
+    MEASURE COUNT() AS total, SUM(cost_center) AS total_cost
+    GROUP BY priority
+  REFRESH MANUAL
+```
+
+**Query a projection:**
+
+```smql
+GET PROJECTION TicketMetrics
+GET PROJECTION DailyTicketVolume
+```
+
+### 25.3 — Refresh Policies
+
+| Policy | Syntax | When it refreshes |
+|--------|--------|-------------------|
+| `ON TRANSITION` | `REFRESH ON TRANSITION` | After every successful transition on the target machine |
+| `ON INTERVAL` | `REFRESH ON INTERVAL 300s` | On a fixed timer (seconds) |
+| `MANUAL` | `REFRESH MANUAL` | Only when explicitly triggered |
+
+### 25.4 — View vs. Projection
+
+| | `VIEW` | `PROJECTION` |
+|---|---|---|
+| **Query type** | `FIND` | `AGGREGATE` |
+| **Freshness** | Always live | Cached, refreshed per policy |
+| **Cost** | Full scan on every call | Cheap read, refresh cost amortized |
+| **Use case** | Filtered lists, queues | Dashboards, counters, metrics |
+
+---
+
+## 26. `DEFINE RULE` — Cross-Instance Invariants
+
+A `RULE` is a named invariant that is checked before a spawn or transition. Unlike guards (which are per-transition and per-instance), rules can query across all instances of a machine — enforcing global constraints that no single instance can see on its own.
+
+**Eliminates:** pre-check service calls before spawn/transition.
+
+### 26.1 — Syntax
+
+```smql
+DEFINE RULE RuleName
+  ON MACHINE MachineName
+  BEFORE SPAWN | BEFORE TRANSITION | AFTER TRANSITION
+  GUARD : expression
+  ERROR : "human-readable message"
+```
+
+### 26.2 — Trigger Types
+
+| Trigger | When it runs |
+|---------|-------------|
+| `BEFORE SPAWN` | Before a new instance is created |
+| `BEFORE TRANSITION` | Before any transition on the named machine |
+| `AFTER TRANSITION` | After any transition on the named machine |
+
+### 26.3 — Cross-Instance Expressions
+
+Rules have access to `COUNT(Machine WHERE condition)` — a cross-instance query evaluated inside the rule's guard:
+
+```smql
+DEFINE RULE MaxOpenTicketsPerCustomer
+  ON MACHINE SupportTicket
+  BEFORE SPAWN
+  GUARD : COUNT(SupportTicket WHERE STATE IN {open, triaged} AND customer_id == SELF.customer_id) < 3
+  ERROR : "Customer already has 3 open tickets. Resolve existing tickets before opening new ones."
+```
+
+```smql
+DEFINE RULE NoDoubleAssignment
+  ON MACHINE SupportTicket
+  BEFORE TRANSITION
+  GUARD : COUNT(SupportTicket WHERE STATE IS in_progress AND assignee == ACTOR.id) < 5
+  ERROR : "Agent already has 5 tickets in progress. Resolve some before taking more."
+```
+
+### 26.4 — Multiple Rules
+
+All rules registered for a machine are evaluated. All failures are collected and reported together:
+
+```
+RuleViolated {
+  rule    : "MaxOpenTicketsPerCustomer"
+  message : "Customer already has 3 open tickets. Resolve existing tickets before opening new ones."
+}
+```
+
+### 26.5 — Full Example
+
+```smql
+DEFINE RULE SingleActiveOrder
+  ON MACHINE Order
+  BEFORE SPAWN
+  GUARD : COUNT(Order WHERE STATE IN {placed, paid, fulfilled} AND customer == SELF.customer) == 0
+  ERROR : "Customer already has an active order in progress"
+
+DEFINE RULE PaymentRequiredBeforeFulfillment
+  ON MACHINE Order
+  BEFORE TRANSITION
+  GUARD : NOT (STATE IS paid AND total > 0 AND payment_method IS NOT SET)
+  ERROR : "Cannot fulfill an order without a payment method on file"
+```
+
+---
+
+## 27. `DEFINE SUBSCRIPTION` — Declarative Event Routing
+
+A `SUBSCRIPTION` is a named event listener that routes state machine events to actions — webhooks, notifications, or emits — without any application code. Subscriptions are defined once in SMQL and persist in the catalog.
+
+**Eliminates:** WebSocket consumer services, event-filter code, retry infrastructure in services.
+
+### 27.1 — Syntax
+
+```smql
+DEFINE SUBSCRIPTION SubscriptionName
+  ON ENTER state ON MachineName
+  ACTION : <effect>
+  ACTION : <effect>
+```
+
+### 27.2 — Event Triggers
+
+| Trigger | Syntax | When it fires |
+|---------|--------|---------------|
+| State entry | `ON ENTER state ON Machine` | When any instance enters the named state |
+| State exit | `ON EXIT state ON Machine` | When any instance exits the named state |
+| Spawn | `ON SPAWN Machine` | When a new instance is created |
+| Any transition | `ON TRANSITION Machine FROM * TO *` | On every transition |
+| Specific transition | `ON TRANSITION Machine FROM state1 TO state2` | On a specific state change |
+
+### 27.3 — Examples
+
+```smql
+-- Notify billing when an order is paid
+DEFINE SUBSCRIPTION NotifyBillingOnOrderPaid
+  ON ENTER paid ON Order
+  ACTION : WEBHOOK("https://billing.internal/hooks/order-paid",
+                   { order_id: SELF, customer: customer, total: total })
+
+-- Alert ops when any ticket becomes critical
+DEFINE SUBSCRIPTION AlertOpsOnCritical
+  ON TRANSITION SupportTicket FROM * TO *
+  ACTION : NOTIFY(ops_team, "ticket.critical_entered")
+
+-- Emit an event when a shipment is created
+DEFINE SUBSCRIPTION TrackNewShipments
+  ON SPAWN Shipment
+  ACTION : EMIT("shipment.created", { id: SELF, order: PARENT.id })
+
+-- Webhook on specific transition
+DEFINE SUBSCRIPTION FraudAlertOnReview
+  ON TRANSITION Order FROM paid TO payment_review
+  ACTION : WEBHOOK("https://fraud.internal/review", { order_id: SELF })
+  ACTION : NOTIFY(fraud_team, "order.flagged_for_review")
+```
+
+### 27.4 — Multiple Actions
+
+A subscription can fire multiple actions. All actions execute after the triggering transition commits:
+
+```smql
+DEFINE SUBSCRIPTION OrderFulfilled
+  ON ENTER fulfilled ON Order
+  ACTION : WEBHOOK("https://warehouse.internal/pick", { order_id: SELF })
+  ACTION : NOTIFY(customer, "order.fulfillment_started")
+  ACTION : EMIT("order.fulfillment_started", { id: SELF, items: items })
+```
+
+### 27.5 — Behaviour Rules
+
+- Subscriptions fire **after** the transition commits — they cannot reject or roll back.
+- All actions are fire-and-forget (asynchronous).
+- Subscriptions are stored in the catalog and survive server restarts.
+- Multiple subscriptions can listen to the same event; all fire independently.
+- `FROM *` and `TO *` are wildcards — match any state.
+
+---
+
+## 28. `REACTIVE` — Auto-Transitions
+
+A `REACTIVE` block inside a machine definition declares rules that automatically attempt transitions when a condition becomes true — without any external trigger. The most common use case is a parent machine that should auto-advance when its children reach certain states.
+
+**Eliminates:** polling services that watch child state changes and trigger parent transitions.
+
+### 28.1 — Syntax
+
+```smql
+DEFINE MACHINE MachineName (
+  -- ...
+  REACTIVE {
+    WHEN condition : TRY TRANSITION TO target_state
+  }
+)
+```
+
+`REACTIVE` rules are evaluated after every mutation (transition, `MUTATE`, `WITH` write) on the machine or its children. If the condition is true, `TRY TRANSITION TO target_state` is attempted. Guard failure is silent — the auto-transition is simply skipped.
+
+### 28.2 — Child State Triggers
+
+The most common pattern: auto-advance a parent when all children reach a target state.
+
+```smql
+DEFINE MACHINE Order (
+  DATA { customer : REF(Customer) -> REQUIRED }
+  STATES { draft, placed, paid, fulfilled, shipped, delivered, cancelled }
+  INITIAL STATE draft
+  TERMINAL STATES { delivered, cancelled }
+
+  CHILDREN {
+    items    : LIST(LineItem)    -> MIN(1)
+    shipment : OPTIONAL(Shipment)
+  }
+
+  TRANSITIONS {
+    -- ... normal transitions ...
+  }
+
+  REACTIVE {
+    -- Auto-transition to fulfilled when ALL items are confirmed
+    WHEN ALL(items, STATE IS confirmed) : TRY TRANSITION TO fulfilled
+
+    -- Auto-transition to shipped when the shipment is dispatched
+    WHEN shipment.STATE IS dispatched : TRY TRANSITION TO shipped
+
+    -- Auto-transition to delivered when the shipment is delivered
+    WHEN shipment.STATE IS delivered : TRY TRANSITION TO delivered
+  }
+)
+```
+
+### 28.3 — Field Change Triggers
+
+`REACTIVE` can also respond to data field changes:
+
+```smql
+DEFINE MACHINE SupportTicket (
+  -- ...
+  REACTIVE {
+    -- Auto-escalate if priority becomes critical and ticket is open
+    WHEN priority == "critical" AND STATE IS open : TRY TRANSITION TO triaged
+  }
+)
+```
+
+### 28.4 — Behaviour Rules
+
+- **`TRY` semantics:** reactive transitions always use `TRY` — if guards fail, the attempt is silently discarded. No error is raised.
+- **Evaluated after every write:** reactive rules are checked after every successful transition, `MUTATE`, or `WITH` write on the machine or any of its children.
+- **Non-fatal:** a reactive rule that throws an internal error is logged and skipped, never crashing the triggering operation.
+- **Loop prevention:** a reactive transition that would trigger itself is detected and skipped.
+- **Chains:** reactive transitions can chain — a child transition triggers a parent reactive rule, which triggers a grandparent reactive rule. Each hop is evaluated independently.
+- **Actor:** reactive transitions execute as the `System` actor (same as timeout transitions).
+
+### 28.5 — Reactive vs. SIGNAL PARENT
+
+| | `SIGNAL PARENT TO state` | `REACTIVE` |
+|---|---|---|
+| **Declared in** | Child machine's transition | Parent machine's body |
+| **Trigger** | Specific child transition | Any condition (field, child state) |
+| **Failure** | Logged, non-fatal | Silent (`TRY` semantics) |
+| **Direction** | Child → Parent | Self-contained in parent |
+
+---
+
+## 29. `DEFINE SAGA` — Multi-Machine Orchestration
+
+A `SAGA` is a named, multi-step orchestration that coordinates transitions across multiple machines. Sagas are triggered by state machine events and execute a sequence of steps — each step transitioning an instance of some machine. If a step fails, compensation steps can roll back earlier steps.
+
+**Eliminates:** orchestration microservices, workflow engines running outside the database.
+
+### 29.1 — Syntax
+
+```smql
+DEFINE SAGA SagaName
+  TRIGGER : ON ENTER state ON MachineName
+           | ON SPAWN MachineName
+           | MANUAL
+
+  STEP n [WHEN condition] : TRANSITION MachineName instance_expr TO state
+                            [COMPENSATE : TRANSITION MachineName instance_expr TO rollback_state]
+
+  ON COMPLETE : ACTION : <effect>
+  ON FAILURE  : ACTION : <effect>
+```
+
+### 29.2 — Trigger Types
+
+| Trigger | Syntax | When it starts |
+|---------|--------|----------------|
+| State entry | `ON ENTER state ON Machine` | When any instance of `Machine` enters `state` |
+| Spawn | `ON SPAWN Machine` | When a new instance of `Machine` is created |
+| Manual | `MANUAL` | Only when explicitly invoked |
+
+### 29.3 — Steps
+
+Each step transitions an instance of a machine. The `instance_expr` is an expression that resolves to the instance ID — typically a field on the triggering instance (`TRIGGER.id`, `TRIGGER.order_id`, etc.).
+
+```smql
+STEP 1 : TRANSITION FraudCheck TRIGGER.fraud_check_id TO cleared
+STEP 2 : TRANSITION Order TRIGGER.id TO fulfillment_ready
+```
+
+**Conditional steps** — skip a step if the condition is false:
+
+```smql
+STEP 3 WHEN TRIGGER.total > 1000 : TRANSITION Order TRIGGER.id TO high_value_review
+```
+
+**Compensation** — if a later step fails, run the compensation to undo this step:
+
+```smql
+STEP 1 : TRANSITION Inventory TRIGGER.inventory_id TO reserved
+  COMPENSATE : TRANSITION Inventory TRIGGER.inventory_id TO available
+
+STEP 2 : TRANSITION Payment TRIGGER.payment_id TO captured
+  COMPENSATE : TRANSITION Payment TRIGGER.payment_id TO refunded
+-- If STEP 2 fails, STEP 1's compensation fires: Inventory → available
+```
+
+### 29.4 — Full Example: Order Fulfillment Flow
+
+```smql
+DEFINE SAGA OrderFulfillmentFlow
+  TRIGGER : ON ENTER paid ON Order
+
+  -- Step 1: Reserve inventory
+  STEP 1 : TRANSITION Inventory TRIGGER.inventory_id TO reserved
+    COMPENSATE : TRANSITION Inventory TRIGGER.inventory_id TO available
+
+  -- Step 2: Capture payment
+  STEP 2 : TRANSITION Payment TRIGGER.payment_id TO captured
+    COMPENSATE : TRANSITION Payment TRIGGER.payment_id TO refunded
+
+  -- Step 3: Only create shipment for physical goods
+  STEP 3 WHEN TRIGGER.requires_shipping == TRUE :
+    TRANSITION Shipment TRIGGER.shipment_id TO created
+
+  -- Step 4: Mark order as fulfillment-ready
+  STEP 4 : TRANSITION Order TRIGGER.id TO fulfillment_ready
+
+  ON COMPLETE :
+    ACTION : EMIT("saga.order_fulfillment.complete", { order: TRIGGER.id })
+    ACTION : NOTIFY(TRIGGER.customer, "order.fulfillment_started")
+
+  ON FAILURE :
+    ACTION : EMIT("saga.order_fulfillment.failed", { order: TRIGGER.id })
+    ACTION : NOTIFY(TRIGGER.customer, "order.fulfillment_failed")
+    ACTION : NOTIFY(ops_team, "saga.failure")
+```
+
+### 29.5 — Saga Execution Model
+
+1. **Trigger fires** — a machine enters the trigger state.
+2. **Steps execute sequentially** — each step is attempted in order.
+3. **Conditional steps** — if `WHEN` condition is false, the step is skipped (not a failure).
+4. **Step failure** — if a transition is rejected (guard failure, rule violation, etc.), the saga enters failure mode.
+5. **Compensation** — compensation steps run in **reverse order** for all steps that had already succeeded.
+6. **ON COMPLETE / ON FAILURE** — the appropriate actions fire when the saga finishes.
+
+### 29.6 — Observability
+
+Saga instances are stored in the catalog and are queryable:
+
+```smql
+-- Find running sagas (future: FIND SAGA syntax)
+-- Saga trail entries are written for each step
+-- Prometheus metrics: smql_saga_runs_total, smql_saga_step_duration_seconds
+```
+
+Each saga step writes a trail entry on the target instance, so the full history of saga-driven transitions is visible in the normal `TRAIL OF` output.
+
+### 29.7 — Behaviour Rules
+
+- Sagas execute **asynchronously** after the triggering transition commits.
+- A saga failure does **not** roll back the triggering transition.
+- Compensation steps use `TRY` semantics — a failed compensation is logged but does not block other compensations.
+- Multiple sagas can be triggered by the same event; all run independently.
+- Sagas execute as the `System` actor.
+
+---
+
 ## Appendix A — Reserved Words
 
 ```
@@ -1559,15 +2414,19 @@ MEASURE  GROUP  BY  OF  FROM  TO  AS  WITH
 AVG  COUNT  SUM  MIN  MAX  PERCENTILE
 EMIT  NOTIFY  LOG  WEBHOOK  SIGNAL
 SELF  ACTOR  ANY  ALL  EXCEPT  IN  IS  SET  NULL
-OR  AND  NOT  OR_STAY
-ALTER  ADD  REMOVE  BACKFILL  MIGRATE
-HOOKS  BEFORE  AFTER  EACH  ON  ENTER  EXIT  DWELL  SUBSCRIBE  DELIVER
+OR  AND  NOT  OR_STAY  WHEN
+ALTER  ADD  REMOVE  BACKFILL  MIGRATE  MODIFY
+HOOKS  BEFORE  AFTER  EACH  ON  ENTER  EXIT  DWELL
 PARENT  CHILDREN  REF  LIST  MAP  ENUM  REQUIRED  OPTIONAL
-DEFAULT  RANGE  PATTERN  UNIQUE  ROLES
+DEFAULT  RANGE  PATTERN  UNIQUE  ROLES  COMPUTED
 MONEY  UUID  TEXT  INT  FLOAT  BOOL  DATE  DATETIME  DURATION  BLOB  JSON
 TRUE  FALSE  NOW  TODAY  ASC  DESC  DELETED
 STUCK_IN  TIMEOUT_REMAINING  HAS_VISITED  NEVER_VISITED  ALIVE  TERMINATED
 CONTAINS
+POLICY  APPLY  RULE  ERROR  SUBSCRIPTION  REACTIVE  SAGA  TRIGGER
+DELIVER  DEAD_LETTER  RETRY  BACKOFF  WAIT  STEP  COMPENSATE
+VIEW  PROJECTION  REFRESH  INTERVAL  MANUAL  COMPLETE  FAILURE
+CAN  CANNOT  READ  WRITE
 ```
 
 ---
@@ -1576,11 +2435,13 @@ CONTAINS
 
 ```ebnf
 statement       ::= machine_def | spawn_stmt | transition_stmt | query_stmt | alter_stmt
+                   | define_policy | define_rule | define_view | define_projection
+                   | define_subscription | define_saga
 
 machine_def     ::= 'DEFINE' 'MACHINE' IDENT '(' machine_body ')'
 machine_body    ::= (data_block | states_block | initial_block |
                      terminal_block | transitions_block | children_block |
-                     hooks_block | roles_block | parent_block)*
+                     hooks_block | roles_block | parent_block | reactive_block)*
 
 states_block    ::= 'STATES' '{' IDENT (',' IDENT)* '}'
 initial_block   ::= 'INITIAL' 'STATE' IDENT
@@ -1593,12 +2454,91 @@ transition_def  ::= source '->' target '{' transition_clause* '}'
 source          ::= IDENT | 'ANY' ('EXCEPT' 'FROM' '{' IDENT (',' IDENT)* '}')?
 target          ::= IDENT
 transition_clause ::= guard | action | mutate | timeout | signal_parent
-                    | except_from
+                    | except_from | apply_policy
 guard           ::= 'GUARD' ':' expression
 action          ::= 'ACTION' ':' action_expr
+                  | 'ACTION' 'WHEN' expression ':' action_expr
 mutate          ::= 'MUTATE' ':' IDENT '=' expression
 timeout         ::= 'TIMEOUT' ':' DURATION '->' IDENT
 signal_parent   ::= 'SIGNAL' 'PARENT' 'TO' IDENT
+apply_policy    ::= 'APPLY' 'POLICY' IDENT
+
+hooks_block     ::= 'HOOKS' '{' hook_def* '}'
+hook_def        ::= hook_trigger '{' transition_clause* '}'
+hook_trigger    ::= 'ON' 'SPAWN'
+                  | 'BEFORE' 'EACH' 'TRANSITION'
+                  | 'AFTER' 'EACH' 'TRANSITION'
+                  | 'ON' 'ENTER' IDENT
+                  | 'ON' 'EXIT' IDENT
+                  | 'ON' 'DWELL' '(' IDENT ',' '>' DURATION ')'
+
+reactive_block  ::= 'REACTIVE' '{' reactive_rule* '}'
+reactive_rule   ::= 'WHEN' expression ':' 'TRY' 'TRANSITION' 'TO' IDENT
+
+roles_block     ::= 'ROLES' '{' role_def* '}'
+role_def        ::= IDENT '{' role_permission* '}'
+role_permission ::= 'CAN' 'SPAWN'
+                  | 'CAN' 'TRANSITION' '[' IDENT (',' IDENT)* ']'
+                  | 'CAN' 'QUERY'
+                  | 'CAN' 'ALTER'
+                  | 'CAN' 'ALL'
+                  | 'CAN' 'READ' '{' IDENT (',' IDENT)* '}'
+                  | 'CANNOT' 'READ' '{' IDENT (',' IDENT)* '}'
+                  | 'CAN' 'WRITE' '{' IDENT (',' IDENT)* '}'
+                  | 'CANNOT' 'WRITE' '{' IDENT (',' IDENT)* '}'
+
+field_def       ::= IDENT ':' type_def ('->' constraint (',' constraint)*)?
+constraint      ::= 'REQUIRED' | 'OPTIONAL' | 'UNIQUE'
+                  | 'MIN' '(' INT ')' | 'MAX' '(' INT ')'
+                  | 'RANGE' '(' INT ',' INT ')'
+                  | 'DEFAULT' '(' default_value ')'
+                  | 'PATTERN' '(' STRING ')'
+                  | 'COMPUTED' '(' expression ')'
+
+define_policy   ::= 'DEFINE' 'POLICY' IDENT guard+
+
+define_rule     ::= 'DEFINE' 'RULE' IDENT
+                     'ON' 'MACHINE' IDENT
+                     rule_trigger
+                     guard
+                     ('ERROR' ':' STRING)?
+rule_trigger    ::= 'BEFORE' 'SPAWN'
+                  | 'BEFORE' 'TRANSITION'
+                  | 'AFTER' 'TRANSITION'
+
+define_view     ::= 'DEFINE' 'VIEW' IDENT 'AS' find_stmt
+
+define_projection ::= 'DEFINE' 'PROJECTION' IDENT 'AS' aggregate_stmt
+                       'REFRESH' refresh_policy
+refresh_policy  ::= 'ON' 'TRANSITION'
+                  | 'ON' 'INTERVAL' INT 's'
+                  | 'MANUAL'
+
+define_subscription ::= 'DEFINE' 'SUBSCRIPTION' IDENT
+                          sub_event
+                          ('ACTION' ':' action_expr)+
+sub_event       ::= 'ON' 'ENTER' IDENT 'ON' IDENT
+                  | 'ON' 'EXIT' IDENT 'ON' IDENT
+                  | 'ON' 'SPAWN' IDENT
+                  | 'ON' 'TRANSITION' IDENT 'FROM' (IDENT | '*') 'TO' (IDENT | '*')
+
+define_saga     ::= 'DEFINE' 'SAGA' IDENT
+                     'TRIGGER' ':' saga_trigger
+                     saga_step+
+                     ('ON' 'COMPLETE' ':' ('ACTION' ':' action_expr)+)?
+                     ('ON' 'FAILURE' ':' ('ACTION' ':' action_expr)+)?
+saga_trigger    ::= 'ON' 'ENTER' IDENT 'ON' IDENT
+                  | 'ON' 'SPAWN' IDENT
+                  | 'MANUAL'
+saga_step       ::= 'STEP' INT ('WHEN' expression)? ':'
+                     'TRANSITION' IDENT expression 'TO' IDENT
+                     ('COMPENSATE' ':' 'TRANSITION' IDENT expression 'TO' IDENT)?
+
+query_stmt      ::= get_stmt | find_stmt | trail_stmt | aggregate_stmt
+                   | paths_stmt | funnel_stmt | compare_stmt
+                   | get_view_stmt | get_projection_stmt
+get_view_stmt       ::= 'GET' 'VIEW' IDENT
+get_projection_stmt ::= 'GET' 'PROJECTION' IDENT
 
 spawn_stmt      ::= 'SPAWN' IDENT '{' data_fields '}'
                      ('THEN' 'TRANSITION' 'TO' IDENT)?
@@ -1661,33 +2601,29 @@ primary         ::= literal | IDENT ('.' IDENT)* | function_call
 
 ## Appendix C — Planned Features
 
-The following features are defined in the SMQL specification but not yet implemented in the engine. They are reserved for future releases:
+The following features are reserved for future releases. They are not yet implemented in the engine:
 
 | Feature | Description |
 |---------|-------------|
 | `GROUP state_group { ... }` | Named state groups for transitions |
-| `DEFINE VIEW` | Flattened query views for dashboards |
-| `DEFINE PROJECTION` | Materialized, auto-refreshing projections |
 | `SELECT` clause in FIND | Select specific fields in query results |
-| `MODIFY TRANSITION` in ALTER | Modify guards/actions on existing transitions |
-| `ON DWELL(state, > duration)` hooks | Fire actions after dwelling in a state |
 | `STUCK_IN(state, > duration)` predicate | Query for stuck instances |
-| `TIMEOUT_REMAINING` predicate | Query instances approaching timeout |
 | `HAS_VISITED(state)` predicate | Instances that have visited a specific state |
 | `NEVER_VISITED(state)` predicate | Instances that have never visited a state |
 | `ALIVE` / `TERMINATED` predicates | Filter by lifecycle status |
 | `TRAIL CONTAINS (pattern)` | Sequential pattern matching on trail |
-| `SUBSCRIBE ... DELIVER TO WEBHOOK` | Declarative event subscriptions in SMQL |
 | `transition_time(state_a, state_b)` | Measure time between two states |
 | `duration_in(state)` | Total time spent in a state |
 | `total_lifecycle_duration()` | Total instance lifetime |
 | `entered_state_at()` | Timestamp of state entry |
 | `BETWEEN` operator | Range operator for dates/numbers |
-| Data-level access control | Per-field read/write permissions by role |
-| Extended role syntax (`EXTENDS`, `CAN ALL`) | Role inheritance and full access |
+| Role inheritance (`EXTENDS`) | Inherit permissions from another role |
 | RocksDB compaction/TTL | Automatic cleanup of old trail entries |
+| `smql diff` | Schema diff between machine versions |
+| `FIND SAGA` | Query active/completed saga instances |
+| `EXECUTE SAGA` | Manually trigger a MANUAL saga |
 
 ---
 
-*SMQL Language Specification — v0.2.0*
+*SMQL Language Specification — v0.3.0*
 *Designed for developers who believe data has a lifecycle.*

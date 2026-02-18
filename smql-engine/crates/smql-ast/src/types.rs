@@ -1,3 +1,4 @@
+use crate::expression::Expression;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -64,6 +65,8 @@ pub enum Constraint {
     Default(DefaultValue),
     Unique,
     Pattern(String),
+    /// COMPUTED(expression) — field is derived, not directly settable.
+    Computed(Expression),
 }
 
 impl fmt::Display for Constraint {
@@ -77,6 +80,7 @@ impl fmt::Display for Constraint {
             Constraint::Default(v) => write!(f, "DEFAULT({})", v),
             Constraint::Unique => write!(f, "UNIQUE"),
             Constraint::Pattern(p) => write!(f, "PATTERN({})", p),
+            Constraint::Computed(expr) => write!(f, "COMPUTED({})", expr),
         }
     }
 }

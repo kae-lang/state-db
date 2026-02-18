@@ -933,6 +933,7 @@ mod query_tests {
         let q = Query::Get(GetQuery {
             machine: "SupportTicket".into(),
             instance_id: "tk_123".into(),
+            as_actor: None,
         });
         assert_eq!(q.to_string(), "GET SupportTicket tk_123");
     }
@@ -946,6 +947,7 @@ mod query_tests {
             limit: Some(10),
             offset: None,
             after: None,
+            as_actor: None,
         });
         assert_eq!(q.to_string(), "FIND Order");
     }
@@ -975,6 +977,7 @@ mod query_tests {
         let q = Query::Get(GetQuery {
             machine: "Test".into(),
             instance_id: "id_1".into(),
+            as_actor: None,
         });
         let json = serde_json::to_string(&q).unwrap();
         let q2: Query = serde_json::from_str(&json).unwrap();
@@ -1080,6 +1083,7 @@ mod query_tests {
             limit: Some(20),
             offset: Some(5),
             after: Some("01HXYZ".into()),
+            as_actor: None,
         };
         let json = serde_json::to_string(&q).unwrap();
         let q2: FindQuery = serde_json::from_str(&json).unwrap();

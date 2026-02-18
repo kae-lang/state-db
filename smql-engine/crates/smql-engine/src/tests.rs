@@ -506,6 +506,7 @@ mod engine_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -1008,6 +1009,7 @@ mod query_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -1023,6 +1025,7 @@ mod query_tests {
         let query = Query::Get(GetQuery {
             machine: "Ticket".into(),
             instance_id: id.clone(),
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instance(inst) = result {
@@ -1041,6 +1044,7 @@ mod query_tests {
         let query = Query::Get(GetQuery {
             machine: "Ticket".into(),
             instance_id: "01NONEXISTENT000000000000".into(),
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await;
         assert!(result.is_err());
@@ -1062,6 +1066,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1105,6 +1110,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1137,6 +1143,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1168,6 +1175,7 @@ mod query_tests {
             limit: Some(2),
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1465,6 +1473,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1515,6 +1524,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1547,6 +1557,7 @@ mod query_tests {
             limit: Some(2),
             offset: Some(2),
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1587,6 +1598,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1621,6 +1633,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -1964,6 +1977,7 @@ mod query_tests {
             limit: Some(2),
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         let page1 = if let QueryResult::Instances(insts) = result {
@@ -1982,6 +1996,7 @@ mod query_tests {
             limit: Some(2),
             offset: None,
             after: Some(cursor.clone()),
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         let page2 = if let QueryResult::Instances(insts) = result {
@@ -2007,6 +2022,7 @@ mod query_tests {
             limit: Some(2),
             offset: None,
             after: Some(cursor2),
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -2035,6 +2051,7 @@ mod query_tests {
             limit: Some(2),
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -2063,6 +2080,7 @@ mod query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -2145,6 +2163,7 @@ mod timer_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -2765,6 +2784,7 @@ mod hook_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -3346,6 +3366,7 @@ mod composition_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -3366,6 +3387,7 @@ mod composition_tests {
             batch_data: Vec::new(),
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
+            as_actor: None,
         }
     }
 
@@ -5622,6 +5644,7 @@ mod coverage_cascade_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -5642,6 +5665,7 @@ mod coverage_cascade_tests {
             batch_data: Vec::new(),
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
+            as_actor: None,
         }
     }
 
@@ -6038,6 +6062,7 @@ mod coverage_query_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -6067,6 +6092,7 @@ mod coverage_query_tests {
             limit: Some(3),
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -6124,6 +6150,7 @@ mod coverage_query_tests {
             limit: Some(2),
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -6185,6 +6212,7 @@ mod coverage_query_tests {
             limit: Some(3),
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -6231,6 +6259,7 @@ mod coverage_query_tests {
             limit: None,
             offset: Some(10),
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -6545,6 +6574,7 @@ mod coverage_query_tests {
                 batch_data: Vec::new(),
                 parent_id: None,
                 parent_machine: None,
+                as_actor: None,
             };
             engine.spawn(&cmd).await.unwrap();
         }
@@ -6858,6 +6888,7 @@ mod coverage_query_tests {
             limit: None,
             offset: None,
             after: None,
+            as_actor: None,
         });
         let result = engine.execute_query(&query).await.unwrap();
         if let QueryResult::Instances(insts) = result {
@@ -7571,6 +7602,7 @@ mod coverage_timeout_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -7756,6 +7788,7 @@ mod coverage_type_validation_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -7776,6 +7809,7 @@ mod coverage_type_validation_tests {
             batch_data: Vec::new(),
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
+            as_actor: None,
         }
     }
 
@@ -8700,6 +8734,7 @@ mod callback_coverage_tests {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 
@@ -8725,6 +8760,7 @@ mod callback_coverage_tests {
             batch_data: Vec::new(),
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
+            as_actor: None,
         }
     }
 

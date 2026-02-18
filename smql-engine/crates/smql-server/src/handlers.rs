@@ -143,6 +143,90 @@ async fn execute_command(state: &AppState, cmd: Command) -> (StatusCode, Json<Ex
             ),
         },
 
+        Command::DefinePolicy(policy) => {
+            let name = policy.name.clone();
+            state.engine.catalog.register_policy(policy);
+            (
+                StatusCode::CREATED,
+                Json(ExecuteResponse {
+                    success: true,
+                    result: Some(serde_json::json!({ "action": "policy_defined", "name": name })),
+                    error: None,
+                    warnings: None,
+                }),
+            )
+        }
+
+        Command::DefineView(view) => {
+            let name = view.name.clone();
+            state.engine.catalog.register_view(view);
+            (
+                StatusCode::CREATED,
+                Json(ExecuteResponse {
+                    success: true,
+                    result: Some(serde_json::json!({ "action": "view_defined", "name": name })),
+                    error: None,
+                    warnings: None,
+                }),
+            )
+        }
+
+        Command::DefineProjection(proj) => {
+            let name = proj.name.clone();
+            state.engine.catalog.register_projection(proj);
+            (
+                StatusCode::CREATED,
+                Json(ExecuteResponse {
+                    success: true,
+                    result: Some(serde_json::json!({ "action": "projection_defined", "name": name })),
+                    error: None,
+                    warnings: None,
+                }),
+            )
+        }
+
+        Command::DefineRule(rule) => {
+            let name = rule.name.clone();
+            state.engine.catalog.register_rule(rule);
+            (
+                StatusCode::CREATED,
+                Json(ExecuteResponse {
+                    success: true,
+                    result: Some(serde_json::json!({ "action": "rule_defined", "name": name })),
+                    error: None,
+                    warnings: None,
+                }),
+            )
+        }
+
+        Command::DefineSubscription(sub) => {
+            let name = sub.name.clone();
+            state.engine.catalog.register_subscription(sub);
+            (
+                StatusCode::CREATED,
+                Json(ExecuteResponse {
+                    success: true,
+                    result: Some(serde_json::json!({ "action": "subscription_defined", "name": name })),
+                    error: None,
+                    warnings: None,
+                }),
+            )
+        }
+
+        Command::DefineSaga(saga) => {
+            let name = saga.name.clone();
+            state.engine.catalog.register_saga(saga);
+            (
+                StatusCode::CREATED,
+                Json(ExecuteResponse {
+                    success: true,
+                    result: Some(serde_json::json!({ "action": "saga_defined", "name": name })),
+                    error: None,
+                    warnings: None,
+                }),
+            )
+        }
+
         Command::Spawn(spawn_cmd) => {
             let machine_name = spawn_cmd.machine.clone();
             let start = Instant::now();
@@ -413,6 +497,8 @@ async fn execute_query(
         query::Query::Paths(_) => "PATHS",
         query::Query::Funnel(_) => "FUNNEL",
         query::Query::ComparePaths(_) => "COMPARE_PATHS",
+        query::Query::GetView(_) => "GET_VIEW",
+        query::Query::GetProjection(_) => "GET_PROJECTION",
     };
 
     let start = Instant::now();

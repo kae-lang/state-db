@@ -54,6 +54,7 @@ fn spawn_ticket(data: Vec<(&str, Value)>) -> SpawnCommand {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }
 }
 
@@ -167,6 +168,7 @@ async fn spawn_ticket_basic() {
     let q = Query::Get(GetQuery {
         machine: "SupportTicket".into(),
         instance_id: id,
+        as_actor: None,
     });
     let r = engine.execute_query(&q).await.unwrap();
     match r {
@@ -234,6 +236,7 @@ async fn full_lifecycle_happy_path() {
     let q = Query::Get(GetQuery {
         machine: "SupportTicket".into(),
         instance_id: id.clone(),
+        as_actor: None,
     });
     let r = engine.execute_query(&q).await.unwrap();
     match r {
@@ -332,6 +335,7 @@ async fn find_by_state() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -482,6 +486,7 @@ async fn multiple_tickets_diverse_paths() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -575,7 +580,8 @@ async fn reopen_flow() {
         let q = Query::Get(GetQuery {
             machine: "SupportTicket".into(),
             instance_id: id.clone(),
-        });
+        as_actor: None,
+    });
         match engine.execute_query(&q).await.unwrap() {
             QueryResult::Instance(inst) => {
                 if let Some(Value::Uuid(uid)) = inst.data.get("customer_id") {
@@ -633,6 +639,7 @@ async fn find_with_limit_offset() {
         limit: Some(2),
         offset: Some(1),
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {

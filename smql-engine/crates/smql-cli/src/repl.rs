@@ -239,6 +239,10 @@ async fn execute_command(cmd: Command, engine: &Engine) {
             }
             Err(e) => eprintln!("Error: {}", e),
         },
+
+        _ => {
+            eprintln!("Command not supported in REPL.");
+        }
     }
 }
 
@@ -563,6 +567,7 @@ mod tests {
         let query = smql_ast::query::Query::Get(smql_ast::query::GetQuery {
             machine: "Q".into(),
             instance_id: "nonexistent".into(),
+            as_actor: None,
         });
         // Should print error, not panic
         execute_query_public(query, &engine).await;

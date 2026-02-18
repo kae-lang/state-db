@@ -106,6 +106,30 @@ async fn execute_smql(engine: &Engine, smql: &str) -> Result<String, String> {
             Command::AlterMachine(a_cmd) => {
                 Ok(format!("alter_machine:{}", a_cmd.machine))
             }
+            Command::DefinePolicy(policy) => {
+                engine.catalog.register_policy(policy);
+                Ok("policy_defined".to_string())
+            }
+            Command::DefineView(view) => {
+                engine.catalog.register_view(view);
+                Ok("view_defined".to_string())
+            }
+            Command::DefineProjection(proj) => {
+                engine.catalog.register_projection(proj);
+                Ok("projection_defined".to_string())
+            }
+            Command::DefineRule(rule) => {
+                engine.catalog.register_rule(rule);
+                Ok("rule_defined".to_string())
+            }
+            Command::DefineSubscription(sub) => {
+                engine.catalog.register_subscription(sub);
+                Ok("subscription_defined".to_string())
+            }
+            Command::DefineSaga(saga) => {
+                engine.catalog.register_saga(saga);
+                Ok("saga_defined".to_string())
+            }
         },
         Statement::Query(query) => {
             let result = engine

@@ -204,6 +204,47 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> SmqlResult<Statement> {
         if self.check_keyword("DEFINE") {
+            // Peek ahead to distinguish DEFINE MACHINE vs DEFINE POLICY vs DEFINE VIEW vs DEFINE PROJECTION
+            let next = self.peek_nth(1).map(|t| t.text.to_uppercase());
+            match next.as_deref() {
+                Some("POLICY") => {
+                    let policy = machine::parse_define_policy(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefinePolicy(policy),
+                    ));
+                }
+                Some("VIEW") => {
+                    let view = queries::parse_define_view(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefineView(view),
+                    ));
+                }
+                Some("PROJECTION") => {
+                    let proj = queries::parse_define_projection(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefineProjection(proj),
+                    ));
+                }
+                Some("RULE") => {
+                    let rule = machine::parse_define_rule(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefineRule(rule),
+                    ));
+                }
+                Some("SUBSCRIPTION") => {
+                    let sub = machine::parse_define_subscription(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefineSubscription(sub),
+                    ));
+                }
+                Some("SAGA") => {
+                    let saga = machine::parse_define_saga(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefineSaga(saga),
+                    ));
+                }
+                _ => {}
+            }
             let machine = machine::parse_define_machine(self)?;
             Ok(Statement::Command(
                 smql_ast::command::Command::DefineMachine(machine),

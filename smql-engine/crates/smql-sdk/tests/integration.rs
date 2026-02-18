@@ -972,6 +972,7 @@ DEFINE MACHINE SigChild (
             batch_data: vec![],
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         })
         .await
         .unwrap();
@@ -997,6 +998,7 @@ DEFINE MACHINE SigChild (
             batch_data: vec![],
             parent_id: Some(parent_id.clone()),
             parent_machine: Some("SigParent".into()),
+            as_actor: None,
         })
         .await
         .unwrap();

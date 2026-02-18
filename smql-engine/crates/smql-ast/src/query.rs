@@ -21,6 +21,10 @@ pub enum Query {
     Funnel(FunnelQuery),
     /// COMPARE PATHS Machine SEGMENT BY field
     ComparePaths(ComparePathsQuery),
+    /// GET VIEW name — execute a named view
+    GetView(GetViewQuery),
+    /// GET PROJECTION name — execute a named projection
+    GetProjection(GetProjectionQuery),
 }
 
 impl fmt::Display for Query {
@@ -33,6 +37,8 @@ impl fmt::Display for Query {
             Query::Paths(q) => write!(f, "PATHS FROM {}", q.machine),
             Query::Funnel(q) => write!(f, "FUNNEL {}", q.machine),
             Query::ComparePaths(q) => write!(f, "COMPARE PATHS {}", q.machine),
+            Query::GetView(q) => write!(f, "GET VIEW {}", q.name),
+            Query::GetProjection(q) => write!(f, "GET PROJECTION {}", q.name),
         }
     }
 }
@@ -42,6 +48,9 @@ impl fmt::Display for Query {
 pub struct GetQuery {
     pub machine: String,
     pub instance_id: String,
+    /// Optional actor role for field-level read filtering.
+    #[serde(default)]
+    pub as_actor: Option<String>,
 }
 
 /// FIND query — search for instances matching criteria.
@@ -55,6 +64,9 @@ pub struct FindQuery {
     /// Cursor-based pagination: return instances with ID > after.
     #[serde(default)]
     pub after: Option<String>,
+    /// Optional actor role for field-level read filtering.
+    #[serde(default)]
+    pub as_actor: Option<String>,
 }
 
 /// AGGREGATE query — compute aggregations over instances.
@@ -122,4 +134,16 @@ pub struct ComparePathsQuery {
     pub machine: String,
     pub segment_by: String,
     pub filter: Option<Expression>,
+}
+
+/// GET VIEW name — execute a named view and return its results.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetViewQuery {
+    pub name: String,
+}
+
+/// GET PROJECTION name — execute a named projection and return its results.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetProjectionQuery {
+    pub name: String,
 }

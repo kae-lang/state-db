@@ -32,6 +32,7 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
             batch_data,
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }));
     }
 
@@ -53,6 +54,7 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }))
 }
 

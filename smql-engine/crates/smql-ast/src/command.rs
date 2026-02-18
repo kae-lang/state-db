@@ -9,6 +9,18 @@ use crate::machine::MachineDefinition;
 pub enum Command {
     /// DEFINE MACHINE ...
     DefineMachine(MachineDefinition),
+    /// DEFINE POLICY ...
+    DefinePolicy(crate::machine::PolicyDefinition),
+    /// DEFINE VIEW Name AS FIND ...
+    DefineView(crate::view::ViewDefinition),
+    /// DEFINE PROJECTION Name AS AGGREGATE ... REFRESH ON ...
+    DefineProjection(crate::view::ProjectionDefinition),
+    /// DEFINE RULE Name ...
+    DefineRule(crate::rule::RuleDefinition),
+    /// DEFINE SUBSCRIPTION Name ...
+    DefineSubscription(crate::subscription::SubscriptionDefinition),
+    /// DEFINE SAGA Name ...
+    DefineSaga(crate::saga::SagaDefinition),
     /// SPAWN Machine { data }
     Spawn(SpawnCommand),
     /// TRANSITION instance TO state
@@ -25,6 +37,12 @@ impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Command::DefineMachine(m) => write!(f, "DEFINE {}", m),
+            Command::DefinePolicy(p) => write!(f, "DEFINE POLICY {}", p.name),
+            Command::DefineView(v) => write!(f, "DEFINE VIEW {}", v.name),
+            Command::DefineProjection(p) => write!(f, "DEFINE PROJECTION {}", p.name),
+            Command::DefineRule(r) => write!(f, "DEFINE RULE {}", r.name),
+            Command::DefineSubscription(s) => write!(f, "DEFINE SUBSCRIPTION {}", s.name),
+            Command::DefineSaga(s) => write!(f, "DEFINE SAGA {}", s.name),
             Command::Spawn(s) => write!(f, "SPAWN {}", s.machine),
             Command::Transition(t) => write!(
                 f,
@@ -68,6 +86,9 @@ pub struct SpawnCommand {
     pub parent_id: Option<String>,
     /// Parent machine name (for child spawn in composition)
     pub parent_machine: Option<String>,
+    /// Optional actor role for field-level write permission checking.
+    #[serde(default)]
+    pub as_actor: Option<String>,
 }
 
 impl SpawnCommand {
@@ -80,6 +101,7 @@ impl SpawnCommand {
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         }
     }
 }

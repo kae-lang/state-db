@@ -66,6 +66,7 @@ async fn spawn_ticket(engine: &Engine) -> String {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let r = engine.spawn(&cmd).await.expect("spawn ticket");
     assert_eq!(r.instance.state, "open");
@@ -124,6 +125,7 @@ async fn level1_get_instance() {
     let q = Query::Get(GetQuery {
         machine: "SupportTicket".into(),
         instance_id: id.clone(),
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -154,6 +156,7 @@ async fn level1_get_nonexistent() {
     let q = Query::Get(GetQuery {
         machine: "SupportTicket".into(),
         instance_id: "nonexistent_id_12345".into(),
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await;
     assert!(result.is_err(), "nonexistent instance should error");
@@ -201,6 +204,7 @@ async fn level2_find_all() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -238,6 +242,7 @@ async fn level2_find_by_state() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -258,6 +263,7 @@ async fn level2_find_by_state() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -284,6 +290,7 @@ async fn level2_find_with_limit() {
         limit: Some(3),
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -309,6 +316,7 @@ async fn level2_find_with_limit_offset() {
         limit: Some(2),
         offset: Some(3),
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -868,6 +876,7 @@ fn spawn_order_cmd(customer: &str, total: i64) -> smql_ast::command::SpawnComman
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }
 }
 
@@ -892,6 +901,7 @@ fn spawn_item_cmd(
         batch_data: Vec::new(),
         parent_id: Some(order_id.to_string()),
         parent_machine: Some("Order".to_string()),
+        as_actor: None,
     }
 }
 
@@ -917,6 +927,7 @@ async fn level7_cross_machine_get() {
     let q = Query::Get(GetQuery {
         machine: "Order".into(),
         instance_id: order_id.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -933,6 +944,7 @@ async fn level7_cross_machine_get() {
     let q = Query::Get(GetQuery {
         machine: "LineItem".into(),
         instance_id: item_id.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -998,6 +1010,7 @@ async fn level7_find_children() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -1014,6 +1027,7 @@ async fn level7_find_children() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -1173,6 +1187,7 @@ async fn level8_full_order_lifecycle_queries() {
     let q = Query::Get(GetQuery {
         machine: "Order".into(),
         instance_id: oid.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => assert_eq!(inst.state, "placed"),
@@ -1222,6 +1237,7 @@ async fn level8_full_order_lifecycle_queries() {
     let q = Query::Get(GetQuery {
         machine: "Order".into(),
         instance_id: oid.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => assert_eq!(inst.state, "delivered"),
@@ -1302,6 +1318,7 @@ async fn level8_cascade_cancel_query() {
     let q = Query::Get(GetQuery {
         machine: "Order".into(),
         instance_id: oid.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => assert_eq!(inst.state, "cancelled"),
@@ -1313,6 +1330,7 @@ async fn level8_cascade_cancel_query() {
         let q = Query::Get(GetQuery {
             machine: "LineItem".into(),
             instance_id: item_id.to_string(),
+            as_actor: None,
         });
         match engine.execute_query(&q).await.unwrap() {
             QueryResult::Instance(inst) => {
@@ -1880,6 +1898,7 @@ fn spawn_metric_cmd(sensor: &str, reading: f64, category: Option<&str>) -> smql_
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }
 }
 
@@ -2105,6 +2124,7 @@ async fn level11_find_sort_asc() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -2142,6 +2162,7 @@ async fn level11_find_sort_desc() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -2179,6 +2200,7 @@ async fn level11_find_sort_by_text() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -2227,6 +2249,7 @@ async fn level11_find_filter_limit_post_filter() {
         limit: Some(2),
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -2249,6 +2272,7 @@ async fn level11_find_filter_limit_post_filter() {
         limit: Some(10),
         offset: Some(3),
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -2285,6 +2309,7 @@ async fn level11_find_filter_offset_beyond() {
         limit: Some(10),
         offset: Some(100),
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -3059,6 +3084,7 @@ async fn level12_get_wrong_machine_name() {
     let q = Query::Get(GetQuery {
         machine: "LineItem".into(),
         instance_id: oid.clone(),
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await;
     assert!(
@@ -3091,6 +3117,7 @@ async fn level12_find_with_filter_and_offset() {
         limit: Some(3),
         offset: Some(1),
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -3129,6 +3156,7 @@ async fn level12_find_with_filter_and_offset_beyond() {
         limit: Some(5),
         offset: Some(10),
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -3309,6 +3337,7 @@ DEFINE MACHINE DtSort (
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         };
         engine.spawn(&cmd).await.unwrap();
     }
@@ -3324,6 +3353,7 @@ DEFINE MACHINE DtSort (
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -3388,6 +3418,7 @@ DEFINE MACHINE BoolSort (
             batch_data: Vec::new(),
             parent_id: None,
             parent_machine: None,
+            as_actor: None,
         };
         engine.spawn(&cmd).await.unwrap();
     }
@@ -3403,6 +3434,7 @@ DEFINE MACHINE BoolSort (
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -3498,6 +3530,7 @@ async fn level12_find_sort_by_mixed_types() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {
@@ -3616,6 +3649,7 @@ async fn level12_find_where_data_field_filter() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     let result = engine.execute_query(&q).await.unwrap();
     match result {

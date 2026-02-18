@@ -17,6 +17,8 @@ fn query_type_label(query: &Query) -> &'static str {
         Query::Paths(_) => "PATHS",
         Query::Funnel(_) => "FUNNEL",
         Query::ComparePaths(_) => "COMPARE_PATHS",
+        Query::GetView(_) => "GET_VIEW",
+        Query::GetProjection(_) => "GET_PROJECTION",
     }
 }
 
@@ -93,15 +95,17 @@ impl Engine {
             Query::Paths(q) => self.execute_paths(q).await,
             Query::Funnel(q) => self.execute_funnel(q).await,
             Query::ComparePaths(q) => self.execute_compare_paths(q).await,
+            Query::GetView(q) => self.execute_get_view(q).await,
+            Query::GetProjection(q) => self.execute_get_projection(q).await,
         }
     }
 
-    /// GET Machine instance_id — retrieve a single instance.
+    /// GET Machine instance_id [AS ACTOR role] — retrieve a single instance.
     async fn execute_get(&self, query: &GetQuery) -> SmqlResult<QueryResult> {
         let id = smql_storage::InstanceId::from_string(&query.instance_id)
             .map_err(|_| SmqlError::not_found("Instance", &query.instance_id))?;
 
-        let instance = self
+        let mut instance = self
             .storage
             .get_instance(&id)
             .await?
@@ -109,6 +113,17 @@ impl Engine {
 
         if instance.machine != query.machine {
             return Err(SmqlError::not_found("Instance", &query.instance_id));
+        }
+
+        // Apply field-level read filtering if an actor role is specified
+        if query.as_actor.is_some() {
+            if let Ok(machine_def) = self.catalog.get(&query.machine) {
+                instance.data = self.filter_readable_fields(
+                    &machine_def,
+                    &instance.data,
+                    query.as_actor.as_deref(),
+                );
+            }
         }
 
         Ok(QueryResult::Instance(instance))
@@ -165,6 +180,19 @@ impl Engine {
             }
             if let Some(limit) = query.limit {
                 instances.truncate(limit as usize);
+            }
+        }
+
+        // Apply field-level read filtering if an actor role is specified
+        if query.as_actor.is_some() {
+            if let Ok(machine_def) = self.catalog.get(&query.machine) {
+                for inst in &mut instances {
+                    inst.data = self.filter_readable_fields(
+                        &machine_def,
+                        &inst.data,
+                        query.as_actor.as_deref(),
+                    );
+                }
             }
         }
 
@@ -393,6 +421,22 @@ impl Engine {
             segment_by: query.segment_by.clone(),
             segments,
         }))
+    }
+
+    /// GET VIEW name — execute a named view (runs its underlying FIND query).
+    pub async fn execute_get_view(&self, query: &GetViewQuery) -> SmqlResult<QueryResult> {
+        let view = self.catalog.get_view(&query.name).map_err(|_| {
+            SmqlError::not_found("View", &query.name)
+        })?;
+        self.execute_find(&view.query).await
+    }
+
+    /// GET PROJECTION name — execute a named projection (runs its underlying AGGREGATE query).
+    pub async fn execute_get_projection(&self, query: &GetProjectionQuery) -> SmqlResult<QueryResult> {
+        let proj = self.catalog.get_projection_def(&query.name).map_err(|_| {
+            SmqlError::not_found("Projection", &query.name)
+        })?;
+        self.execute_aggregate(&proj.query).await
     }
 }
 

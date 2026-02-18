@@ -248,6 +248,7 @@ DEFINE MACHINE TicketHooked (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.state, "open");
@@ -383,6 +384,7 @@ DEFINE MACHINE WaitTimeout (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
 
@@ -539,6 +541,7 @@ DEFINE MACHINE WildEngine (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.state, "open");
@@ -776,6 +779,7 @@ DEFINE MACHINE ConstraintEngine (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await;
     assert!(result.is_err(), "spawn without required fields should fail");
@@ -792,6 +796,7 @@ DEFINE MACHINE ConstraintEngine (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await;
     assert!(result.is_ok(), "spawn with required fields should succeed");
@@ -1042,6 +1047,7 @@ DEFINE MACHINE DtSpawn (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn with types");
     assert_eq!(result.instance.state, "open");
@@ -1121,6 +1127,7 @@ DEFINE MACHINE FullFeature (
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn full feature");
     assert_eq!(result.instance.state, "open");

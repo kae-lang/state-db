@@ -40,6 +40,7 @@ fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
         batch_data: Vec::new(),
         parent_id: None,
         parent_machine: None,
+        as_actor: None,
     }
 }
 
@@ -60,6 +61,7 @@ fn spawn_child_cmd(
         batch_data: Vec::new(),
         parent_id: Some(parent_id.to_string()),
         parent_machine: Some(parent_machine.to_string()),
+        as_actor: None,
     }
 }
 
@@ -160,6 +162,7 @@ async fn spawn_hierarchy() {
     let q = Query::Get(GetQuery {
         machine: "Job".into(),
         instance_id: job_id,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -173,6 +176,7 @@ async fn spawn_hierarchy() {
     let q = Query::Get(GetQuery {
         machine: "Stage".into(),
         instance_id: stage_id,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -480,6 +484,7 @@ async fn cascade_cancel_three_levels() {
     let q = Query::Get(GetQuery {
         machine: "Pipeline".into(),
         instance_id: pid.clone(),
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {
@@ -529,6 +534,7 @@ async fn find_jobs_by_state() {
         limit: None,
         offset: None,
         after: None,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instances(instances) => {
@@ -644,6 +650,7 @@ async fn pipeline_default_trigger() {
     let q = Query::Get(GetQuery {
         machine: "Pipeline".into(),
         instance_id: pid,
+        as_actor: None,
     });
     match engine.execute_query(&q).await.unwrap() {
         QueryResult::Instance(inst) => {

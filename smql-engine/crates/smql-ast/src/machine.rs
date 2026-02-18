@@ -97,6 +97,20 @@ impl fmt::Display for TransitionSource {
     }
 }
 
+/// A named, reusable set of guard expressions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PolicyDefinition {
+    pub name: String,
+    pub guards: Vec<Expression>,
+}
+
+/// A reactive clause: auto-transition when condition is true after any mutation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReactiveClause {
+    /// The condition expression — when true, the transition fires automatically.
+    pub condition: Expression,
+}
+
 /// A transition definition between states.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransitionDefinition {
@@ -107,6 +121,10 @@ pub struct TransitionDefinition {
     pub mutates: Vec<MutateClause>,
     pub timeout: Option<TimeoutClause>,
     pub memo: Option<String>,
+    /// APPLY POLICY references — expanded at guard evaluation time.
+    pub policies: Vec<String>,
+    /// REACTIVE clause — auto-fires when condition is true after any mutation.
+    pub reactive: Option<ReactiveClause>,
 }
 
 impl TransitionDefinition {
@@ -119,6 +137,8 @@ impl TransitionDefinition {
             mutates: Vec::new(),
             timeout: None,
             memo: None,
+            policies: Vec::new(),
+            reactive: None,
         }
     }
 }
@@ -179,6 +199,11 @@ pub enum Action {
     },
     /// SIGNAL PARENT TO state
     SignalParent { target_state: String },
+    /// ACTION WHEN condition : action — conditional action
+    Conditional {
+        condition: Expression,
+        action: Box<Action>,
+    },
 }
 
 impl fmt::Display for Action {
@@ -191,6 +216,9 @@ impl fmt::Display for Action {
             Action::SpawnChild { machine, .. } => write!(f, "SPAWN {}", machine),
             Action::SignalParent { target_state } => {
                 write!(f, "SIGNAL PARENT TO {}", target_state)
+            }
+            Action::Conditional { condition, action } => {
+                write!(f, "ACTION WHEN {} : {}", condition, action)
             }
         }
     }
@@ -283,4 +311,14 @@ pub enum RolePermission {
     CanTransition(Vec<String>),
     CanQuery,
     CanAlter,
+    /// CAN ALL — shorthand for all permissions
+    CanAll,
+    /// CAN READ { field1, field2 } — allowlist of readable fields
+    CanReadFields(Vec<String>),
+    /// CANNOT READ { field1, field2 } — denylist of readable fields
+    CannotReadFields(Vec<String>),
+    /// CAN WRITE { field1, field2 } — allowlist of writable fields
+    CanWriteFields(Vec<String>),
+    /// CANNOT WRITE { field1, field2 } — denylist of writable fields
+    CannotWriteFields(Vec<String>),
 }

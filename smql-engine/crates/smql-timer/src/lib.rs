@@ -17,6 +17,17 @@ pub struct TimerEntry {
     pub registered_at: DateTime<Utc>,
 }
 
+/// A registered dwell timer that fires hook actions (without transitioning).
+/// Dwell timers fire once when the instance has been in a state for >= the duration.
+#[derive(Debug, Clone)]
+pub struct DwellTimerEntry {
+    pub instance_id: String,
+    pub machine: String,
+    pub state: String,
+    pub duration: SmqlDuration,
+    pub deadline: DateTime<Utc>,
+}
+
 /// Manages timeout timers for state machine instances.
 ///
 /// Uses a BTreeMap keyed by deadline for efficient "what fires next?" lookups,
@@ -26,6 +37,10 @@ pub struct TimerManager {
     timers_by_deadline: RwLock<BTreeMap<DateTime<Utc>, Vec<TimerEntry>>>,
     /// Maps (instance_id:state) -> deadline for fast cancellation.
     timers_by_key: RwLock<HashMap<String, DateTime<Utc>>>,
+    /// Dwell timers indexed by deadline.
+    dwell_by_deadline: RwLock<BTreeMap<DateTime<Utc>, Vec<DwellTimerEntry>>>,
+    /// Maps (instance_id:state:duration_secs) -> deadline for dwell cancellation.
+    dwell_by_key: RwLock<HashMap<String, DateTime<Utc>>>,
 }
 
 impl TimerManager {
@@ -33,7 +48,112 @@ impl TimerManager {
         Self {
             timers_by_deadline: RwLock::new(BTreeMap::new()),
             timers_by_key: RwLock::new(HashMap::new()),
+            dwell_by_deadline: RwLock::new(BTreeMap::new()),
+            dwell_by_key: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Register a dwell timer. Fires when instance has been in `state` for >= `duration`.
+    /// Multiple dwell timers per (instance, state) are allowed (different durations).
+    pub fn register_dwell(
+        &self,
+        instance_id: &str,
+        machine: &str,
+        state: &str,
+        duration: &SmqlDuration,
+    ) {
+        let now = Utc::now();
+        let deadline = now + TimeDelta::seconds(duration.seconds as i64);
+        let key = dwell_key(instance_id, state, duration.seconds);
+
+        let entry = DwellTimerEntry {
+            instance_id: instance_id.to_string(),
+            machine: machine.to_string(),
+            state: state.to_string(),
+            duration: duration.clone(),
+            deadline,
+        };
+
+        let mut by_deadline = self.dwell_by_deadline.write().unwrap();
+        let mut by_key = self.dwell_by_key.write().unwrap();
+
+        by_deadline.entry(deadline).or_default().push(entry);
+        by_key.insert(key, deadline);
+    }
+
+    /// Cancel all dwell timers for a specific instance+state (called on state exit).
+    pub fn cancel_dwell_for_state(&self, instance_id: &str, state: &str) {
+        let mut by_key = self.dwell_by_key.write().unwrap();
+        let mut by_deadline = self.dwell_by_deadline.write().unwrap();
+
+        let prefix = dwell_prefix(instance_id, state);
+        let keys_to_remove: Vec<String> = by_key
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+
+        for key in &keys_to_remove {
+            if let Some(deadline) = by_key.remove(key) {
+                if let Some(entries) = by_deadline.get_mut(&deadline) {
+                    entries.retain(|e| !(e.instance_id == instance_id && e.state == state));
+                    if entries.is_empty() {
+                        by_deadline.remove(&deadline);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Cancel all dwell timers for a specific instance (called on terminal state).
+    pub fn cancel_all_dwell(&self, instance_id: &str) {
+        let mut by_key = self.dwell_by_key.write().unwrap();
+        let mut by_deadline = self.dwell_by_deadline.write().unwrap();
+
+        let prefix = format!("{}:", instance_id);
+        let keys_to_remove: Vec<String> = by_key
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+
+        for key in &keys_to_remove {
+            if let Some(deadline) = by_key.remove(key) {
+                if let Some(entries) = by_deadline.get_mut(&deadline) {
+                    entries.retain(|e| e.instance_id != instance_id);
+                    if entries.is_empty() {
+                        by_deadline.remove(&deadline);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drain all expired dwell timers and return them.
+    pub fn drain_expired_dwell(&self) -> Vec<DwellTimerEntry> {
+        let now = Utc::now();
+        let mut by_deadline = self.dwell_by_deadline.write().unwrap();
+        let mut by_key = self.dwell_by_key.write().unwrap();
+
+        let mut expired = Vec::new();
+        let expired_keys: Vec<DateTime<Utc>> = by_deadline.range(..=now).map(|(k, _)| *k).collect();
+
+        for deadline in expired_keys {
+            if let Some(entries) = by_deadline.remove(&deadline) {
+                for entry in entries {
+                    let key = dwell_key(&entry.instance_id, &entry.state, entry.duration.seconds);
+                    by_key.remove(&key);
+                    expired.push(entry);
+                }
+            }
+        }
+
+        expired
+    }
+
+    /// Count of active dwell timers.
+    pub fn dwell_timer_count(&self) -> usize {
+        self.dwell_by_key.read().unwrap().len()
     }
 
     /// Register a new timeout timer.
@@ -204,6 +324,14 @@ impl Default for TimerManager {
 
 fn timer_key(instance_id: &str, state: &str) -> String {
     format!("{}:{}", instance_id, state)
+}
+
+fn dwell_key(instance_id: &str, state: &str, duration_secs: u64) -> String {
+    format!("{}:{}:{}", instance_id, state, duration_secs)
+}
+
+fn dwell_prefix(instance_id: &str, state: &str) -> String {
+    format!("{}:{}:", instance_id, state)
 }
 
 #[cfg(test)]
