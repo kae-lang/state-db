@@ -129,7 +129,7 @@ async fn spawn_one(engine: &Engine) -> String {
     ]);
     let result = engine.spawn(&cmd).await.expect("spawn ticket");
     assert_eq!(result.instance.state, "open");
-    result.instance.id.as_str()
+    result.instance.id.clone()
 }
 
 /// Move ticket from open → triaged (sets assignee as actor-map matching ACTOR).
@@ -269,14 +269,17 @@ async fn timeout_registered_on_waiting() {
     to_triaged(&engine, &id, "agent_1").await;
     to_in_progress(&engine, &id, "agent_1").await;
 
+    // Capture baseline timer count
+    let baseline_timers = engine.timer_manager.timer_count();
+
     // in_progress → waiting_on_customer (TIMEOUT: 72h → resolved)
     let cmd = transition_as("SupportTicket", &id, "waiting_on_customer", "agent_1");
     let r = engine.transition(&cmd).await.unwrap();
     assert_eq!(r.to_state, "waiting_on_customer");
 
-    // Timer should be registered
+    // Timer should be registered (new timer added)
     assert!(
-        engine.timer_manager.timer_count() > 0,
+        engine.timer_manager.timer_count() > baseline_timers,
         "timeout timer should be registered"
     );
 }
@@ -310,12 +313,7 @@ async fn trail_records_transitions() {
     let result = engine.execute_query(&q).await.unwrap();
     match result {
         QueryResult::Trail(entries) => {
-            // spawn + open→triaged + triaged→in_progress = 3 entries
-            assert!(
-                entries.len() >= 3,
-                "trail should have at least 3 entries, got {}",
-                entries.len()
-            );
+            assert_eq!(entries.len(), 3, "trail should have 3 entries: spawn + open→triaged + triaged→in_progress");
         }
         _ => panic!("expected Trail"),
     }

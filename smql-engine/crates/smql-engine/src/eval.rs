@@ -351,9 +351,11 @@ fn is_truthy(val: &Value) -> bool {
         Value::Bool(b) => *b,
         Value::Null => false,
         Value::Int(0) => false,
+        Value::Float(0.0) => false,
         Value::Text(s) if s.is_empty() => false,
         Value::List(items) if items.is_empty() => false,
         Value::Set(items) if items.is_empty() => false,
+        Value::Map(map) if map.is_empty() => false,
         _ => true,
     }
 }
@@ -497,11 +499,32 @@ fn eval_function(name: &str, args: &[Expression], ctx: &EvalContext) -> SmqlResu
         }
 
         "elapsed_since" => {
-            // elapsed_since(state_name) — for now, same as elapsed()
-            // Full implementation requires trail lookup
-            let elapsed = ctx.now.signed_duration_since(ctx.state_entered_at);
-            let seconds = elapsed.num_seconds().max(0) as u64;
-            Ok(Value::Duration(SmqlDuration::from_seconds(seconds)))
+            if args.is_empty() {
+                return Err(SmqlError::GuardFailed {
+                    message: "elapsed_since requires a state name argument".to_string(),
+                    guard_expr: "elapsed_since()".to_string(),
+                    actual_value: None,
+                    hint: None,
+                });
+            }
+            let state_name = match &args[0].kind {
+                ExpressionKind::Literal(Value::Text(s)) => s.clone(),
+                _ => {
+                    return Err(SmqlError::GuardFailed {
+                        message: "elapsed_since requires a text state name argument".to_string(),
+                        guard_expr: "elapsed_since(state_name)".to_string(),
+                        actual_value: None,
+                        hint: None,
+                    });
+                }
+            };
+            if state_name == ctx.state {
+                let elapsed = ctx.now.signed_duration_since(ctx.state_entered_at);
+                let seconds = elapsed.num_seconds().max(0) as u64;
+                Ok(Value::Duration(SmqlDuration::from_seconds(seconds)))
+            } else {
+                Ok(Value::Null)
+            }
         }
 
         "now" => Ok(Value::DateTime(ctx.now)),

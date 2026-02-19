@@ -207,7 +207,7 @@ async fn spawn_order(engine: &Engine) -> String {
     );
     let result = engine.spawn(&cmd).await.expect("spawn Order");
     assert_eq!(result.instance.state, "draft");
-    result.instance.id.as_str()
+    result.instance.id.clone()
 }
 
 /// Spawn a LineItem child and return its ID.
@@ -230,7 +230,7 @@ async fn spawn_line_item(
     );
     let result = engine.spawn(&cmd).await.expect("spawn LineItem");
     assert_eq!(result.instance.state, "pending");
-    result.instance.id.as_str()
+    result.instance.id.clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@ async fn cascade_cancel_order() {
     let r = engine.transition(&cmd).await.unwrap();
     assert_eq!(r.to_state, "cancelled");
 
-    // Children should be in terminal states
+    // Children should be in terminal states (cancelled or confirmed)
     for item_id in [&item1, &item2] {
         let q = Query::Get(GetQuery {
             machine: "LineItem".into(),

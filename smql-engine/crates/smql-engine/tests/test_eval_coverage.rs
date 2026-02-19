@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, HashMap};
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn ctx_with_data(data: Vec<(&str, Value)>) -> EvalContext {
-    let map: HashMap<String, Value> = data.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
-    EvalContext::new(map, "open".to_string())
+    let map: BTreeMap<String, Value> = data.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    EvalContext::new(HashMap::from_iter(map), "open".to_string())
 }
 
 fn lit(v: Value) -> Expression {
@@ -138,17 +138,40 @@ fn func_elapsed_in_state_returns_duration() {
 }
 
 #[test]
-fn func_elapsed_since_returns_duration() {
-    let ctx = ctx_with_data(vec![]);
+fn func_elapsed_since_current_state_returns_duration() {
+    let mut ctx = ctx_with_data(vec![]);
+    ctx.state = "active".to_string();
+    ctx.state_entered_at = ctx.now - chrono::Duration::seconds(30);
     let expr = func(
         "elapsed_since",
-        vec![lit(Value::Text("some_state".to_string()))],
+        vec![lit(Value::Text("active".to_string()))],
     );
     let result = eval_expr(&expr, &ctx).unwrap();
     match result {
-        Value::Duration(d) => assert!(d.seconds <= 1),
+        Value::Duration(d) => assert!(d.seconds >= 29 && d.seconds <= 31),
         other => panic!("Expected Duration, got {:?}", other),
     }
+}
+
+#[test]
+fn func_elapsed_since_different_state_returns_null() {
+    let mut ctx = ctx_with_data(vec![]);
+    ctx.state = "active".to_string();
+    ctx.state_entered_at = ctx.now - chrono::Duration::seconds(30);
+    let expr = func(
+        "elapsed_since",
+        vec![lit(Value::Text("pending".to_string()))],
+    );
+    let result = eval_expr(&expr, &ctx).unwrap();
+    assert_eq!(result, Value::Null);
+}
+
+#[test]
+fn func_elapsed_since_empty_args_error() {
+    let ctx = ctx_with_data(vec![]);
+    let expr = func("elapsed_since", vec![]);
+    let result = eval_expr(&expr, &ctx);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -361,24 +384,21 @@ fn values_equal_list_not_equal() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 7. is_truthy edge cases — Float(0.0) falls through to the _ => true arm
+// 7. is_truthy edge cases — Float(0.0) is explicitly falsy
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn truthy_float_zero_is_truthy() {
-    // Float(0.0) is NOT matched by Int(0), and falls through to _ => true
-    // This is by design: is_truthy does not check Float(0.0)
+fn truthy_float_zero_is_falsy() {
     let ctx = ctx_with_data(vec![]);
     let guard_expr = lit(Value::Float(0.0));
-    assert!(eval_guard(&guard_expr, &ctx).unwrap());
+    assert!(!eval_guard(&guard_expr, &ctx).unwrap());
 }
 
 #[test]
-fn truthy_empty_map_is_truthy() {
-    // Empty map falls through to _ => true
+fn truthy_empty_map_is_falsy() {
     let ctx = ctx_with_data(vec![]);
     let guard_expr = lit(Value::Map(BTreeMap::new()));
-    assert!(eval_guard(&guard_expr, &ctx).unwrap());
+    assert!(!eval_guard(&guard_expr, &ctx).unwrap());
 }
 
 #[test]
