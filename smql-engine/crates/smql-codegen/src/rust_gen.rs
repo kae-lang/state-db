@@ -3,6 +3,24 @@ use smql_ast::types::{Constraint, TypeDefinition};
 
 use crate::type_map;
 
+/// Rust reserved keywords that require `r#` prefix when used as identifiers.
+const RUST_KEYWORDS: &[&str] = &[
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
+    "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
+    "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do",
+    "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield",
+];
+
+/// Escape a field/variable name that might be a Rust reserved keyword.
+fn escape_rust_keyword(name: &str) -> String {
+    if RUST_KEYWORDS.contains(&name) {
+        format!("r#{}", name)
+    } else {
+        name.to_string()
+    }
+}
+
 /// Generate Rust source code for a single machine definition.
 pub fn generate_machine_module(def: &MachineDefinition) -> String {
     let mut out = String::new();
@@ -134,7 +152,8 @@ fn generate_data_struct(def: &MachineDefinition) -> String {
             rust_type
         };
 
-        out.push_str(&format!("        pub {}: {},\n", field.name, final_type));
+        let field_name = escape_rust_keyword(&field.name);
+        out.push_str(&format!("        pub {}: {},\n", field_name, final_type));
     }
 
     out.push_str("    }\n\n");

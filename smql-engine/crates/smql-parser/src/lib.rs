@@ -14,7 +14,7 @@ use smql_ast::command::Statement;
 use smql_ast::machine::MachineDefinition;
 use smql_ast::{SmqlError, SmqlResult};
 
-pub use lexer::Token;
+pub use lexer::{tokenize, Token, TokenKind};
 
 /// Parse a complete SMQL input string, which may contain one or more statements.
 /// Returns machine definitions and standalone statements.

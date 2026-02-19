@@ -64,8 +64,8 @@ impl WebhookClient {
                     let status = response.status();
                     if status.is_success() {
                         return Ok(());
-                    } else if status.is_client_error() {
-                        // 4xx: don't retry
+                    } else if status.is_client_error() || status.is_redirection() {
+                        // 3xx/4xx: don't retry (redirects are treated as client-side config errors)
                         let body_text = response.text().await.unwrap_or_default();
                         return Err(WebhookError::ClientError {
                             status: status.as_u16(),

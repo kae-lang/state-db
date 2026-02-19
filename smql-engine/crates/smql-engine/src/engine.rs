@@ -1412,7 +1412,7 @@ impl Engine {
     pub async fn execute_saga(
         &self,
         saga_name: &str,
-        trigger_instance_id: Option<&str>,
+        _trigger_instance_id: Option<&str>,
     ) -> Result<(), String> {
         let saga = self.catalog.get_saga(saga_name).map_err(|e| e.to_string())?;
 

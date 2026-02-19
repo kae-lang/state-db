@@ -148,6 +148,12 @@ const KEYWORDS: &[&str] = &[
 pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = input.chars().collect();
+    // Map from char index → byte offset (for correct UTF-8 string slicing)
+    let byte_offsets: Vec<usize> = input
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain(std::iter::once(input.len()))
+        .collect();
     let mut pos = 0;
 
     while pos < chars.len() {
@@ -192,16 +198,16 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
             if pos >= chars.len() {
                 return Err(SmqlError::ParseError {
                     message: "Unterminated string literal".into(),
-                    span: Some(smql_ast::Span::new(start, pos)),
+                    span: Some(smql_ast::Span::new(byte_offsets[start], byte_offsets[pos.min(chars.len())])),
                     hint: Some("Add a closing '\"'".into()),
                 });
             }
             pos += 1; // skip closing "
-            let text: String = input[start..pos].to_string();
+            let text: String = input[byte_offsets[start]..byte_offsets[pos]].to_string();
             tokens.push(Token {
                 kind: TokenKind::StringLiteral(s),
                 text,
-                offset: start,
+                offset: byte_offsets[start],
             });
             continue;
         }
@@ -214,7 +220,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                     tokens.push(Token {
                         kind: TokenKind::Operator(two.clone()),
                         text: two,
-                        offset: start,
+                        offset: byte_offsets[start],
                     });
                     pos += 2;
                     continue;
@@ -230,7 +236,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                 tokens.push(Token {
                     kind: TokenKind::Punctuation(c.clone()),
                     text: c,
-                    offset: start,
+                    offset: byte_offsets[start],
                 });
                 pos += 1;
                 continue;
@@ -240,7 +246,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                 tokens.push(Token {
                     kind: TokenKind::Operator(c.clone()),
                     text: c,
-                    offset: start,
+                    offset: byte_offsets[start],
                 });
                 pos += 1;
                 continue;
@@ -250,7 +256,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                 tokens.push(Token {
                     kind: TokenKind::Operator(c.clone()),
                     text: c,
-                    offset: start,
+                    offset: byte_offsets[start],
                 });
                 pos += 1;
                 continue;
@@ -285,23 +291,23 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                     ' '
                 };
                 if !next_after.is_alphanumeric() && next_after != '_' {
-                    let num: u64 = input[num_start..pos]
+                    let num: u64 = input[byte_offsets[num_start]..byte_offsets[pos]]
                         .parse()
                         .map_err(|_| SmqlError::parse("Invalid number in duration"))?;
                     let suffix = chars[pos];
                     pos += 1;
                     let seconds = match suffix {
                         's' => num,
-                        'm' => num * 60,
-                        'h' => num * 3600,
-                        'd' => num * 86400,
+                        'm' => num.checked_mul(60).ok_or_else(|| SmqlError::parse("Duration value too large"))?,
+                        'h' => num.checked_mul(3600).ok_or_else(|| SmqlError::parse("Duration value too large"))?,
+                        'd' => num.checked_mul(86400).ok_or_else(|| SmqlError::parse("Duration value too large"))?,
                         _ => unreachable!(),
                     };
-                    let text = input[start..pos].to_string();
+                    let text = input[byte_offsets[start]..byte_offsets[pos]].to_string();
                     tokens.push(Token {
                         kind: TokenKind::DurationLiteral(seconds),
                         text,
-                        offset: start,
+                        offset: byte_offsets[start],
                     });
                     continue;
                 }
@@ -317,27 +323,27 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                 while pos < chars.len() && chars[pos].is_ascii_digit() {
                     pos += 1;
                 }
-                let text = input[start..pos].to_string();
+                let text = input[byte_offsets[start]..byte_offsets[pos]].to_string();
                 let val: f64 = text
                     .parse()
                     .map_err(|_| SmqlError::parse("Invalid float literal"))?;
                 tokens.push(Token {
                     kind: TokenKind::FloatLiteral(val),
                     text,
-                    offset: start,
+                    offset: byte_offsets[start],
                 });
                 continue;
             }
 
             // Integer
-            let text = input[start..pos].to_string();
+            let text = input[byte_offsets[start]..byte_offsets[pos]].to_string();
             let val: i64 = text
                 .parse()
                 .map_err(|_| SmqlError::parse("Invalid integer literal"))?;
             tokens.push(Token {
                 kind: TokenKind::IntLiteral(val),
                 text,
-                offset: start,
+                offset: byte_offsets[start],
             });
             continue;
         }
@@ -347,7 +353,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
             while pos < chars.len() && (chars[pos].is_alphanumeric() || chars[pos] == '_') {
                 pos += 1;
             }
-            let text = input[start..pos].to_string();
+            let text = input[byte_offsets[start]..byte_offsets[pos]].to_string();
             let upper = text.to_uppercase();
 
             // Check if it's a keyword
@@ -355,13 +361,13 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
                 tokens.push(Token {
                     kind: TokenKind::Keyword(upper),
                     text,
-                    offset: start,
+                    offset: byte_offsets[start],
                 });
             } else {
                 tokens.push(Token {
                     kind: TokenKind::Identifier(text.clone()),
                     text,
-                    offset: start,
+                    offset: byte_offsets[start],
                 });
             }
             continue;
@@ -373,7 +379,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
             tokens.push(Token {
                 kind: TokenKind::Operator("-".into()),
                 text: c,
-                offset: start,
+                offset: byte_offsets[start],
             });
             pos += 1;
             continue;
@@ -382,7 +388,7 @@ pub fn tokenize(input: &str) -> SmqlResult<Vec<Token>> {
         // Unknown character
         return Err(SmqlError::ParseError {
             message: format!("Unexpected character '{}'", chars[pos]),
-            span: Some(smql_ast::Span::new(pos, pos + 1)),
+            span: Some(smql_ast::Span::new(byte_offsets[pos], byte_offsets[pos + 1])),
             hint: None,
         });
     }

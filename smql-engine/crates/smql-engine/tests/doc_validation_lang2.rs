@@ -369,12 +369,6 @@ DEFINE MACHINE WaitTimeout (
 "#;
     let engine = make_engine_from(smql);
     use smql_ast::command::SpawnCommand;
-    use smql_ast::expression::{Expression, ExpressionKind};
-    use smql_ast::value::Value;
-
-    fn lit(v: Value) -> Expression {
-        Expression::new(ExpressionKind::Literal(v))
-    }
 
     let cmd = SpawnCommand {
         machine: "WaitTimeout".to_string(),
@@ -526,12 +520,6 @@ DEFINE MACHINE WildEngine (
 "#;
     let engine = make_engine_from(smql);
     use smql_ast::command::SpawnCommand;
-    use smql_ast::expression::{Expression, ExpressionKind};
-    use smql_ast::value::Value;
-
-    fn lit(v: Value) -> Expression {
-        Expression::new(ExpressionKind::Literal(v))
-    }
 
     let cmd = SpawnCommand {
         machine: "WildEngine".to_string(),

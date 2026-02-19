@@ -333,7 +333,14 @@ fn eval_unary_op(op: UnaryOperator, val: &Value) -> SmqlResult<Value> {
     match op {
         UnaryOperator::Not => Ok(Value::Bool(!is_truthy(val))),
         UnaryOperator::Neg => match val {
-            Value::Int(v) => Ok(Value::Int(-v)),
+            Value::Int(v) => v.checked_neg().map(|n| Value::Int(n)).ok_or_else(|| {
+                SmqlError::GuardFailed {
+                    message: format!("Integer overflow negating {}", v),
+                    guard_expr: format!("-{}", v),
+                    actual_value: Some(v.to_string()),
+                    hint: None,
+                }
+            }),
             Value::Float(v) => Ok(Value::Float(-v)),
             _ => Err(SmqlError::GuardFailed {
                 message: format!("Cannot negate value: {}", val),
@@ -351,7 +358,7 @@ fn is_truthy(val: &Value) -> bool {
         Value::Bool(b) => *b,
         Value::Null => false,
         Value::Int(0) => false,
-        Value::Float(0.0) => false,
+        Value::Float(f) if f.is_nan() || *f == 0.0 => false,
         Value::Text(s) if s.is_empty() => false,
         Value::List(items) if items.is_empty() => false,
         Value::Set(items) if items.is_empty() => false,
@@ -392,15 +399,40 @@ fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     }
 }
 
+/// Check that a float result is finite (not NaN or Infinity).
+fn check_float_result(result: f64, op: &str, left: &Value, right: &Value) -> SmqlResult<Value> {
+    if result.is_finite() {
+        Ok(Value::Float(result))
+    } else {
+        Err(SmqlError::GuardFailed {
+            message: format!("Float overflow: {} {} {} = {}", left, op, right, result),
+            guard_expr: format!("{} {} {}", left, op, right),
+            actual_value: Some(format!("{}", result)),
+            hint: Some("Result is not a finite number".to_string()),
+        })
+    }
+}
+
 fn eval_arithmetic_add(left: &Value, right: &Value) -> SmqlResult<Value> {
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
-        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+        (Value::Int(a), Value::Int(b)) => a.checked_add(*b).map(Value::Int).ok_or_else(|| {
+            SmqlError::GuardFailed {
+                message: format!("Integer overflow: {} + {}", a, b),
+                guard_expr: format!("{} + {}", left, right),
+                actual_value: None,
+                hint: None,
+            }
+        }),
+        (Value::Float(a), Value::Float(b)) => check_float_result(a + b, "+", left, right),
+        (Value::Int(a), Value::Float(b)) => {
+            check_float_result(*a as f64 + b, "+", left, right)
+        }
+        (Value::Float(a), Value::Int(b)) => {
+            check_float_result(a + *b as f64, "+", left, right)
+        }
         (Value::Text(a), Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
         (Value::Duration(a), Value::Duration(b)) => Ok(Value::Duration(
-            SmqlDuration::from_seconds(a.seconds + b.seconds),
+            SmqlDuration::from_seconds(a.seconds.saturating_add(b.seconds)),
         )),
         _ => Err(SmqlError::GuardFailed {
             message: format!("Cannot add {} + {}", left, right),
@@ -413,10 +445,21 @@ fn eval_arithmetic_add(left: &Value, right: &Value) -> SmqlResult<Value> {
 
 fn eval_arithmetic_sub(left: &Value, right: &Value) -> SmqlResult<Value> {
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
-        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
-        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+        (Value::Int(a), Value::Int(b)) => a.checked_sub(*b).map(Value::Int).ok_or_else(|| {
+            SmqlError::GuardFailed {
+                message: format!("Integer overflow: {} - {}", a, b),
+                guard_expr: format!("{} - {}", left, right),
+                actual_value: None,
+                hint: None,
+            }
+        }),
+        (Value::Float(a), Value::Float(b)) => check_float_result(a - b, "-", left, right),
+        (Value::Int(a), Value::Float(b)) => {
+            check_float_result(*a as f64 - b, "-", left, right)
+        }
+        (Value::Float(a), Value::Int(b)) => {
+            check_float_result(a - *b as f64, "-", left, right)
+        }
         (Value::Duration(a), Value::Duration(b)) => Ok(Value::Duration(
             SmqlDuration::from_seconds(a.seconds.saturating_sub(b.seconds)),
         )),
@@ -431,10 +474,21 @@ fn eval_arithmetic_sub(left: &Value, right: &Value) -> SmqlResult<Value> {
 
 fn eval_arithmetic_mul(left: &Value, right: &Value) -> SmqlResult<Value> {
     match (left, right) {
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
-        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
-        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
-        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+        (Value::Int(a), Value::Int(b)) => a.checked_mul(*b).map(Value::Int).ok_or_else(|| {
+            SmqlError::GuardFailed {
+                message: format!("Integer overflow: {} * {}", a, b),
+                guard_expr: format!("{} * {}", left, right),
+                actual_value: None,
+                hint: None,
+            }
+        }),
+        (Value::Float(a), Value::Float(b)) => check_float_result(a * b, "*", left, right),
+        (Value::Int(a), Value::Float(b)) => {
+            check_float_result(*a as f64 * b, "*", left, right)
+        }
+        (Value::Float(a), Value::Int(b)) => {
+            check_float_result(a * *b as f64, "*", left, right)
+        }
         _ => Err(SmqlError::GuardFailed {
             message: format!("Cannot multiply {} * {}", left, right),
             guard_expr: format!("{} * {}", left, right),
@@ -454,7 +508,14 @@ fn eval_arithmetic_div(left: &Value, right: &Value) -> SmqlResult<Value> {
                 hint: None,
             })
         }
-        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+        (Value::Int(a), Value::Int(b)) => a.checked_div(*b).map(Value::Int).ok_or_else(|| {
+            SmqlError::GuardFailed {
+                message: format!("Integer overflow: {} / {}", a, b),
+                guard_expr: format!("{} / {}", left, right),
+                actual_value: None,
+                hint: None,
+            }
+        }),
         (Value::Float(a), Value::Float(b)) => {
             if *b == 0.0 {
                 Err(SmqlError::GuardFailed {
@@ -464,7 +525,7 @@ fn eval_arithmetic_div(left: &Value, right: &Value) -> SmqlResult<Value> {
                     hint: None,
                 })
             } else {
-                Ok(Value::Float(a / b))
+                check_float_result(a / b, "/", left, right)
             }
         }
         (Value::Int(a), Value::Float(b)) => {
@@ -476,10 +537,12 @@ fn eval_arithmetic_div(left: &Value, right: &Value) -> SmqlResult<Value> {
                     hint: None,
                 })
             } else {
-                Ok(Value::Float(*a as f64 / b))
+                check_float_result(*a as f64 / b, "/", left, right)
             }
         }
-        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+        (Value::Float(a), Value::Int(b)) => {
+            check_float_result(a / *b as f64, "/", left, right)
+        }
         _ => Err(SmqlError::GuardFailed {
             message: format!("Cannot divide {} / {}", left, right),
             guard_expr: format!("{} / {}", left, right),

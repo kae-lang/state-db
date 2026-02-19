@@ -207,7 +207,7 @@ async fn spawn_order(engine: &Engine) -> String {
     );
     let result = engine.spawn(&cmd).await.expect("spawn Order");
     assert_eq!(result.instance.state, "draft");
-    result.instance.id.clone()
+    result.instance.id.to_string()
 }
 
 /// Spawn a LineItem child and return its ID.
@@ -230,7 +230,7 @@ async fn spawn_line_item(
     );
     let result = engine.spawn(&cmd).await.expect("spawn LineItem");
     assert_eq!(result.instance.state, "pending");
-    result.instance.id.clone()
+    result.instance.id.to_string()
 }
 
 // ---------------------------------------------------------------------------

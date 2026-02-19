@@ -131,10 +131,12 @@ impl Engine {
 
     /// FIND Machine WHERE ... — search for instances.
     async fn execute_find(&self, query: &FindQuery) -> SmqlResult<QueryResult> {
-        // First get all instances for the machine
+        // When there's a WHERE filter, we must fetch ALL instances first (no storage-level
+        // offset/limit) so the filter sees every row. Offset/limit are applied after filtering.
+        let has_filter = query.filter.is_some();
         let filter = Filter {
-            limit: query.limit.map(|l| l as usize),
-            offset: query.offset.map(|o| o as usize),
+            limit: if has_filter { None } else { query.limit.map(|l| l as usize) },
+            offset: if has_filter { None } else { query.offset.map(|o| o as usize) },
             after_id: query.after.clone(),
             ..Default::default()
         };
@@ -168,8 +170,8 @@ impl Engine {
             });
         }
 
-        // Apply limit/offset post-filter (if not already applied by storage)
-        if query.filter.is_some() {
+        // Apply offset/limit after filtering and sorting
+        if has_filter {
             if let Some(offset) = query.offset {
                 let offset = offset as usize;
                 if offset < instances.len() {
@@ -503,11 +505,15 @@ fn compute_aggregate(
             let mut sum = 0i64;
             let mut is_float = false;
             let mut fsum = 0.0f64;
+            let mut overflow = false;
 
             for inst in instances {
                 match inst.data.get(field) {
                     Some(Value::Int(v)) => {
-                        sum += v;
+                        match sum.checked_add(*v) {
+                            Some(s) => sum = s,
+                            None => overflow = true,
+                        }
                         fsum += *v as f64;
                     }
                     Some(Value::Float(v)) => {
@@ -518,7 +524,8 @@ fn compute_aggregate(
                 }
             }
 
-            if is_float {
+            if is_float || overflow {
+                // Fall back to float sum on integer overflow
                 Value::Float(fsum)
             } else {
                 Value::Int(sum)

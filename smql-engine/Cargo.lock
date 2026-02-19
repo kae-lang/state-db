@@ -2078,6 +2078,7 @@ dependencies = [
  "serde_json",
  "smql-ast",
  "smql-catalog",
+ "smql-codegen",
  "smql-hooks",
  "smql-parser",
  "smql-storage",

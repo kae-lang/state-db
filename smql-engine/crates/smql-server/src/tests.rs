@@ -2663,7 +2663,8 @@ fn metrics_default_encode_empty_output() {
     // Fresh metrics with no observations should produce an empty string
     // (prometheus only outputs metrics that have been observed at least once)
     // Crucially, it should NOT panic
-    assert!(output.len() >= 0, "encode() should return valid output");
+    // Fresh metrics should not panic on encode — result may be empty string
+    let _ = output;
 }
 
 #[test]

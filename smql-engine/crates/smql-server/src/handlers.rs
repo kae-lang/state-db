@@ -817,7 +817,7 @@ fn error_response(e: smql_ast::SmqlError) -> (StatusCode, Json<ExecuteResponse>)
 
 /// Test-only wrapper exposing error_response to the test module.
 #[cfg(test)]
-pub fn error_response_for_test(
+pub(crate) fn error_response_for_test(
     e: smql_ast::SmqlError,
 ) -> (StatusCode, Json<ExecuteResponse>) {
     error_response(e)

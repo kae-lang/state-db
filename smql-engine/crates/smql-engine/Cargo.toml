@@ -19,5 +19,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 smql-parser = { path = "../smql-parser" }
+smql-codegen = { path = "../smql-codegen" }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 serde_json = { workspace = true }

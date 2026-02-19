@@ -129,7 +129,7 @@ async fn spawn_one(engine: &Engine) -> String {
     ]);
     let result = engine.spawn(&cmd).await.expect("spawn ticket");
     assert_eq!(result.instance.state, "open");
-    result.instance.id.clone()
+    result.instance.id.to_string()
 }
 
 /// Move ticket from open → triaged (sets assignee as actor-map matching ACTOR).
