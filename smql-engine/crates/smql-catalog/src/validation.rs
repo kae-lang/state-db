@@ -1,4 +1,4 @@
-use smql_ast::machine::{MachineDefinition, TransitionSource};
+use smql_ast::machine::{HookTrigger, MachineDefinition, TransitionSource};
 use smql_ast::{SmqlError, SmqlResult};
 use std::collections::{HashSet, VecDeque};
 
@@ -18,6 +18,102 @@ pub fn validate_machine(
 ) -> SmqlResult<Vec<ValidationWarning>> {
     let mut warnings = Vec::new();
     let state_names: HashSet<&str> = machine.states.iter().map(|s| s.name.as_str()).collect();
+
+    // 3.2.0a: Detect duplicate state names
+    if state_names.len() != machine.states.len() {
+        let mut seen = HashSet::new();
+        for s in &machine.states {
+            if !seen.insert(&s.name) {
+                return Err(SmqlError::ValidationError {
+                    message: format!("Duplicate state name '{}'", s.name),
+                    field: Some("states".into()),
+                    hint: Some("Each state name must be unique within a machine".into()),
+                });
+            }
+        }
+    }
+
+    // 3.2.0b: Detect duplicate data field names
+    {
+        let mut field_names = HashSet::new();
+        for field in &machine.data {
+            if !field_names.insert(&field.name) {
+                return Err(SmqlError::ValidationError {
+                    message: format!("Duplicate data field name '{}'", field.name),
+                    field: Some("data".into()),
+                    hint: Some("Each data field name must be unique within a machine".into()),
+                });
+            }
+        }
+    }
+
+    // 3.2.0c: Validate constraint consistency on data fields
+    for field in &machine.data {
+        let has_required = field.constraints.iter().any(|c| matches!(c, smql_ast::types::Constraint::Required));
+        let has_optional = field.constraints.iter().any(|c| matches!(c, smql_ast::types::Constraint::Optional));
+        if has_required && has_optional {
+            return Err(SmqlError::ValidationError {
+                message: format!("Data field '{}' has both REQUIRED and OPTIONAL constraints", field.name),
+                field: Some("data".into()),
+                hint: Some("Remove one of the contradictory constraints".into()),
+            });
+        }
+        // Check Range(min, max) consistency
+        for c in &field.constraints {
+            if let smql_ast::types::Constraint::Range(lo, hi) = c {
+                if lo > hi {
+                    return Err(SmqlError::ValidationError {
+                        message: format!("Data field '{}' has RANGE({}, {}) where min > max", field.name, lo, hi),
+                        field: Some("data".into()),
+                        hint: Some("Swap the min and max values".into()),
+                    });
+                }
+            }
+        }
+        // Check Min/Max consistency
+        let min_val = field.constraints.iter().find_map(|c| if let smql_ast::types::Constraint::Min(v) = c { Some(*v) } else { None });
+        let max_val = field.constraints.iter().find_map(|c| if let smql_ast::types::Constraint::Max(v) = c { Some(*v) } else { None });
+        if let (Some(mn), Some(mx)) = (min_val, max_val) {
+            if mn > mx {
+                return Err(SmqlError::ValidationError {
+                    message: format!("Data field '{}' has MIN({}) > MAX({})", field.name, mn, mx),
+                    field: Some("data".into()),
+                    hint: Some("MIN must be <= MAX".into()),
+                });
+            }
+        }
+    }
+
+    // 3.2.0d: Validate child cardinality consistency
+    for child in &machine.children {
+        if let smql_ast::machine::ChildCardinality::List { min, max } = &child.cardinality {
+            if let (Some(mn), Some(mx)) = (min, max) {
+                if mn > mx {
+                    return Err(SmqlError::ValidationError {
+                        message: format!("Child '{}' has LIST cardinality min({}) > max({})", child.name, mn, mx),
+                        field: Some("children".into()),
+                        hint: Some("min must be <= max in LIST cardinality".into()),
+                    });
+                }
+            }
+        }
+    }
+
+    // 3.2.0e: Machine must have at least one state and an initial state
+    if machine.states.is_empty() {
+        return Err(SmqlError::ValidationError {
+            message: "Machine must define at least one state".to_string(),
+            field: Some("states".into()),
+            hint: Some("Add a STATES { ... } block with at least one state".into()),
+        });
+    }
+    if machine.initial_state.is_empty() {
+        return Err(SmqlError::ValidationError {
+            message: "Machine must define an INITIAL STATE".to_string(),
+            field: Some("initial_state".into()),
+            hint: Some("Add INITIAL STATE <state_name> to the machine definition".into()),
+        });
+    }
 
     // 3.2.1: Initial state must be in STATES set
     if !machine.initial_state.is_empty() && !state_names.contains(machine.initial_state.as_str()) {
@@ -92,7 +188,7 @@ pub fn validate_machine(
             });
         }
 
-        // 3.2.10: Timeout target states must be valid
+        // 3.2.10: Timeout target states must be valid, and duration must be > 0
         if let Some(timeout) = &transition.timeout {
             if !state_names.contains(timeout.target_state.as_str()) {
                 return Err(SmqlError::ValidationError {
@@ -102,6 +198,13 @@ pub fn validate_machine(
                     ),
                     field: Some("transitions".into()),
                     hint: Some(format!("Add '{}' to STATES", timeout.target_state)),
+                });
+            }
+            if timeout.duration.seconds == 0 {
+                return Err(SmqlError::ValidationError {
+                    message: "Timeout duration must be greater than zero".to_string(),
+                    field: Some("transitions".into()),
+                    hint: Some("A zero-duration timeout fires immediately, which can cause infinite loops".into()),
                 });
             }
         }
@@ -185,10 +288,111 @@ pub fn validate_machine(
         }
     }
 
+    // 3.2.10b: Hook state references must exist in STATES set
+    for hook in &machine.hooks {
+        match &hook.trigger {
+            HookTrigger::OnEnter(state) | HookTrigger::OnExit(state) => {
+                if !state_names.contains(state.as_str()) {
+                    return Err(SmqlError::ValidationError {
+                        message: format!(
+                            "Hook trigger references state '{}' which is not in the STATES set",
+                            state
+                        ),
+                        field: Some("hooks".into()),
+                        hint: Some(format!("Add '{}' to STATES or fix the hook trigger", state)),
+                    });
+                }
+            }
+            HookTrigger::OnDwell { state, .. } => {
+                if !state_names.contains(state.as_str()) {
+                    return Err(SmqlError::ValidationError {
+                        message: format!(
+                            "Dwell hook references state '{}' which is not in the STATES set",
+                            state
+                        ),
+                        field: Some("hooks".into()),
+                        hint: Some(format!("Add '{}' to STATES or fix the hook trigger", state)),
+                    });
+                }
+            }
+            _ => {} // OnSpawn, BeforeEachTransition, AfterEachTransition don't reference states
+        }
+    }
+
+    // 3.2.11: Detect circular CHILDREN composition (A → B → A)
+    if !machine.children.is_empty() {
+        if let Some(cycle) = detect_composition_cycle(machine, catalog) {
+            return Err(SmqlError::ValidationError {
+                message: format!(
+                    "Circular composition detected: {}",
+                    cycle.join(" -> ")
+                ),
+                field: Some("children".into()),
+                hint: Some("Remove the circular CHILDREN reference to prevent infinite CASCADE".into()),
+            });
+        }
+    }
+
     Ok(warnings)
 }
 
+/// Detect circular CHILDREN references via DFS.
+/// Takes the new machine definition directly (since it's not in the catalog yet).
+fn detect_composition_cycle(
+    new_machine: &MachineDefinition,
+    catalog: &MachineCatalog,
+) -> Option<Vec<String>> {
+    let mut visited = HashSet::new();
+    let mut path = Vec::new();
+
+    // Start DFS from the new machine using its children directly
+    visited.insert(new_machine.name.clone());
+    path.push(new_machine.name.clone());
+
+    for child in &new_machine.children {
+        if let Some(cycle) =
+            detect_cycle_dfs(&child.machine, &new_machine.name, catalog, &mut visited, &mut path)
+        {
+            return Some(cycle);
+        }
+    }
+    None
+}
+
+fn detect_cycle_dfs(
+    machine_name: &str,
+    root_name: &str,
+    catalog: &MachineCatalog,
+    visited: &mut HashSet<String>,
+    path: &mut Vec<String>,
+) -> Option<Vec<String>> {
+    if !visited.insert(machine_name.to_string()) {
+        // Found a cycle — build the cycle path from where this machine first appears
+        path.push(machine_name.to_string());
+        return Some(path.clone());
+    }
+    path.push(machine_name.to_string());
+
+    // Look up children from catalog (skip if this is the root — already handled by caller)
+    if machine_name != root_name {
+        if let Ok(def) = catalog.get(machine_name) {
+            for child in &def.children {
+                if let Some(cycle) =
+                    detect_cycle_dfs(&child.machine, root_name, catalog, visited, path)
+                {
+                    return Some(cycle);
+                }
+            }
+        }
+    }
+
+    path.pop();
+    visited.remove(machine_name);
+    None
+}
+
 /// Compute all states reachable from the initial state via BFS.
+/// Includes timeout target states as reachable edges.
 fn compute_reachable_states(machine: &MachineDefinition) -> HashSet<&str> {
     let mut reachable = HashSet::new();
     let mut queue = VecDeque::new();
@@ -203,9 +407,19 @@ fn compute_reachable_states(machine: &MachineDefinition) -> HashSet<&str> {
                 TransitionSource::Group(_) => false,
             };
 
-            if matches && !reachable.contains(transition.to.as_str()) {
-                reachable.insert(transition.to.as_str());
-                queue.push_back(transition.to.as_str());
+            if matches {
+                // Normal transition target
+                if !reachable.contains(transition.to.as_str()) {
+                    reachable.insert(transition.to.as_str());
+                    queue.push_back(transition.to.as_str());
+                }
+                // Timeout target (reachable via automatic timeout)
+                if let Some(timeout) = &transition.timeout {
+                    if !reachable.contains(timeout.target_state.as_str()) {
+                        reachable.insert(timeout.target_state.as_str());
+                        queue.push_back(timeout.target_state.as_str());
+                    }
+                }
             }
         }
     }

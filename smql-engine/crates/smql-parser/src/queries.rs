@@ -64,13 +64,13 @@ pub fn parse_find(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     }
 
     let limit = if parser.try_keyword("LIMIT") {
-        Some(common::parse_int_literal(parser)? as u64)
+        Some(common::parse_non_negative_int(parser)?)
     } else {
         None
     };
 
     let offset = if parser.try_keyword("OFFSET") {
-        Some(common::parse_int_literal(parser)? as u64)
+        Some(common::parse_non_negative_int(parser)?)
     } else {
         None
     };
@@ -198,13 +198,28 @@ pub fn parse_trail(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     let instance_id = parser.expect_ident_or_string()?;
 
     let filter = if parser.try_keyword("WHERE") {
-        Some(TrailFilter {
+        let mut trail_filter = TrailFilter {
             actor: None,
             from_state: None,
             to_state: None,
             since: None,
             until: None,
-        })
+        };
+        // Parse trail-specific filter clauses: ACTOR, FROM, TO
+        loop {
+            if parser.try_keyword("ACTOR") {
+                trail_filter.actor = Some(parser.expect_ident_or_string()?);
+            } else if parser.try_keyword("FROM") {
+                trail_filter.from_state = Some(parser.expect_ident_or_string()?);
+            } else if parser.try_keyword("TO") {
+                trail_filter.to_state = Some(parser.expect_ident_or_string()?);
+            } else {
+                break;
+            }
+            // Optional comma between clauses
+            parser.try_punct(",");
+        }
+        Some(trail_filter)
     } else {
         None
     };
@@ -229,7 +244,7 @@ pub fn parse_paths(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     };
 
     let limit = if parser.try_keyword("LIMIT") {
-        Some(common::parse_int_literal(parser)? as u64)
+        Some(common::parse_non_negative_int(parser)?)
     } else {
         None
     };
@@ -302,13 +317,13 @@ pub fn parse_define_view(parser: &mut Parser) -> SmqlResult<ViewDefinition> {
     }
 
     let limit = if parser.try_keyword("LIMIT") {
-        Some(common::parse_int_literal(parser)? as u64)
+        Some(common::parse_non_negative_int(parser)?)
     } else {
         None
     };
 
     let offset = if parser.try_keyword("OFFSET") {
-        Some(common::parse_int_literal(parser)? as u64)
+        Some(common::parse_non_negative_int(parser)?)
     } else {
         None
     };
@@ -377,7 +392,7 @@ pub fn parse_define_projection(parser: &mut Parser) -> SmqlResult<ProjectionDefi
         if parser.try_keyword("TRANSITION") {
             RefreshPolicy::OnTransition
         } else if parser.try_keyword("INTERVAL") {
-            let secs = common::parse_int_literal(parser)? as u64;
+            let secs = common::parse_non_negative_int(parser)?;
             RefreshPolicy::OnInterval(secs)
         } else {
             RefreshPolicy::Manual

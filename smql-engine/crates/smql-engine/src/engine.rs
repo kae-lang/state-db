@@ -706,6 +706,9 @@ impl Engine {
             let val = eval_expr(expr, &ctx)?;
             mutations.push(Mutation::SetField(field.clone(), val));
         }
+        // Collect deferred spawn commands — these execute AFTER the version check
+        // to avoid creating orphaned children if the transition conflicts.
+        let mut deferred_spawns: Vec<(String, SpawnCommand)> = Vec::new();
         for mutate in &transition_def.mutates {
             // Check for __spawn FunctionCall in MUTATE
             if let smql_ast::expression::ExpressionKind::FunctionCall { name, args } =
@@ -732,7 +735,7 @@ impl Engine {
                             child_data.push((key, val));
                             i += 2;
                         }
-                        // Spawn child with parent linkage
+                        // Build spawn command for deferred execution
                         let child_data_exprs: Vec<(String, smql_ast::expression::Expression)> =
                             child_data
                                 .into_iter()
@@ -755,21 +758,7 @@ impl Engine {
                             parent_machine: Some(instance.machine.clone()),
                             as_actor: None,
                         };
-                        match self.spawn(&child_cmd).await {
-                            Ok(result) => {
-                                let child_id = result.instance.id.as_str();
-                                mutations.push(Mutation::SetField(
-                                    mutate.field.clone(),
-                                    Value::Ref(child_machine, child_id),
-                                ));
-                            }
-                            Err(e) => {
-                                return Err(SmqlError::internal(format!(
-                                    "MUTATE SPAWN failed: {}",
-                                    e
-                                )));
-                            }
-                        }
+                        deferred_spawns.push((mutate.field.clone(), child_cmd));
                     }
                     continue;
                 }
@@ -823,6 +812,30 @@ impl Engine {
                 trail_entry,
             )
             .await?;
+
+        // --- 4b. Execute deferred SPAWN commands (after version check succeeded) ---
+        for (field, child_cmd) in deferred_spawns {
+            match self.spawn(&child_cmd).await {
+                Ok(result) => {
+                    let child_id = result.instance.id.as_str();
+                    let child_machine = child_cmd.machine.clone();
+                    // Update instance data with the spawned child reference
+                    let spawn_mutations =
+                        vec![Mutation::SetField(field, Value::Ref(child_machine, child_id))];
+                    let _ = self
+                        .storage
+                        .update_instance(&id, instance.version + 1, &spawn_mutations)
+                        .await;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        instance_id = %cmd.instance_id,
+                        error = %e,
+                        "deferred MUTATE SPAWN failed (transition already committed)"
+                    );
+                }
+            }
+        }
 
         // --- 5. ON EXIT(old_state) hooks (fire-and-forget) ---
         let _ = self
@@ -1046,18 +1059,48 @@ impl Engine {
 
     /// Execute a multi-hop transition through intermediate states.
     async fn transition_through(&self, cmd: &TransitionCommand) -> SmqlResult<TransitionResult> {
+        // Validate THROUGH chain for cycles (repeated states)
+        {
+            let mut seen = std::collections::HashSet::new();
+            for state in &cmd.through {
+                if !seen.insert(state.as_str()) {
+                    return Err(SmqlError::ValidationError {
+                        message: format!(
+                            "THROUGH chain contains duplicate state '{}' — this would create an infinite loop",
+                            state
+                        ),
+                        field: Some("through".into()),
+                        hint: Some("Remove the repeated state from the THROUGH list".into()),
+                    });
+                }
+            }
+            if !seen.insert(cmd.to_state.as_str()) {
+                // Final target also duplicates a THROUGH state
+                return Err(SmqlError::ValidationError {
+                    message: format!(
+                        "THROUGH chain target state '{}' duplicates an intermediate state — this would create an infinite loop",
+                        cmd.to_state
+                    ),
+                    field: Some("through".into()),
+                    hint: Some("The target state should not appear in the THROUGH list".into()),
+                });
+            }
+        }
+
         let mut current_id = cmd.instance_id.clone();
         let mut all_states = cmd.through.clone();
         all_states.push(cmd.to_state.clone());
 
         let mut last_result = None;
 
-        for target in &all_states {
+        let last_idx = all_states.len().saturating_sub(1);
+        for (i, target) in all_states.iter().enumerate() {
+            let is_final_step = i == last_idx;
             let step_cmd = TransitionCommand {
                 machine: cmd.machine.clone(),
                 instance_id: current_id.clone(),
                 to_state: target.clone(),
-                with_data: Vec::new(), // WITH data only applies to final transition
+                with_data: if is_final_step { cmd.with_data.clone() } else { Vec::new() },
                 memo: cmd.memo.clone(),
                 as_actor: cmd.as_actor.clone(),
                 through: Vec::new(),
@@ -1073,43 +1116,71 @@ impl Engine {
         last_result.ok_or_else(|| SmqlError::internal("THROUGH transition had no steps"))
     }
 
+    /// Maximum CASCADE recursion depth to prevent infinite loops with circular composition.
+    const MAX_CASCADE_DEPTH: u32 = 16;
+
     /// Cascade: transition all children to their machine's first terminal state.
     /// Errors on child cascade are logged but don't fail the parent.
     async fn cascade_children(&self, parent_id: &smql_storage::InstanceId, _parent_machine: &str) {
-        let children = match self.storage.find_children(parent_id, None).await {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+        self.cascade_children_with_depth(parent_id, _parent_machine, 0).await;
+    }
 
-        for child in children {
-            // Find the child's machine definition to get terminal states
-            let child_machine_def = match self.catalog.get(&child.machine) {
-                Ok(m) => m,
-                Err(_) => continue,
+    /// Inner cascade with depth tracking to prevent infinite recursion.
+    /// Uses Box::pin for recursive async.
+    fn cascade_children_with_depth<'a>(
+        &'a self,
+        parent_id: &'a smql_storage::InstanceId,
+        _parent_machine: &'a str,
+        depth: u32,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            if depth >= Self::MAX_CASCADE_DEPTH {
+                tracing::warn!(
+                    parent_id = parent_id.as_str(),
+                    depth,
+                    "CASCADE depth limit reached — aborting to prevent infinite recursion"
+                );
+                return;
+            }
+
+            let children = match self.storage.find_children(parent_id, None).await {
+                Ok(c) => c,
+                Err(_) => return,
             };
 
-            // Skip if already in a terminal state
-            if child_machine_def.terminal_states.contains(&child.state) {
-                continue;
-            }
-
-            // Try to find a transition from current state to the first terminal state
-            if let Some(terminal) = child_machine_def.terminal_states.first() {
-                let cmd = TransitionCommand {
-                    machine: child.machine.clone(),
-                    instance_id: child.id.as_str(),
-                    to_state: terminal.clone(),
-                    with_data: Vec::new(),
-                    memo: Some("CASCADE from parent".to_string()),
-                    as_actor: Some("System".to_string()),
-                    through: Vec::new(),
-                    or_stay: false,
-                    cascade: true, // Recursive cascade for grandchildren
+            for child in children {
+                // Find the child's machine definition to get terminal states
+                let child_machine_def = match self.catalog.get(&child.machine) {
+                    Ok(m) => m,
+                    Err(_) => continue,
                 };
-                // Use try_transition so failures don't propagate
-                let _ = self.try_transition(&cmd).await;
+
+                // Skip if already in a terminal state
+                if child_machine_def.terminal_states.contains(&child.state) {
+                    continue;
+                }
+
+                // Try to find a transition from current state to the first terminal state
+                if let Some(terminal) = child_machine_def.terminal_states.first() {
+                    let cmd = TransitionCommand {
+                        machine: child.machine.clone(),
+                        instance_id: child.id.as_str(),
+                        to_state: terminal.clone(),
+                        with_data: Vec::new(),
+                        memo: Some("CASCADE from parent".to_string()),
+                        as_actor: Some("System".to_string()),
+                        through: Vec::new(),
+                        or_stay: false,
+                        cascade: false, // Don't let transition() call cascade_children again
+                    };
+                    // Use try_transition so failures don't propagate
+                    let _ = self.try_transition(&cmd).await;
+
+                    // Recursively cascade grandchildren
+                    self.cascade_children_with_depth(&child.id, &child.machine, depth + 1).await;
+                }
             }
-        }
+        })
     }
 
     /// Find a matching transition definition for the given from -> to states.
@@ -1166,11 +1237,23 @@ impl Engine {
 
         let instance = match self.storage.get_instance(&id).await? {
             Some(inst) => inst,
-            None => return Ok(None), // Instance deleted, ignore
+            None => {
+                // Instance deleted — clean up the orphaned persisted timer
+                let _ = self
+                    .storage
+                    .remove_timer(instance_id, expected_from_state)
+                    .await;
+                return Ok(None);
+            }
         };
 
         // Race condition: instance already moved to a different state
         if instance.state != expected_from_state {
+            // State changed — clean up the stale persisted timer
+            let _ = self
+                .storage
+                .remove_timer(instance_id, expected_from_state)
+                .await;
             return Ok(None);
         }
 
@@ -1194,16 +1277,21 @@ impl Engine {
             data_snapshot: None,
         };
 
-        // Atomic transition
-        self.storage
+        // Atomic transition — if version conflict occurs, still clean up the stale timer
+        let transition_result = self
+            .storage
             .transition_instance(&id, instance.version, target_state, &mutations, trail_entry)
-            .await?;
+            .await;
 
-        // Remove fired timer from storage
+        // Always remove the fired/stale timer from storage, even on version conflict.
+        // Without this, a stale StoredTimer would persist and be reloaded on restart.
         let _ = self
             .storage
             .remove_timer(instance_id, expected_from_state)
             .await;
+
+        // Now propagate the transition error (if any)
+        transition_result?;
 
         // --- Fire hooks for timeout transition ---
         if let Ok(machine_def) = self.catalog.get(&instance.machine) {

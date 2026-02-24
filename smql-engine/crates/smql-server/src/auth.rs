@@ -5,7 +5,7 @@ use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 
 /// JWT claims extracted from the Authorization header.
@@ -61,8 +61,9 @@ pub async fn auth_middleware(request: Request, next: Next) -> Response {
 
     let path = request.uri().path().to_string();
 
-    // Check skip paths
-    if config.skip_paths.iter().any(|p| path.starts_with(p)) {
+    // Check skip paths — exact match to prevent bypass via prefix collision
+    // (e.g., "/healthz_leak" must NOT match skip_path "/health")
+    if config.skip_paths.iter().any(|p| path == *p) {
         return next.run(request).await;
     }
 
@@ -76,9 +77,21 @@ pub async fn auth_middleware(request: Request, next: Next) -> Response {
 
     match token {
         Some(token) if !token.is_empty() => {
-            // Decode JWT
+            // Reject empty secrets — misconfiguration guard
+            if config.secret.is_empty() {
+                tracing::error!("JWT auth configured with empty secret — rejecting all tokens");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({
+                        "error": "Authentication misconfigured",
+                    })),
+                )
+                    .into_response();
+            }
+
+            // Decode JWT — explicitly require HS256 to prevent algorithm confusion attacks
             let key = DecodingKey::from_secret(config.secret.as_bytes());
-            let mut validation = Validation::default();
+            let mut validation = Validation::new(Algorithm::HS256);
             validation.validate_exp = true;
 
             match decode::<AuthClaims>(&token, &key, &validation) {
@@ -87,12 +100,13 @@ pub async fn auth_middleware(request: Request, next: Next) -> Response {
                     request.extensions_mut().insert(token_data.claims);
                     next.run(request).await
                 }
-                Err(e) => {
+                Err(_e) => {
                     if config.required {
+                        tracing::debug!("JWT validation failed: {}", _e);
                         (
                             StatusCode::UNAUTHORIZED,
                             axum::Json(serde_json::json!({
-                                "error": format!("Invalid token: {}", e),
+                                "error": "Invalid or expired token",
                             })),
                         )
                             .into_response()
@@ -391,6 +405,29 @@ mod tests {
                 Request::builder()
                     .uri("/test")
                     .header(AUTHORIZATION, format!("Bearer {}", token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn skip_path_prefix_does_not_bypass_auth() {
+        let config = test_config();
+        let app = Router::new()
+            .route("/health_secret", get(handler_with_claims))
+            .route("/health", get(|| async { "ok" }))
+            .layer(middleware::from_fn(auth_middleware))
+            .layer(AuthConfigLayer { config });
+
+        // /health_secret should NOT bypass auth even though it starts with "/health"
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health_secret")
                     .body(Body::empty())
                     .unwrap(),
             )

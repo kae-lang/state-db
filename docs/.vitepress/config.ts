@@ -37,6 +37,7 @@ export default defineConfig({
         items: [
           { text: 'HTTP Server', link: '/server/getting-started' },
           { text: 'Rust SDK', link: '/sdk/getting-started' },
+          { text: 'TypeScript SDK', link: '/sdk-typescript/getting-started' },
           { text: 'CLI', link: '/cli/overview' },
         ]
       },
@@ -190,6 +191,22 @@ export default defineConfig({
             { text: 'Typed API', link: '/sdk/typed-api' },
             { text: 'Code Generation', link: '/sdk/codegen' },
             { text: 'Error Handling', link: '/sdk/error-handling' },
+          ]
+        }
+      ],
+
+      '/sdk-typescript/': [
+        {
+          text: 'TypeScript SDK',
+          collapsed: false,
+          items: [
+            { text: 'Getting Started', link: '/sdk-typescript/getting-started' },
+            { text: 'Client API', link: '/sdk-typescript/client-api' },
+            { text: 'Query Builders', link: '/sdk-typescript/queries' },
+            { text: 'Definition Builders', link: '/sdk-typescript/definitions' },
+            { text: 'Expression Builder', link: '/sdk-typescript/expressions' },
+            { text: 'WebSocket Subscriptions', link: '/sdk-typescript/websocket-subscriptions' },
+            { text: 'Error Handling', link: '/sdk-typescript/error-handling' },
           ]
         }
       ],

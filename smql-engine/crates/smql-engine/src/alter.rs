@@ -32,10 +32,22 @@ impl Engine {
         let mut warnings = Vec::new();
         let mut total_migrated = 0u64;
 
-        // Validate and apply each operation sequentially.
-        // Each operation is validated against the current (mutated) definition.
+        // Two-pass approach to prevent split-brain:
+        // Pass 1: Validate ALL operations against progressively-mutated definition (no storage writes).
+        // Pass 2: Apply ALL operations (with storage writes).
+        // This ensures we don't partially mutate storage and then fail on a later validation.
+        {
+            let mut validate_def = machine_def.clone();
+            for op in &cmd.operations {
+                self.validate_alter_operation(&validate_def, op)?;
+                // Apply schema-only changes to the clone so subsequent ops validate correctly
+                self.apply_schema_only(&mut validate_def, op);
+            }
+        }
+
+        // Pass 2: Apply (all validated, so storage writes should succeed)
         for op in &cmd.operations {
-            self.validate_alter_operation(&machine_def, op)?;
+            // Skip redundant validation — already passed in pass 1
             let migrated = self
                 .apply_alter_operation(&mut machine_def, op, &mut warnings)
                 .await?;
@@ -57,6 +69,67 @@ impl Engine {
             instances_migrated: total_migrated,
             warnings,
         })
+    }
+
+    /// Apply schema-only changes to a definition clone (no storage writes).
+    /// Used in the validation pass to build up the expected definition progressively.
+    fn apply_schema_only(&self, def: &mut MachineDefinition, op: &AlterOperation) {
+        match op {
+            AlterOperation::AddState(name) => {
+                def.states.push(StateDefinition::new(name.clone()));
+            }
+            AlterOperation::RemoveState { state, .. } => {
+                def.states.retain(|s| s.name != *state);
+                def.terminal_states.retain(|s| s != state);
+                def.transitions.retain(|t| {
+                    let from_matches = match &t.from {
+                        TransitionSource::State(s) => s == state,
+                        _ => false,
+                    };
+                    !(from_matches || t.to == *state)
+                });
+                for t in &mut def.transitions {
+                    if let TransitionSource::Any { except } = &mut t.from {
+                        except.retain(|s| s != state);
+                    }
+                }
+            }
+            AlterOperation::AddTransition(t) => {
+                def.transitions.push(t.clone());
+            }
+            AlterOperation::RemoveTransition { from, to } => {
+                def.transitions.retain(|t| {
+                    let from_matches = match &t.from {
+                        TransitionSource::State(s) => s == from,
+                        _ => false,
+                    };
+                    !(from_matches && t.to == *to)
+                });
+            }
+            AlterOperation::ModifyTransition(new_t) => {
+                for t in &mut def.transitions {
+                    let matches = t.to == new_t.to
+                        && match (&t.from, &new_t.from) {
+                            (TransitionSource::State(a), TransitionSource::State(b)) => a == b,
+                            (TransitionSource::Any { .. }, TransitionSource::Any { .. }) => true,
+                            _ => false,
+                        };
+                    if matches {
+                        *t = new_t.clone();
+                        break;
+                    }
+                }
+            }
+            AlterOperation::AddData { field, .. } => {
+                def.data.push(field.clone());
+            }
+            AlterOperation::RemoveData(name) => {
+                def.data.retain(|d| d.name != *name);
+            }
+            AlterOperation::Backfill { .. } => {
+                // No schema change
+            }
+        }
     }
 
     /// Validate a single alter operation against the current machine definition.

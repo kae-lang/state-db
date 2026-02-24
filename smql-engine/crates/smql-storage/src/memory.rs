@@ -271,9 +271,10 @@ impl Storage for MemoryStorage {
 
         // Append trail entry
         if let Some(trail) = self.trails.get(&id_str) {
-            if let Ok(mut entries) = trail.write() {
-                entries.push(trail_entry);
-            }
+            trail
+                .write()
+                .map_err(|e| SmqlError::internal(format!("Trail lock poisoned: {}", e)))?
+                .push(trail_entry);
         }
 
         Ok(())

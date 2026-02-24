@@ -8,6 +8,10 @@ use std::collections::{BTreeMap, HashMap};
 use crate::engine::Engine;
 use crate::eval::{eval_guard, EvalContext};
 
+/// Hard upper bound on instances loaded for in-memory filtering/analytics.
+/// Prevents OOM when FIND+WHERE or aggregate queries run on large datasets.
+const MAX_QUERY_INSTANCES: usize = 100_000;
+
 fn query_type_label(query: &Query) -> &'static str {
     match query {
         Query::Get(_) => "GET",
@@ -131,11 +135,16 @@ impl Engine {
 
     /// FIND Machine WHERE ... — search for instances.
     async fn execute_find(&self, query: &FindQuery) -> SmqlResult<QueryResult> {
-        // When there's a WHERE filter, we must fetch ALL instances first (no storage-level
+        // When there's a WHERE filter, we must fetch instances first (no storage-level
         // offset/limit) so the filter sees every row. Offset/limit are applied after filtering.
+        // Cap at MAX_QUERY_INSTANCES to prevent OOM on large datasets.
         let has_filter = query.filter.is_some();
         let filter = Filter {
-            limit: if has_filter { None } else { query.limit.map(|l| l as usize) },
+            limit: if has_filter {
+                Some(MAX_QUERY_INSTANCES)
+            } else {
+                query.limit.map(|l| l as usize)
+            },
             offset: if has_filter { None } else { query.offset.map(|o| o as usize) },
             after_id: query.after.clone(),
             ..Default::default()
@@ -203,7 +212,7 @@ impl Engine {
 
     /// AGGREGATE Machine MEASURE ... GROUP BY ...
     async fn execute_aggregate(&self, query: &AggregateQuery) -> SmqlResult<QueryResult> {
-        let filter = Filter::default();
+        let filter = Filter { limit: Some(MAX_QUERY_INSTANCES), ..Default::default() };
         let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         // Apply WHERE filter
@@ -270,7 +279,7 @@ impl Engine {
 
     /// PATHS FROM Machine — analyze state sequences.
     async fn execute_paths(&self, query: &PathsQuery) -> SmqlResult<QueryResult> {
-        let filter = Filter::default();
+        let filter = Filter { limit: Some(MAX_QUERY_INSTANCES), ..Default::default() };
         let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         // Apply WHERE filter
@@ -318,7 +327,7 @@ impl Engine {
 
     /// FUNNEL Machine THROUGH [states] — conversion analysis.
     async fn execute_funnel(&self, query: &FunnelQuery) -> SmqlResult<QueryResult> {
-        let filter = Filter::default();
+        let filter = Filter { limit: Some(MAX_QUERY_INSTANCES), ..Default::default() };
         let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         if let Some(filter_expr) = &query.filter {
@@ -351,7 +360,7 @@ impl Engine {
 
     /// COMPARE PATHS Machine SEGMENT BY field — segmented path analysis.
     async fn execute_compare_paths(&self, query: &ComparePathsQuery) -> SmqlResult<QueryResult> {
-        let filter = Filter::default();
+        let filter = Filter { limit: Some(MAX_QUERY_INSTANCES), ..Default::default() };
         let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
         // Apply WHERE filter
@@ -618,6 +627,9 @@ fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
     match (a, b) {
         (Value::Int(a), Value::Int(b)) => a.cmp(b),
         (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+        // Cross-type Int/Float comparison (matches eval.rs compare_values)
+        (Value::Int(a), Value::Float(b)) => (*a as f64).partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Float(a), Value::Int(b)) => a.partial_cmp(&(*b as f64)).unwrap_or(std::cmp::Ordering::Equal),
         (Value::Text(a), Value::Text(b)) => a.cmp(b),
         (Value::DateTime(a), Value::DateTime(b)) => a.cmp(b),
         (Value::Date(a), Value::Date(b)) => a.cmp(b),

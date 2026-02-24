@@ -161,6 +161,28 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
         }
 
         ExpressionKind::BinaryOp { left, op, right } => {
+            // Short-circuit AND/OR to avoid evaluating the right side unnecessarily.
+            // This prevents errors like division-by-zero when guarded:
+            //   `count > 0 AND total / count > threshold`
+            match op {
+                BinaryOperator::And => {
+                    let left_val = eval_expr(left, ctx)?;
+                    if !is_truthy(&left_val) {
+                        return Ok(Value::Bool(false));
+                    }
+                    let right_val = eval_expr(right, ctx)?;
+                    return Ok(Value::Bool(is_truthy(&right_val)));
+                }
+                BinaryOperator::Or => {
+                    let left_val = eval_expr(left, ctx)?;
+                    if is_truthy(&left_val) {
+                        return Ok(Value::Bool(true));
+                    }
+                    let right_val = eval_expr(right, ctx)?;
+                    return Ok(Value::Bool(is_truthy(&right_val)));
+                }
+                _ => {}
+            }
             let left_val = eval_expr(left, ctx)?;
             let right_val = eval_expr(right, ctx)?;
             eval_binary_op(&left_val, *op, &right_val)

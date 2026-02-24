@@ -568,10 +568,13 @@ async fn get_instance(State(state): State<AppState>, Path(id): Path<String>) -> 
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": format!("Instance '{}' not found", id) })),
         ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
+        Err(e) => {
+            tracing::error!("get_instance storage error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Internal server error" })),
+            )
+        }
     }
 }
 
@@ -608,20 +611,26 @@ async fn delete_instance(
                         })),
                     )
                 }
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e.to_string() })),
-                ),
+                Err(e) => {
+                    tracing::error!("delete_instance storage error: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": "Internal server error" })),
+                    )
+                }
             }
         }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": format!("Instance '{}' not found", id) })),
         ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
+        Err(e) => {
+            tracing::error!("get_instance storage error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Internal server error" })),
+            )
+        }
     }
 }
 
@@ -795,13 +804,20 @@ fn query_result_to_json(result: QueryResult) -> serde_json::Value {
 }
 
 fn error_response(e: smql_ast::SmqlError) -> (StatusCode, Json<ExecuteResponse>) {
-    let status = match &e {
-        smql_ast::SmqlError::NotFound { .. } => StatusCode::NOT_FOUND,
-        smql_ast::SmqlError::TransitionDenied(_) => StatusCode::CONFLICT,
-        smql_ast::SmqlError::SpawnRejected { .. } => StatusCode::BAD_REQUEST,
-        smql_ast::SmqlError::ValidationError { .. } => StatusCode::BAD_REQUEST,
-        smql_ast::SmqlError::Conflict { .. } => StatusCode::CONFLICT,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    let (status, client_message) = match &e {
+        smql_ast::SmqlError::NotFound { .. } => (StatusCode::NOT_FOUND, e.to_string()),
+        smql_ast::SmqlError::TransitionDenied(_) => (StatusCode::CONFLICT, e.to_string()),
+        smql_ast::SmqlError::SpawnRejected { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
+        smql_ast::SmqlError::ValidationError { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
+        smql_ast::SmqlError::Conflict { .. } => (StatusCode::CONFLICT, e.to_string()),
+        _ => {
+            // Don't leak internal errors (storage failures, lock poisoning, etc.) to clients
+            tracing::error!("Internal error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            )
+        }
     };
 
     (
@@ -809,7 +825,7 @@ fn error_response(e: smql_ast::SmqlError) -> (StatusCode, Json<ExecuteResponse>)
         Json(ExecuteResponse {
             success: false,
             result: None,
-            error: Some(e.to_string()),
+            error: Some(client_message),
             warnings: None,
         }),
     )

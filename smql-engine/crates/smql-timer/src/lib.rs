@@ -83,8 +83,9 @@ impl TimerManager {
 
     /// Cancel all dwell timers for a specific instance+state (called on state exit).
     pub fn cancel_dwell_for_state(&self, instance_id: &str, state: &str) {
-        let mut by_key = self.dwell_by_key.write().unwrap();
+        // Lock order: deadline → key (consistent with register/drain to prevent ABBA deadlock)
         let mut by_deadline = self.dwell_by_deadline.write().unwrap();
+        let mut by_key = self.dwell_by_key.write().unwrap();
 
         let prefix = dwell_prefix(instance_id, state);
         let keys_to_remove: Vec<String> = by_key
@@ -107,8 +108,9 @@ impl TimerManager {
 
     /// Cancel all dwell timers for a specific instance (called on terminal state).
     pub fn cancel_all_dwell(&self, instance_id: &str) {
-        let mut by_key = self.dwell_by_key.write().unwrap();
+        // Lock order: deadline → key (consistent with register/drain to prevent ABBA deadlock)
         let mut by_deadline = self.dwell_by_deadline.write().unwrap();
+        let mut by_key = self.dwell_by_key.write().unwrap();
 
         let prefix = format!("{}:", instance_id);
         let keys_to_remove: Vec<String> = by_key
@@ -206,8 +208,9 @@ impl TimerManager {
     /// Cancel a timer for a specific instance and state.
     pub fn cancel(&self, instance_id: &str, state: &str) {
         let key = timer_key(instance_id, state);
-        let mut by_key = self.timers_by_key.write().unwrap();
+        // Lock order: deadline → key (consistent with register/drain to prevent ABBA deadlock)
         let mut by_deadline = self.timers_by_deadline.write().unwrap();
+        let mut by_key = self.timers_by_key.write().unwrap();
 
         if let Some(deadline) = by_key.remove(&key) {
             if let Some(entries) = by_deadline.get_mut(&deadline) {
@@ -221,8 +224,9 @@ impl TimerManager {
 
     /// Cancel all timers for a specific instance.
     pub fn cancel_all(&self, instance_id: &str) {
-        let mut by_key = self.timers_by_key.write().unwrap();
+        // Lock order: deadline → key (consistent with register/drain to prevent ABBA deadlock)
         let mut by_deadline = self.timers_by_deadline.write().unwrap();
+        let mut by_key = self.timers_by_key.write().unwrap();
 
         let prefix = format!("{}:", instance_id);
         let keys_to_remove: Vec<String> = by_key

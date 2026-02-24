@@ -367,19 +367,21 @@ mod validation_tests {
     }
 
     #[test]
-    fn child_referencing_self_no_warning() {
+    fn child_referencing_self_detected_as_cycle() {
         let catalog = MachineCatalog::new();
         let mut m = base_machine();
         m.children.push(smql_ast::machine::ChildDefinition {
             name: "sub_tests".into(),
-            machine: "Test".into(), // Self-reference
+            machine: "Test".into(), // Self-reference — circular composition
             cardinality: smql_ast::machine::ChildCardinality::List {
                 min: None,
                 max: None,
             },
         });
-        let warnings = catalog.register(m).unwrap();
-        assert!(!warnings.iter().any(|w| w.message.contains("Test")));
+        let result = catalog.register(m);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Circular composition"));
     }
 
     #[test]
@@ -395,5 +397,26 @@ mod validation_tests {
         };
         let debug = format!("{:?}", w);
         assert!(debug.contains("test warning"));
+    }
+
+    #[test]
+    fn empty_states_rejected() {
+        let catalog = MachineCatalog::new();
+        let m = MachineDefinition::new("Empty".into(), "".into());
+        let result = catalog.register(m);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("at least one state"));
+    }
+
+    #[test]
+    fn missing_initial_state_rejected() {
+        let catalog = MachineCatalog::new();
+        let mut m = MachineDefinition::new("NoInit".into(), "".into());
+        m.states = vec![StateDefinition::new("open".into())];
+        let result = catalog.register(m);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("INITIAL STATE"));
     }
 }

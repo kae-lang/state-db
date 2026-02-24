@@ -7,7 +7,10 @@ use smql_ast::{SmqlError, SmqlResult};
 
 /// Parse a full expression (entry point for guards and WHERE clauses).
 pub fn parse_expression(parser: &mut Parser) -> SmqlResult<Expression> {
-    parse_or_expr(parser)
+    parser.enter_expr()?;
+    let result = parse_or_expr(parser);
+    parser.leave_expr();
+    result
 }
 
 /// OR has lowest precedence.
@@ -38,10 +41,10 @@ fn parse_and_expr(parser: &mut Parser) -> SmqlResult<Expression> {
     Ok(left)
 }
 
-/// NOT (unary prefix).
+/// NOT (unary prefix). Recurses into itself so `NOT NOT x` → `NOT(NOT(x))`.
 fn parse_not_expr(parser: &mut Parser) -> SmqlResult<Expression> {
     if parser.try_keyword("NOT") {
-        let operand = parse_comparison(parser)?;
+        let operand = parse_not_expr(parser)?;
         Ok(Expression::new(ExpressionKind::UnaryOp {
             op: UnaryOperator::Not,
             operand: Box::new(operand),

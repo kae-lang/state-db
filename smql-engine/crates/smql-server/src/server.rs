@@ -1,3 +1,6 @@
+use axum::extract::DefaultBodyLimit;
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::Router;
 use smql_catalog::MachineCatalog;
 use smql_engine_core::Engine;
@@ -7,6 +10,9 @@ use std::sync::Arc;
 
 use crate::handlers;
 use crate::metrics::SmqlMetrics;
+
+/// Maximum request body size (1 MB). Protects against oversized payloads.
+const MAX_BODY_SIZE: usize = 1024 * 1024;
 
 /// Shared application state.
 #[derive(Clone)]
@@ -103,6 +109,8 @@ impl SmqlServer {
         };
 
         router
+            .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
+            .layer(axum::middleware::from_fn(security_headers))
     }
 
     /// Start the server on the given address.
@@ -126,6 +134,11 @@ impl SmqlServer {
             }
         }
 
+        // Start timer loop to fire expired timeout transitions
+        self.state
+            .engine
+            .start_timer_loop(std::time::Duration::from_secs(1));
+
         // Start background EventBus listener for timeout metrics
         crate::handlers::start_event_metrics_listener(
             self.state.event_bus.clone(),
@@ -138,6 +151,19 @@ impl SmqlServer {
         axum::serve(listener, app).await?;
         Ok(())
     }
+}
+
+/// Middleware that adds security headers to all responses.
+async fn security_headers(request: axum::extract::Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+    headers.insert("x-frame-options", "DENY".parse().unwrap());
+    headers.insert(
+        "cache-control",
+        "no-store, no-cache, must-revalidate".parse().unwrap(),
+    );
+    response
 }
 
 impl Default for SmqlServer {

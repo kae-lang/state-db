@@ -292,15 +292,17 @@ impl MachineCatalog {
 
         let warnings = validate_machine(&definition, self)?;
 
-        self.machines.alter(&name, |_, mut entry| {
-            entry.history.push(entry.definition.clone());
-            entry.version += 1;
-            entry.definition = definition.clone();
-            entry
-        });
-
-        if !self.machines.contains_key(&name) {
-            return Err(SmqlError::not_found("Machine", &name));
+        // Use get_mut for atomic check-and-update (no TOCTOU race)
+        match self.machines.get_mut(&name) {
+            Some(mut entry) => {
+                let old_def = entry.definition.clone();
+                entry.history.push(old_def);
+                entry.version += 1;
+                entry.definition = definition;
+            }
+            None => {
+                return Err(SmqlError::not_found("Machine", &name));
+            }
         }
 
         Ok(warnings)

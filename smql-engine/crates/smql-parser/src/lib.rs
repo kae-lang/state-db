@@ -49,12 +49,17 @@ pub fn parse_machines(input: &str) -> SmqlResult<Vec<MachineDefinition>> {
     Ok(machines)
 }
 
+/// Maximum expression nesting depth to prevent stack overflow from deeply nested input.
+const MAX_EXPR_DEPTH: u32 = 64;
+
 /// Internal parser state, walks over a token stream.
 pub(crate) struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     #[allow(dead_code)]
     source: &'a str,
+    /// Current expression nesting depth (guards against stack overflow).
+    pub(crate) depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -63,7 +68,30 @@ impl<'a> Parser<'a> {
             tokens,
             pos: 0,
             source,
+            depth: 0,
         }
+    }
+
+    /// Increment depth and check against the limit.
+    pub fn enter_expr(&mut self) -> SmqlResult<()> {
+        self.depth += 1;
+        if self.depth > MAX_EXPR_DEPTH {
+            Err(SmqlError::ParseError {
+                message: format!(
+                    "Expression nesting too deep (>{} levels) — possible malicious input",
+                    MAX_EXPR_DEPTH
+                ),
+                span: self.peek().map(|t| smql_ast::Span::new(t.offset, t.offset + t.text.len())),
+                hint: Some("Simplify the expression or break it into smaller parts".into()),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Decrement depth when leaving an expression.
+    pub fn leave_expr(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     pub fn is_eof(&self) -> bool {

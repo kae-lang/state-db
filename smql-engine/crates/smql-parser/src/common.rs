@@ -29,6 +29,22 @@ pub fn parse_int_literal(parser: &mut Parser) -> SmqlResult<i64> {
     }
 }
 
+/// Parse a non-negative integer literal and return as u64.
+/// Rejects negative values instead of silently wrapping via `as u64`.
+pub fn parse_non_negative_int(parser: &mut Parser) -> SmqlResult<u64> {
+    let tok = parser.peek().cloned();
+    let val = parse_int_literal(parser)?;
+    if val < 0 {
+        let span = tok.map(|t| Span::new(t.offset, t.offset + t.text.len()));
+        return Err(SmqlError::ParseError {
+            message: format!("Expected non-negative integer, found {}", val),
+            span,
+            hint: Some("LIMIT, OFFSET, and INTERVAL values must be >= 0".into()),
+        });
+    }
+    Ok(val as u64)
+}
+
 /// Parse a duration literal, returning seconds.
 pub fn parse_duration(parser: &mut Parser) -> SmqlResult<SmqlDuration> {
     let tok = parser.advance()?;
