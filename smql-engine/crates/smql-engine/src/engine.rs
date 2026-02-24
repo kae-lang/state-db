@@ -1,6 +1,6 @@
 use chrono::Utc;
 use smql_ast::command::{BatchTransitionCommand, SpawnCommand, TransitionCommand};
-use smql_ast::error::{GuardFailure, TransitionDeniedError};
+use smql_ast::error::{GuardFailure, RecoveryAction, RecoveryOption, TransitionDeniedError};
 use smql_ast::machine::{Action, HookTrigger, MachineDefinition, TransitionSource};
 use smql_ast::types::{Constraint, DefaultValue, TypeDefinition};
 use smql_ast::value::Value;
@@ -557,6 +557,17 @@ impl Engine {
                     hint: Some("Hook rejected the transition".to_string()),
                 }],
                 hint: None,
+                recovery_options: vec![RecoveryOption {
+                    action: RecoveryAction::Escalate,
+                    field: None,
+                    suggested_value: None,
+                    reason: "A BEFORE hook rejected this transition. Escalating to a human or alternative path may be required.".to_string(),
+                    example: Some(format!("TRANSITION {} {} TO awaiting_agent", instance.machine, cmd.instance_id)),
+                }],
+                llm_prompt: Some(format!(
+                    "Transition {} -> {} for instance {} was rejected by a BEFORE hook: {}. Consider escalating to a human agent.",
+                    instance.state, cmd.to_state, cmd.instance_id, e
+                )),
             }));
         }
 
@@ -672,12 +683,18 @@ impl Engine {
                 });
             }
 
+            // Generate recovery options based on guard failures
+            let recovery_options = Self::generate_recovery_options(&guard_failures, &cmd.instance_id, &instance.machine, &cmd.to_state);
+            let llm_prompt = Self::generate_llm_prompt(&guard_failures, &cmd.instance_id, &instance.state, &cmd.to_state);
+
             return Err(SmqlError::TransitionDenied(TransitionDeniedError {
                 instance_id: cmd.instance_id.clone(),
                 from_state: instance.state.clone(),
                 to_state: cmd.to_state.clone(),
                 guard_failures,
                 hint: None,
+                recovery_options,
+                llm_prompt,
             }));
         }
 
@@ -697,6 +714,26 @@ impl Engine {
                         hint: Some(format!("Add CAN WRITE {{ {} }} to the role definition", field)),
                     }],
                     hint: None,
+                    recovery_options: vec![
+                        RecoveryOption {
+                            action: RecoveryAction::ChangeActor,
+                            field: Some(field.clone()),
+                            suggested_value: None,
+                            reason: format!("Current role '{}' cannot write field '{}'. Retry as a role with write permission.", actor_role.unwrap_or("unknown"), field),
+                            example: Some(format!("AS \"admin\" TRANSITION {} {} TO {}", instance.machine, cmd.instance_id, cmd.to_state)),
+                        },
+                        RecoveryOption {
+                            action: RecoveryAction::Escalate,
+                            field: None,
+                            suggested_value: None,
+                            reason: "Escalate to an agent with appropriate permissions.".to_string(),
+                            example: Some(format!("TRANSITION {} {} TO awaiting_agent", instance.machine, cmd.instance_id)),
+                        },
+                    ],
+                    llm_prompt: Some(format!(
+                        "Transition {} -> {} for instance {} failed: role '{}' cannot write field '{}'. Retry as a different actor or escalate.",
+                        instance.state, cmd.to_state, cmd.instance_id, actor_role.unwrap_or("unknown"), field
+                    )),
                 }));
             }
         }
@@ -1214,6 +1251,19 @@ impl Engine {
             guard_failures: Vec::new(),
             hint: Some(format!(
                 "No transition defined from '{}' to '{}' in machine '{}'",
+                from_state, to_state, machine.name
+            )),
+            recovery_options: vec![
+                RecoveryOption {
+                    action: RecoveryAction::Escalate,
+                    field: None,
+                    suggested_value: None,
+                    reason: format!("No valid transition path from '{}' to '{}' exists. Escalate to review workflow.", from_state, to_state),
+                    example: None,
+                },
+            ],
+            llm_prompt: Some(format!(
+                "Cannot transition from '{}' to '{}' in machine '{}': no such transition is defined. Check available transitions or escalate.",
                 from_state, to_state, machine.name
             )),
         }))
@@ -2216,6 +2266,104 @@ impl Engine {
                 ctx.parent_state = Some(parent.state);
             }
         }
+    }
+
+    /// Generate actionable recovery options from guard failures for AI agents.
+    fn generate_recovery_options(
+        guard_failures: &[GuardFailure],
+        instance_id: &str,
+        machine: &str,
+        target_state: &str,
+    ) -> Vec<RecoveryOption> {
+        let mut options = Vec::new();
+
+        for failure in guard_failures {
+            // Detect "IS SET" failures - missing field values
+            if failure.guard_expr.contains("IS SET") {
+                // Extract field name from guard like "resolution IS SET"
+                let field = failure.guard_expr.split_whitespace().next().map(|s| s.to_string());
+                options.push(RecoveryOption {
+                    action: RecoveryAction::SetField,
+                    field: field.clone(),
+                    suggested_value: Some("Provide a value for this field".to_string()),
+                    reason: format!("Guard '{}' requires this field to be set.", failure.guard_expr),
+                    example: field.map(|f| format!("TRANSITION {} {} TO {} WITH {{ {}: \"...\" }}", machine, instance_id, target_state, f)),
+                });
+            }
+
+            // Detect ACTOR-related failures
+            if failure.guard_expr.contains("ACTOR") {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::ChangeActor,
+                    field: None,
+                    suggested_value: None,
+                    reason: "The current actor does not have permission for this transition.".to_string(),
+                    example: Some(format!("AS \"appropriate_actor\" TRANSITION {} {} TO {}", machine, instance_id, target_state)),
+                });
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Escalate,
+                    field: None,
+                    suggested_value: None,
+                    reason: "Escalate to an agent with appropriate permissions.".to_string(),
+                    example: Some(format!("TRANSITION {} {} TO awaiting_agent", machine, instance_id)),
+                });
+            }
+
+            // Detect timeout-related failures
+            if failure.guard_expr.contains("elapsed") {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Wait,
+                    field: None,
+                    suggested_value: None,
+                    reason: "A time-based condition is not yet met. Wait for the condition to become true.".to_string(),
+                    example: None,
+                });
+            }
+        }
+
+        // If no specific options were generated, add a generic escalate option
+        if options.is_empty() {
+            options.push(RecoveryOption {
+                action: RecoveryAction::Escalate,
+                field: None,
+                suggested_value: None,
+                reason: "Unable to determine specific recovery action. Escalate for manual review.".to_string(),
+                example: Some(format!("TRANSITION {} {} TO awaiting_agent", machine, instance_id)),
+            });
+        }
+
+        options
+    }
+
+    /// Generate an LLM-friendly prompt describing the transition failure.
+    fn generate_llm_prompt(
+        guard_failures: &[GuardFailure],
+        instance_id: &str,
+        from_state: &str,
+        to_state: &str,
+    ) -> Option<String> {
+        if guard_failures.is_empty() {
+            return None;
+        }
+
+        let failures_summary: Vec<String> = guard_failures
+            .iter()
+            .map(|f| {
+                let mut s = format!("Guard '{}' failed", f.guard_expr);
+                if let Some(actual) = &f.actual_value {
+                    s.push_str(&format!(" (actual: {})", actual));
+                }
+                if let Some(hint) = &f.hint {
+                    s.push_str(&format!(". Hint: {}", hint));
+                }
+                s
+            })
+            .collect();
+
+        Some(format!(
+            "Transition {} -> {} for instance {} was denied. Failures: {}. Review the guard conditions and provide missing data or escalate to a human agent.",
+            from_state, to_state, instance_id, failures_summary.join("; ")
+        ))
     }
 }
 

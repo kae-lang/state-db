@@ -121,6 +121,12 @@ pub struct TransitionDeniedError {
     pub to_state: String,
     pub guard_failures: Vec<GuardFailure>,
     pub hint: Option<String>,
+    /// Actionable recovery options for AI agents.
+    #[serde(default)]
+    pub recovery_options: Vec<RecoveryOption>,
+    /// A human-readable prompt suitable for LLM context.
+    #[serde(default)]
+    pub llm_prompt: Option<String>,
 }
 
 impl fmt::Display for TransitionDeniedError {
@@ -150,6 +156,37 @@ pub struct GuardFailure {
     pub actual_value: Option<String>,
     pub expected: Option<String>,
     pub hint: Option<String>,
+}
+
+/// Action types for AI agent recovery from errors.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RecoveryAction {
+    /// Provide a missing field value.
+    SetField,
+    /// Re-attempt the operation as a different actor.
+    ChangeActor,
+    /// Route to a human queue or escalation path.
+    Escalate,
+    /// Retry after a condition changes.
+    Retry,
+    /// Wait for a timeout or external event.
+    Wait,
+}
+
+/// An actionable recovery option for AI agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryOption {
+    /// The type of recovery action.
+    pub action: RecoveryAction,
+    /// The field to set (for SET_FIELD action).
+    pub field: Option<String>,
+    /// A suggested value or description of what to provide.
+    pub suggested_value: Option<String>,
+    /// Why this option would help resolve the error.
+    pub reason: String,
+    /// An example SMQL command showing how to apply this recovery.
+    pub example: Option<String>,
 }
 
 impl fmt::Display for GuardFailure {

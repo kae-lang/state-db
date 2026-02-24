@@ -1410,6 +1410,8 @@ mod server_hardening {
             instance_id: "123".to_string(),
             guard_failures: vec![],
             hint: None,
+            recovery_options: vec![],
+            llm_prompt: None,
         });
         assert!(matches!(td, SmqlError::TransitionDenied(_)));
 

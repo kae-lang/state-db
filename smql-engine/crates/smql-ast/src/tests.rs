@@ -1306,6 +1306,8 @@ mod error_tests {
                 hint: Some("Set resolution_note before resolving".into()),
             }],
             hint: None,
+            recovery_options: vec![],
+            llm_prompt: None,
         };
         let s = e.to_string();
         assert!(s.contains("open -> resolved"));
@@ -1347,6 +1349,8 @@ mod error_tests {
             to_state: "resolved".into(),
             guard_failures: vec![],
             hint: Some("Check guards".into()),
+            recovery_options: vec![],
+            llm_prompt: None,
         };
         let s = e.to_string();
         assert!(s.contains("Hint: Check guards"));
@@ -1360,6 +1364,8 @@ mod error_tests {
             to_state: "b".into(),
             guard_failures: vec![],
             hint: None,
+            recovery_options: vec![],
+            llm_prompt: None,
         };
         let s = e.to_string();
         assert!(s.contains("a -> b"));
@@ -1406,6 +1412,8 @@ mod error_tests {
                 to_state: "b".into(),
                 guard_failures: vec![],
                 hint: None,
+                recovery_options: vec![],
+                llm_prompt: None,
             }),
             SmqlError::GuardFailed {
                 message: "failed".into(),
@@ -1475,6 +1483,46 @@ mod error_tests {
             let json = serde_json::to_string(&e).unwrap();
             let _e2: SmqlError = serde_json::from_str(&json).unwrap();
         }
+    }
+
+    #[test]
+    fn transition_denied_error_with_recovery_options() {
+        use crate::error::{RecoveryAction, RecoveryOption};
+
+        let e = TransitionDeniedError {
+            instance_id: "tk_123".into(),
+            from_state: "in_progress".into(),
+            to_state: "resolved".into(),
+            guard_failures: vec![GuardFailure {
+                guard_expr: "resolution IS SET".into(),
+                actual_value: Some("NULL".into()),
+                expected: Some("non-null".into()),
+                hint: Some("Provide resolution text".into()),
+            }],
+            hint: None,
+            recovery_options: vec![
+                RecoveryOption {
+                    action: RecoveryAction::SetField,
+                    field: Some("resolution".into()),
+                    suggested_value: Some("Provide resolution text".into()),
+                    reason: "Guard 'resolution IS SET' requires this field to be set.".into(),
+                    example: Some("TRANSITION SupportTicket tk_123 TO resolved WITH { resolution: \"...\" }".into()),
+                },
+            ],
+            llm_prompt: Some("Transition in_progress -> resolved for instance tk_123 was denied. Provide resolution text or escalate.".into()),
+        };
+
+        // Test serialization
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("recovery_options"));
+        assert!(json.contains("llm_prompt"));
+        assert!(json.contains("SET_FIELD"));
+
+        // Test deserialization
+        let e2: TransitionDeniedError = serde_json::from_str(&json).unwrap();
+        assert_eq!(e2.recovery_options.len(), 1);
+        assert_eq!(e2.recovery_options[0].action, RecoveryAction::SetField);
+        assert!(e2.llm_prompt.is_some());
     }
 }
 

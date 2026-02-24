@@ -2848,6 +2848,8 @@ fn error_response_transition_denied_variant() {
         to_state: "b".to_string(),
         guard_failures: vec![],
         hint: None,
+        recovery_options: vec![],
+        llm_prompt: None,
     });
     let (status, _json_resp) = crate::handlers::error_response_for_test(err);
     assert_eq!(status, StatusCode::CONFLICT);

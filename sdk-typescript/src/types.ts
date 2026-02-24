@@ -126,6 +126,69 @@ export interface ComparePathsResult {
   segments: ComparePathsSegment[];
 }
 
+// --- Error types for AI agents ---
+
+/**
+ * Action types for AI agent recovery from errors.
+ */
+export type RecoveryAction =
+  | "SET_FIELD"
+  | "CHANGE_ACTOR"
+  | "ESCALATE"
+  | "RETRY"
+  | "WAIT";
+
+/**
+ * An actionable recovery option for AI agents.
+ */
+export interface RecoveryOption {
+  /** The type of recovery action. */
+  action: RecoveryAction;
+  /** The field to set (for SET_FIELD action). */
+  field?: string;
+  /** A suggested value or description of what to provide. */
+  suggested_value?: string;
+  /** Why this option would help resolve the error. */
+  reason: string;
+  /** An example SMQL command showing how to apply this recovery. */
+  example?: string;
+}
+
+/**
+ * A single guard failure with context.
+ */
+export interface GuardFailure {
+  /** The guard expression that failed. */
+  guard_expr: string;
+  /** The actual value encountered. */
+  actual_value?: string;
+  /** The expected value or condition. */
+  expected?: string;
+  /** A hint for resolving the failure. */
+  hint?: string;
+}
+
+/**
+ * Structured error for denied transitions, including all guard failures
+ * and AI-agent-friendly recovery options.
+ */
+export interface TransitionDeniedError {
+  /** The instance ID that failed to transition. */
+  instance_id: string;
+  /** The state the instance is currently in. */
+  from_state: string;
+  /** The state the transition attempted to reach. */
+  to_state: string;
+  /** All guard failures that caused the denial. */
+  guard_failures: GuardFailure[];
+  /** A general hint for resolving the error. */
+  hint?: string;
+  /** Actionable recovery options for AI agents. */
+  recovery_options: RecoveryOption[];
+  /** A human-readable prompt suitable for LLM context. */
+  llm_prompt?: string;
+}
+
 // --- REST endpoints ---
 
 export interface HealthResponse {
