@@ -239,16 +239,44 @@ pub fn parse_define_saga(parser: &mut Parser) -> SmqlResult<SagaDefinition> {
     Ok(SagaDefinition { name, trigger, steps, on_complete, on_failure })
 }
 
-/// Parse DEFINE MACHINE Name ( ... ).
-pub fn parse_define_machine(parser: &mut Parser) -> SmqlResult<MachineDefinition> {
+/// Parse DEFINE TEMPLATE Name ( ... ) — same structure as DEFINE MACHINE but stored as a template.
+pub fn parse_define_template(parser: &mut Parser) -> SmqlResult<MachineDefinition> {
     parser.expect_keyword("DEFINE")?;
-    parser.expect_keyword("MACHINE")?;
+    parser.expect_keyword("TEMPLATE")?;
     let name = parser.expect_ident()?;
     parser.expect_punct("(")?;
 
     let mut machine = MachineDefinition::new(name, String::new());
+    parse_machine_body(parser, &mut machine)?;
+    parser.expect_punct(")")?;
+    Ok(machine)
+}
 
-    // Parse blocks inside the machine definition
+/// Parse DEFINE MACHINE Name [EXTENDS template] ( ... ).
+pub fn parse_define_machine(parser: &mut Parser) -> SmqlResult<MachineDefinition> {
+    parser.expect_keyword("DEFINE")?;
+    parser.expect_keyword("MACHINE")?;
+    let name = parser.expect_ident()?;
+
+    // Optional EXTENDS clause
+    let extends = if parser.try_keyword("EXTENDS") {
+        Some(parser.expect_ident()?)
+    } else {
+        None
+    };
+
+    parser.expect_punct("(")?;
+
+    let mut machine = MachineDefinition::new(name, String::new());
+    machine.extends = extends;
+
+    parse_machine_body(parser, &mut machine)?;
+    parser.expect_punct(")")?;
+    Ok(machine)
+}
+
+/// Parse the body blocks inside a machine/template definition (everything between `(` and `)`).
+fn parse_machine_body(parser: &mut Parser, machine: &mut MachineDefinition) -> SmqlResult<()> {
     while !parser.check_punct(")") {
         match parser.peek_kind() {
             Some(TokenKind::Keyword(k)) => {
@@ -300,9 +328,7 @@ pub fn parse_define_machine(parser: &mut Parser) -> SmqlResult<MachineDefinition
             }
         }
     }
-
-    parser.expect_punct(")")?;
-    Ok(machine)
+    Ok(())
 }
 
 /// Parse DATA { field : Type -> constraints, ... }.
@@ -764,7 +790,23 @@ fn parse_action(parser: &mut Parser) -> SmqlResult<Action> {
                         None
                     };
                     parser.expect_punct(")")?;
-                    Ok(Action::Webhook { url, payload })
+                    // Parse optional STORE and ON_FAILURE clauses
+                    let response_field = if parser.try_keyword("STORE") {
+                        Some(parser.expect_ident()?)
+                    } else {
+                        None
+                    };
+                    let on_failure_state = if parser.try_keyword("ON_FAILURE") {
+                        Some(parser.expect_ident()?)
+                    } else {
+                        None
+                    };
+                    Ok(Action::Webhook {
+                        url,
+                        payload,
+                        response_field,
+                        on_failure_state,
+                    })
                 }
                 "SPAWN" => {
                     parser.advance()?;

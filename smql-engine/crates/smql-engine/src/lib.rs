@@ -11,6 +11,6 @@ mod eval_tests;
 mod tests;
 
 pub use alter::AlterResult;
-pub use engine::{Engine, SpawnResult, TransitionResult};
+pub use engine::{BatchSpawnResult, BatchSpawnFailure, Engine, SpawnResult, TransactionStepResult, TransitionResult, WatchResult};
 pub use eval::{eval_expr, eval_guard, ActorInfo, ChildInfo, EvalContext};
 pub use query::{AggregateRow, FunnelResult, FunnelStage, PathResult, QueryResult};

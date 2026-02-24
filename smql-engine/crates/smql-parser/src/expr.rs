@@ -105,6 +105,14 @@ fn parse_comparison(parser: &mut Parser) -> SmqlResult<Expression> {
                 expr: Box::new(left),
                 values,
             }));
+        } else {
+            // expr IN collection_expr — dynamic list membership
+            // e.g., "approve" IN ACTOR.capabilities
+            let collection = parse_postfix(parser)?;
+            return Ok(Expression::new(ExpressionKind::InCollection {
+                expr: Box::new(left),
+                collection: Box::new(collection),
+            }));
         }
     }
 
@@ -393,6 +401,46 @@ fn parse_primary(parser: &mut Parser) -> SmqlResult<Expression> {
                     let regex = common::parse_string_literal(parser)?;
                     parser.expect_punct(")")?;
                     Ok(Expression::new(ExpressionKind::Pattern(regex)))
+                }
+                // Query-level predicates
+                "ALIVE" => {
+                    parser.advance()?;
+                    Ok(Expression::new(ExpressionKind::Alive))
+                }
+                "TERMINATED" => {
+                    parser.advance()?;
+                    Ok(Expression::new(ExpressionKind::Terminated))
+                }
+                "STUCK_IN" => {
+                    parser.advance()?;
+                    parser.expect_punct("(")?;
+                    let state = common::parse_string_literal(parser)?;
+                    parser.expect_punct(",")?;
+                    let duration = common::parse_duration(parser)?;
+                    parser.expect_punct(")")?;
+                    Ok(Expression::new(ExpressionKind::StuckIn { state, duration }))
+                }
+                "HAS_VISITED" => {
+                    parser.advance()?;
+                    parser.expect_punct("(")?;
+                    let state = common::parse_string_literal(parser)?;
+                    parser.expect_punct(")")?;
+                    Ok(Expression::new(ExpressionKind::HasVisited(state)))
+                }
+                "NEVER_VISITED" => {
+                    parser.advance()?;
+                    parser.expect_punct("(")?;
+                    let state = common::parse_string_literal(parser)?;
+                    parser.expect_punct(")")?;
+                    Ok(Expression::new(ExpressionKind::NeverVisited(state)))
+                }
+                // TAG "key" == "value"
+                "TAG" => {
+                    parser.advance()?;
+                    let key = common::parse_string_literal(parser)?;
+                    parser.expect_operator("==")?;
+                    let value = common::parse_string_literal(parser)?;
+                    Ok(Expression::new(ExpressionKind::TagEq { key, value }))
                 }
                 // Built-in functions (elapsed, NOW, TODAY, etc.)
                 "NOW" | "TODAY" => {

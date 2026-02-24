@@ -876,6 +876,7 @@ fn qualified_access_actor_missing_field() {
     ctx.actor = Some(ActorInfo {
         id: "u1".to_string(),
         role: Some("admin".to_string()),
+        capabilities: Vec::new(),
         fields: HashMap::new(),
     });
 

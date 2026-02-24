@@ -842,6 +842,8 @@ mod machine_tests {
             Action::Webhook {
                 url: "https://example.com/hook".into(),
                 payload: Some(Expression::new(ExpressionKind::Literal(Value::Int(1)))),
+                response_field: None,
+                on_failure_state: None,
             }
             .to_string(),
             "WEBHOOK(\"https://example.com/hook\")"
@@ -942,6 +944,7 @@ mod query_tests {
     fn find_query_display() {
         let q = Query::Find(FindQuery {
             machine: "Order".into(),
+            select: None,
             filter: None,
             sort: vec![],
             limit: Some(10),
@@ -1075,6 +1078,7 @@ mod query_tests {
     fn find_query_with_all_options() {
         let q = FindQuery {
             machine: "Order".into(),
+            select: None,
             filter: None,
             sort: vec![crate::types::SortClause {
                 field: "created_at".into(),

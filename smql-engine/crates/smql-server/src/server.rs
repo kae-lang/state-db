@@ -186,6 +186,7 @@ mod auth_integration_tests {
             secret: "integration-test-secret".to_string(),
             required: true,
             skip_paths: vec!["/health".to_string(), "/metrics".to_string()],
+            trust_client_actor: false,
         }
     }
 
@@ -207,6 +208,7 @@ mod auth_integration_tests {
             sub: "user-1".to_string(),
             role: Some("admin".to_string()),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            permissions: Vec::new(),
         };
         let token = make_token(&claims, "integration-test-secret");
 
@@ -264,5 +266,354 @@ mod auth_integration_tests {
             .unwrap();
 
         assert_eq!(response.status(), http::StatusCode::OK);
+    }
+
+    // --- E4: Auth-to-Actor Binding tests ---
+
+    /// Helper: send an authed SMQL request and return the response body as JSON.
+    async fn execute_authed(
+        app: Router,
+        smql: &str,
+        claims: &AuthClaims,
+        secret: &str,
+    ) -> (http::StatusCode, serde_json::Value) {
+        let token = make_token(claims, secret);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", token))
+                    .body(Body::from(
+                        serde_json::json!({ "smql": smql }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 100_000)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        (status, json)
+    }
+
+    fn agent_claims(sub: &str, role: &str, permissions: Vec<String>) -> AuthClaims {
+        AuthClaims {
+            sub: sub.to_string(),
+            role: Some(role.to_string()),
+            exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            permissions,
+        }
+    }
+
+    const MACHINE_DEF: &str = r#"DEFINE MACHINE AuthFlow (
+        STATES { pending, approved, rejected }
+        INITIAL STATE pending
+        TERMINAL STATES { rejected }
+        TRANSITIONS {
+            pending -> approved {}
+            pending -> rejected {}
+        }
+    )"#;
+
+    #[tokio::test]
+    async fn jwt_sub_records_identity_on_spawn() {
+        let server = SmqlServer::new().with_auth(test_auth_config());
+
+        // Define machine
+        let app = server.router();
+        let claims = agent_claims("agent-jwt-1", "admin", Vec::new());
+        let (status, _) = execute_authed(app, MACHINE_DEF, &claims, "integration-test-secret").await;
+        assert_eq!(status, http::StatusCode::CREATED);
+
+        // Spawn — JWT sub should be recorded as the actor in the trail
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            r#"SPAWN AuthFlow {}"#,
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::CREATED);
+        let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+        // Verify trail records JWT identity
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            &format!(r#"TRAIL OF "{}""#, instance_id),
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+        let entries = json["result"]["entries"].as_array().unwrap();
+        // The spawn trail entry should record "agent-jwt-1" from JWT
+        assert_eq!(entries[0]["actor"], "agent-jwt-1");
+    }
+
+    #[tokio::test]
+    async fn jwt_sub_overrides_as_clause_on_transition() {
+        let server = SmqlServer::new().with_auth(test_auth_config());
+        let claims = agent_claims("agent-jwt-2", "admin", Vec::new());
+
+        // Define machine
+        let app = server.router();
+        let (status, _) = execute_authed(app, MACHINE_DEF, &claims, "integration-test-secret").await;
+        assert_eq!(status, http::StatusCode::CREATED);
+
+        // Spawn
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            r#"SPAWN AuthFlow {}"#,
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::CREATED);
+        let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+        // Transition with AS "impersonator" — JWT sub should override
+        let app = server.router();
+        let (status, _) = execute_authed(
+            app,
+            &format!(r#"TRANSITION AuthFlow "{}" TO approved AS "impersonator""#, instance_id),
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+
+        // Verify trail records JWT identity
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            &format!(r#"TRAIL OF "{}""#, instance_id),
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+        let entries = json["result"]["entries"].as_array().unwrap();
+        // Transition trail entry (index 1) should have "agent-jwt-2" not "impersonator"
+        assert_eq!(entries[1]["actor"], "agent-jwt-2");
+    }
+
+    #[tokio::test]
+    async fn trust_client_actor_allows_as_clause() {
+        let config = AuthConfig {
+            trust_client_actor: true,
+            ..test_auth_config()
+        };
+        let server = SmqlServer::new().with_auth(config);
+        let claims = agent_claims("jwt-user", "admin", Vec::new());
+
+        // Define machine
+        let app = server.router();
+        let (status, _) = execute_authed(app, MACHINE_DEF, &claims, "integration-test-secret").await;
+        assert_eq!(status, http::StatusCode::CREATED);
+
+        // Spawn instance
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            r#"SPAWN AuthFlow {}"#,
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::CREATED);
+        let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+        // Transition with AS "custom-actor" — should be trusted when trust_client_actor=true
+        let app = server.router();
+        let (status, _) = execute_authed(
+            app,
+            &format!(r#"TRANSITION AuthFlow "{}" TO approved AS "custom-actor""#, instance_id),
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+
+        // Verify trail records "custom-actor" (the AS clause), not JWT sub
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            &format!(r#"TRAIL OF "{}""#, instance_id),
+            &claims,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+        let entries = json["result"]["entries"].as_array().unwrap();
+        // Transition trail entry (index 1) should record "custom-actor" from AS clause
+        assert_eq!(entries[1]["actor"], "custom-actor");
+    }
+
+    #[tokio::test]
+    async fn actor_capabilities_from_jwt_permissions() {
+        // Machine with a guard that checks ACTOR.capabilities
+        let machine_def = r#"DEFINE MACHINE CapFlow (
+            STATES { pending, approved }
+            INITIAL STATE pending
+            TERMINAL STATES { approved }
+            TRANSITIONS {
+                pending -> approved {
+                    GUARD: "approve" IN ACTOR.capabilities
+                }
+            }
+        )"#;
+
+        let server = SmqlServer::new().with_auth(test_auth_config());
+
+        // Agent with "approve" permission
+        let claims_with_perm = agent_claims("approver-agent", "admin", vec!["approve".to_string()]);
+
+        // Define machine
+        let app = server.router();
+        let (status, _) = execute_authed(app, machine_def, &claims_with_perm, "integration-test-secret").await;
+        assert_eq!(status, http::StatusCode::CREATED);
+
+        // Spawn
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            r#"SPAWN CapFlow {}"#,
+            &claims_with_perm,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::CREATED);
+        let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+        // Transition with "approve" capability — should succeed
+        let app = server.router();
+        let (status, _) = execute_authed(
+            app,
+            &format!(r#"TRANSITION CapFlow "{}" TO approved"#, instance_id),
+            &claims_with_perm,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::OK);
+
+        // Now test that agent WITHOUT "approve" permission gets denied
+        let claims_no_perm = agent_claims("other-agent", "admin", Vec::new());
+
+        // Spawn another instance
+        let app = server.router();
+        let (status, json) = execute_authed(
+            app,
+            r#"SPAWN CapFlow {}"#,
+            &claims_no_perm,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::CREATED);
+        let instance_id2 = json["result"]["id"].as_str().unwrap().to_string();
+
+        // Transition without capability — should fail (409 Conflict)
+        let app = server.router();
+        let (status, _) = execute_authed(
+            app,
+            &format!(r#"TRANSITION CapFlow "{}" TO approved"#, instance_id2),
+            &claims_no_perm,
+            "integration-test-secret",
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn non_auth_mode_uses_as_clause() {
+        // Server without auth — regression test
+        // TRANSITION AS clause should work when no auth middleware is present
+        let server = SmqlServer::new();
+
+        // Define machine (no auth)
+        let app = server.router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "smql": MACHINE_DEF }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::CREATED);
+
+        // Spawn instance
+        let app = server.router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "smql": r#"SPAWN AuthFlow {}"# }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::CREATED);
+        let body = axum::body::to_bytes(response.into_body(), 100_000)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+        // Transition with AS clause — should be recorded in trail
+        let app = server.router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "smql": format!(r#"TRANSITION AuthFlow "{}" TO approved AS "my-agent""#, instance_id) }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+
+        // Verify trail records "my-agent" from AS clause
+        let app = server.router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "smql": format!(r#"TRAIL OF "{}""#, instance_id) }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 100_000)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let entries = json["result"]["entries"].as_array().unwrap();
+        // Transition trail entry (index 1) should have "my-agent" from AS clause
+        assert_eq!(entries[1]["actor"], "my-agent");
     }
 }

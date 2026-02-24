@@ -41,6 +41,9 @@ fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -62,6 +65,9 @@ fn spawn_child_cmd(
         parent_id: Some(parent_id.to_string()),
         parent_machine: Some(parent_machine.to_string()),
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -529,6 +535,7 @@ async fn find_jobs_by_state() {
     // Find pending jobs
     let q = Query::Find(FindQuery {
         machine: "Job".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("pending".into()))),
         sort: vec![],
         limit: None,

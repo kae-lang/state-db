@@ -244,6 +244,7 @@ mod tests {
         ctx.actor = Some(ActorInfo {
             id: "user-123".to_string(),
             role: Some("admin".to_string()),
+            capabilities: Vec::new(),
             fields,
         });
 
@@ -269,6 +270,7 @@ mod tests {
         ctx.actor = Some(ActorInfo {
             id: "user-456".to_string(),
             role: None,
+            capabilities: Vec::new(),
             fields: HashMap::new(),
         });
 
@@ -1424,6 +1426,7 @@ mod tests {
         ctx.actor = Some(ActorInfo {
             id: "u1".to_string(),
             role: Some("admin".to_string()),
+            capabilities: Vec::new(),
             fields: HashMap::new(),
         });
 

@@ -145,6 +145,9 @@ async fn spawn_support_ticket_via_api(engine: &Engine) -> String {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     engine
         .spawn(&cmd)
@@ -1050,6 +1053,8 @@ async fn alter_doc_e2e_add_state_and_transition() {
         through: Vec::new(),
         or_stay: false,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     engine.transition(&t_cmd).await.expect("to triaged");
 

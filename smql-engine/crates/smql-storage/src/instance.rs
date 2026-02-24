@@ -50,6 +50,18 @@ pub struct Instance {
     pub parent_id: Option<InstanceId>,
     /// Parent machine name (for child machines in composition)
     pub parent_machine: Option<String>,
+    /// Untyped key-value tags for operational metadata (batch ID, agent, correlation ID, etc.).
+    #[serde(default)]
+    pub tags: HashMap<String, String>,
+    /// Agent ID holding an exclusive claim on this instance.
+    #[serde(default)]
+    pub claimed_by: Option<String>,
+    /// When the current claim expires (lease expiry).
+    #[serde(default)]
+    pub claim_expires_at: Option<DateTime<Utc>>,
+    /// When this instance expires (auto-delete after this time).
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 impl Instance {
@@ -67,6 +79,10 @@ impl Instance {
             version: 1,
             parent_id: None,
             parent_machine: None,
+            tags: HashMap::new(),
+            claimed_by: None,
+            claim_expires_at: None,
+            expires_at: None,
         }
     }
 
@@ -91,6 +107,19 @@ impl Instance {
             version: 1,
             parent_id: Some(parent_id),
             parent_machine: Some(parent_machine),
+            tags: HashMap::new(),
+            claimed_by: None,
+            claim_expires_at: None,
+            expires_at: None,
+        }
+    }
+
+    /// Check if this instance is currently claimed (not expired).
+    pub fn is_claimed(&self) -> bool {
+        if let (Some(_agent), Some(expires)) = (&self.claimed_by, &self.claim_expires_at) {
+            *expires > Utc::now()
+        } else {
+            false
         }
     }
 }
@@ -203,6 +232,21 @@ pub enum Mutation {
     RemoveField(String),
     IncrementField(String, i64),
     AppendToList(String, Value),
+    /// Set a tag key-value pair on the instance.
+    SetTag(String, String),
+}
+
+/// A persisted event entry for durable event log replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredEvent {
+    /// Unique event ID (ULID for time-ordering).
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub machine: String,
+    pub event_name: String,
+    pub instance_id: String,
+    pub payload: serde_json::Value,
+    pub actor: Option<String>,
 }
 
 /// Filter for querying trail entries.

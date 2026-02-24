@@ -2923,8 +2923,82 @@ fn error_response_timeout_error_variant() {
         instance_id: Some("inst1".to_string()),
         state: Some("waiting".to_string()),
     };
-    let (status, _json_resp) = crate::handlers::error_response_for_test(err);
+    let (status, json_resp) = crate::handlers::error_response_for_test(err);
+    assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
+    // CC-3: timeout errors include error_meta with retryable=true
+    let body = serde_json::to_value(&json_resp.0).unwrap();
+    let meta = body.get("error_meta").expect("should have error_meta");
+    assert_eq!(meta["retryable"], true);
+    assert_eq!(meta["category"], "timeout");
+}
+
+// ---------------------------------------------------------------------------
+// CC-3: Error metadata tests — agents can distinguish retryable from permanent
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_meta_conflict_is_retryable() {
+    let err = smql_ast::SmqlError::Conflict {
+        message: "version mismatch".to_string(),
+        hint: None,
+    };
+    let (status, json_resp) = crate::handlers::error_response_for_test(err);
+    assert_eq!(status, StatusCode::CONFLICT);
+    let body = serde_json::to_value(&json_resp.0).unwrap();
+    let meta = body.get("error_meta").expect("should have error_meta");
+    assert_eq!(meta["retryable"], true);
+    assert_eq!(meta["category"], "conflict");
+}
+
+#[test]
+fn error_meta_storage_retryable_flag() {
+    // retryable=true storage error
+    let err = smql_ast::SmqlError::StorageError {
+        message: "connection reset".to_string(),
+        retryable: true,
+    };
+    let (status, json_resp) = crate::handlers::error_response_for_test(err);
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let body = serde_json::to_value(&json_resp.0).unwrap();
+    let meta = body.get("error_meta").expect("should have error_meta");
+    assert_eq!(meta["retryable"], true);
+    assert_eq!(meta["category"], "storage");
+
+    // retryable=false storage error
+    let err2 = smql_ast::SmqlError::StorageError {
+        message: "corruption".to_string(),
+        retryable: false,
+    };
+    let (_status2, json_resp2) = crate::handlers::error_response_for_test(err2);
+    let body2 = serde_json::to_value(&json_resp2.0).unwrap();
+    let meta2 = body2.get("error_meta").expect("should have error_meta");
+    assert_eq!(meta2["retryable"], false);
+    assert_eq!(meta2["category"], "storage");
+}
+
+#[test]
+fn error_meta_internal_not_retryable() {
+    let err = smql_ast::SmqlError::Internal {
+        message: "something broke".to_string(),
+    };
+    let (_status, json_resp) = crate::handlers::error_response_for_test(err);
+    let body = serde_json::to_value(&json_resp.0).unwrap();
+    let meta = body.get("error_meta").expect("should have error_meta");
+    assert_eq!(meta["retryable"], false);
+    assert_eq!(meta["category"], "internal");
+}
+
+#[test]
+fn error_meta_absent_for_client_errors() {
+    // Validation errors should NOT have error_meta (they are client bugs, not retryable)
+    let err = smql_ast::SmqlError::ValidationError {
+        message: "invalid".to_string(),
+        field: Some("name".to_string()),
+        hint: None,
+    };
+    let (_status, json_resp) = crate::handlers::error_response_for_test(err);
+    let body = serde_json::to_value(&json_resp.0).unwrap();
+    assert!(body.get("error_meta").is_none(), "client errors should not have error_meta");
 }
 
 // ---------------------------------------------------------------------------
@@ -3303,5 +3377,166 @@ async fn metrics_compare_paths_query_duration() {
         body.contains(r#"query_type="COMPARE_PATHS"#),
         "Expected COMPARE_PATHS query type label in metrics:\n{}",
         body
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EXPLAIN TRANSITIONS tests
+// ---------------------------------------------------------------------------
+
+/// Machine with guards used across the EXPLAIN TRANSITIONS server tests.
+fn define_ticket_machine() -> &'static str {
+    r#"DEFINE MACHINE Ticket (
+        DATA {
+            title      : TEXT -> REQUIRED
+            assignee   : TEXT -> OPTIONAL
+            resolution : TEXT -> OPTIONAL
+        }
+        STATES { open, in_progress, resolved, closed }
+        INITIAL STATE open
+        TERMINAL STATES { closed }
+        TRANSITIONS {
+            open -> in_progress {
+                GUARD : assignee IS SET
+            }
+            in_progress -> resolved {
+                GUARD : resolution IS SET
+            }
+            resolved -> closed {}
+            ANY -> closed {
+                EXCEPT FROM { closed }
+            }
+        }
+    )"#
+}
+
+/// POST /execute with EXPLAIN TRANSITIONS FOR Ticket (schema-level, no instance).
+/// Expects HTTP 200 with a JSON body containing "machine" and "transitions" array.
+#[tokio::test]
+async fn explain_transitions_via_execute() {
+    let app = test_router();
+
+    // Define the machine
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_ticket_machine()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "Define failed");
+
+    // Execute schema-level EXPLAIN TRANSITIONS
+    let resp = app
+        .clone()
+        .oneshot(execute_request("EXPLAIN TRANSITIONS FOR Ticket"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+    assert_eq!(json["success"], true, "Response should be successful: {}", body);
+
+    let result = &json["result"];
+    assert_eq!(result["machine"], "Ticket", "machine field must be 'Ticket'");
+
+    // current_state and instance_id are null for schema-level queries
+    assert!(result["current_state"].is_null(), "current_state should be null for schema-level query");
+    assert!(result["instance_id"].is_null(), "instance_id should be null for schema-level query");
+
+    // transitions array must be present and non-empty (Ticket has 4 transitions)
+    let transitions = result["transitions"].as_array().expect("transitions must be an array");
+    assert_eq!(transitions.len(), 4, "Ticket machine has 4 transitions, got: {:?}", transitions);
+
+    // Each transition must have the required fields
+    for t in transitions {
+        assert!(t["from_state"].is_string(), "from_state must be a string");
+        assert!(t["to_state"].is_string(), "to_state must be a string");
+        assert!(t["guards"].is_array(), "guards must be an array");
+        assert!(t["guards_met"].is_boolean(), "guards_met must be a boolean");
+        assert!(t["blocking_guards"].is_array(), "blocking_guards must be an array");
+        assert!(t["requires_data"].is_array(), "requires_data must be an array");
+    }
+
+    // The open -> in_progress transition must declare 'assignee' in requires_data
+    let open_to_in_progress = transitions
+        .iter()
+        .find(|t| t["from_state"] == "open" && t["to_state"] == "in_progress")
+        .expect("open -> in_progress must be in transitions");
+
+    let requires_data = open_to_in_progress["requires_data"].as_array().unwrap();
+    let field_names: Vec<&str> = requires_data.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        field_names.contains(&"assignee"),
+        "requires_data for open->in_progress should contain 'assignee', got: {:?}",
+        field_names
+    );
+}
+
+/// GET /instances/:id/transitions — REST endpoint for EXPLAIN TRANSITIONS.
+/// Spawns an instance with assignee set, then calls the endpoint and verifies
+/// the JSON structure matches the expected schema.
+#[tokio::test]
+async fn get_instance_transitions_endpoint() {
+    let app = test_router();
+
+    // Define the machine
+    let resp = app
+        .clone()
+        .oneshot(execute_request(define_ticket_machine()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "Define failed");
+
+    // Spawn an instance WITH assignee set so the open->in_progress guard passes
+    let resp = app
+        .clone()
+        .oneshot(execute_request(
+            r#"SPAWN Ticket { title: "Server test ticket", assignee: "alice" }"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED, "Spawn failed");
+    let body = body_string(resp.into_body()).await;
+    let spawn_json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let instance_id = spawn_json["result"]["id"].as_str().unwrap();
+
+    // Call GET /instances/:id/transitions
+    let resp = app
+        .clone()
+        .oneshot(get_request(&format!("/instances/{}/transitions", instance_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "Transitions endpoint should return 200");
+
+    let body = body_string(resp.into_body()).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+    // The endpoint returns the QueryResult directly (not wrapped in success/result)
+    assert_eq!(json["machine"], "Ticket", "machine field must be 'Ticket'");
+    assert_eq!(json["current_state"], "open", "current_state must be 'open'");
+    assert_eq!(json["instance_id"], instance_id, "instance_id must match spawned instance");
+
+    let transitions = json["transitions"].as_array().expect("transitions must be an array");
+    // From `open`: open->in_progress and ANY->closed (resolved->closed and in_progress->resolved
+    // don't apply from `open`)
+    assert!(!transitions.is_empty(), "There must be at least one applicable transition from 'open'");
+
+    // The open -> in_progress transition must have guards_met=true (assignee is set)
+    let open_to_in_progress = transitions
+        .iter()
+        .find(|t| t["from_state"] == "open" && t["to_state"] == "in_progress")
+        .expect("open -> in_progress must be present when instance is in 'open' state");
+
+    assert_eq!(
+        open_to_in_progress["guards_met"],
+        true,
+        "guards_met must be true when assignee IS SET: {:?}",
+        open_to_in_progress["blocking_guards"]
+    );
+    assert_eq!(
+        open_to_in_progress["blocking_guards"].as_array().unwrap().len(),
+        0,
+        "No blocking guards expected when guard passes"
     );
 }

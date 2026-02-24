@@ -363,6 +363,17 @@ async fn run_statements(input: &str, storage: Arc<dyn Storage>) {
                 }
                 smql_cli::repl::execute_query_public(query, &engine).await;
             }
+            Statement::Transaction(stmts) => {
+                match engine.execute_transaction(&stmts).await {
+                    Ok(results) => {
+                        println!("Transaction committed ({} steps).", results.len());
+                        for (i, r) in results.iter().enumerate() {
+                            println!("  Step {}: {:?}", i, r);
+                        }
+                    }
+                    Err(e) => eprintln!("Transaction failed: {}", e),
+                }
+            }
         }
     }
 }

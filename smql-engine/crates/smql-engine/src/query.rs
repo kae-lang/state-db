@@ -1,3 +1,4 @@
+use smql_ast::error::GuardFailure;
 use smql_ast::query::*;
 use smql_ast::types::AggregateFunction;
 use smql_ast::value::Value;
@@ -6,7 +7,7 @@ use smql_storage::instance::{Filter, Instance, TrailEntry};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::engine::Engine;
-use crate::eval::{eval_guard, EvalContext};
+use crate::eval::{eval_guard, ActorInfo, EvalContext};
 
 /// Hard upper bound on instances loaded for in-memory filtering/analytics.
 /// Prevents OOM when FIND+WHERE or aggregate queries run on large datasets.
@@ -23,6 +24,8 @@ fn query_type_label(query: &Query) -> &'static str {
         Query::ComparePaths(_) => "COMPARE_PATHS",
         Query::GetView(_) => "GET_VIEW",
         Query::GetProjection(_) => "GET_PROJECTION",
+        Query::ExplainTransitions(_) => "EXPLAIN_TRANSITIONS",
+        Query::GetEvents(_) => "GET_EVENTS",
     }
 }
 
@@ -43,6 +46,10 @@ pub enum QueryResult {
     Funnel(FunnelResult),
     /// Segmented path comparison results
     ComparePaths(ComparePathsResult),
+    /// Explain transitions result
+    ExplainTransitions(ExplainTransitionsResult),
+    /// Durable event log entries
+    Events(Vec<smql_storage::instance::StoredEvent>),
 }
 
 /// A row in aggregate query results.
@@ -87,6 +94,15 @@ pub struct PathSegment {
     pub paths: Vec<PathResult>,
 }
 
+/// Result of EXPLAIN TRANSITIONS — available transitions with guard evaluation.
+#[derive(Debug, Clone)]
+pub struct ExplainTransitionsResult {
+    pub machine: String,
+    pub current_state: Option<String>,
+    pub instance_id: Option<String>,
+    pub available: Vec<AvailableTransition>,
+}
+
 impl Engine {
     /// Execute a query against the engine.
     #[tracing::instrument(skip(self, query), fields(query_type = %query_type_label(query)))]
@@ -101,6 +117,8 @@ impl Engine {
             Query::ComparePaths(q) => self.execute_compare_paths(q).await,
             Query::GetView(q) => self.execute_get_view(q).await,
             Query::GetProjection(q) => self.execute_get_projection(q).await,
+            Query::ExplainTransitions(q) => self.execute_explain_transitions(q).await,
+            Query::GetEvents(q) => self.execute_get_events(q).await,
         }
     }
 
@@ -117,6 +135,22 @@ impl Engine {
 
         if instance.machine != query.machine {
             return Err(SmqlError::not_found("Instance", &query.instance_id));
+        }
+
+        // Check if instance is expired (TTL)
+        if let Some(expires_at) = instance.expires_at {
+            if chrono::Utc::now() > expires_at {
+                return Err(SmqlError::ValidationError {
+                    message: format!("Instance '{}' has expired", query.instance_id),
+                    field: None,
+                    hint: Some("This instance's TTL has elapsed. It is no longer accessible.".to_string()),
+                });
+            }
+        }
+
+        // Evaluate COMPUTED fields before returning
+        if let Ok(machine_def) = self.catalog.get(&query.machine) {
+            self.evaluate_computed_fields(&machine_def, &mut instance.data, &instance.state);
         }
 
         // Apply field-level read filtering if an actor role is specified
@@ -152,10 +186,71 @@ impl Engine {
 
         let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
+        // Filter out expired instances (TTL)
+        let now = chrono::Utc::now();
+        instances.retain(|inst| {
+            inst.expires_at.map_or(true, |exp| now <= exp)
+        });
+
+        // Evaluate COMPUTED fields before filtering so WHERE can use computed values
+        if let Ok(machine_def) = self.catalog.get(&query.machine) {
+            for inst in &mut instances {
+                self.evaluate_computed_fields(&machine_def, &mut inst.data, &inst.state);
+            }
+        }
+
         // Apply WHERE filter using expression evaluator
         if let Some(filter_expr) = &query.filter {
+            // Look up terminal_states if filter uses ALIVE/TERMINATED predicates
+            let terminal_states = if expr_uses_predicate(filter_expr, |k| {
+                matches!(k, smql_ast::expression::ExpressionKind::Alive
+                    | smql_ast::expression::ExpressionKind::Terminated)
+            }) {
+                self.catalog
+                    .get(&query.machine)
+                    .ok()
+                    .map(|m| m.terminal_states.clone())
+            } else {
+                None
+            };
+
+            // Pre-load visited states for HAS_VISITED/NEVER_VISITED predicates
+            let needs_trails = expr_uses_predicate(filter_expr, |k| {
+                matches!(k, smql_ast::expression::ExpressionKind::HasVisited(_)
+                    | smql_ast::expression::ExpressionKind::NeverVisited(_))
+            });
+
+            let trail_map: HashMap<String, std::collections::HashSet<String>> = if needs_trails {
+                let mut map = HashMap::new();
+                for inst in &instances {
+                    let trail = self.storage.get_trail(&inst.id).await.unwrap_or_default();
+                    let visited: std::collections::HashSet<String> = trail
+                        .iter()
+                        .flat_map(|t| {
+                            let mut states = vec![t.to_state.clone()];
+                            if !t.from_state.is_empty() {
+                                states.push(t.from_state.clone());
+                            }
+                            states
+                        })
+                        .collect();
+                    map.insert(inst.id.as_str(), visited);
+                }
+                map
+            } else {
+                HashMap::new()
+            };
+
             instances.retain(|inst| {
-                let ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                let mut ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                ctx.state_entered_at = inst.state_entered_at;
+                ctx.created_at = inst.created_at;
+                ctx.terminal_states = terminal_states.clone();
+                ctx.tags = inst.tags.clone();
+                let id_str = inst.id.as_str();
+                if let Some(visited) = trail_map.get(&id_str) {
+                    ctx.visited_states = Some(visited.clone());
+                }
                 eval_guard(filter_expr, &ctx).unwrap_or(false)
             });
         }
@@ -204,6 +299,13 @@ impl Engine {
                         query.as_actor.as_deref(),
                     );
                 }
+            }
+        }
+
+        // Apply field projection (SELECT)
+        if let Some(ref select_fields) = query.select {
+            for inst in &mut instances {
+                inst.data.retain(|key, _| select_fields.contains(key));
             }
         }
 
@@ -271,6 +373,18 @@ impl Engine {
             }
             if let Some(to) = &filter.to_state {
                 entries.retain(|e| e.to_state == *to);
+            }
+            // SINCE filter: keep only entries at or after the given timestamp
+            if let Some(since_expr) = &filter.since {
+                if let Some(since_ts) = eval_to_datetime(since_expr) {
+                    entries.retain(|e| e.timestamp >= since_ts);
+                }
+            }
+            // UNTIL filter: keep only entries at or before the given timestamp
+            if let Some(until_expr) = &filter.until {
+                if let Some(until_ts) = eval_to_datetime(until_expr) {
+                    entries.retain(|e| e.timestamp <= until_ts);
+                }
             }
         }
 
@@ -448,6 +562,334 @@ impl Engine {
             SmqlError::not_found("Projection", &query.name)
         })?;
         self.execute_aggregate(&proj.query).await
+    }
+
+    /// EXPLAIN TRANSITIONS FOR Machine [instance_id] [AS actor]
+    async fn execute_explain_transitions(
+        &self,
+        query: &ExplainTransitionsQuery,
+    ) -> SmqlResult<QueryResult> {
+        let machine_def = self
+            .catalog
+            .get(&query.machine)
+            .map_err(|_| SmqlError::not_found("Machine", &query.machine))?;
+
+        match &query.instance_id {
+            None => {
+                // Schema-level: return all transitions without guard evaluation
+                let available = machine_def
+                    .transitions
+                    .iter()
+                    .map(|t| {
+                        let from_str = t.from.to_string();
+                        let guard_strings: Vec<String> =
+                            t.guards.iter().map(|g| g.to_string()).collect();
+                        let requires_data = extract_field_refs_from_guards(&t.guards);
+                        let requires_role = extract_actor_role_from_guards(&t.guards);
+                        AvailableTransition {
+                            from_state: from_str,
+                            to_state: t.to.clone(),
+                            guards: guard_strings,
+                            guards_met: false, // Unknown without instance context
+                            blocking_guards: vec![],
+                            recovery_options: vec![],
+                            requires_data,
+                            requires_role,
+                        }
+                    })
+                    .collect();
+
+                Ok(QueryResult::ExplainTransitions(ExplainTransitionsResult {
+                    machine: query.machine.clone(),
+                    current_state: None,
+                    instance_id: None,
+                    available,
+                }))
+            }
+            Some(instance_id) => {
+                // Instance-level: evaluate guards against real data
+                let id = smql_storage::InstanceId::from_string(instance_id)
+                    .map_err(|_| SmqlError::not_found("Instance", instance_id))?;
+                let instance = self
+                    .storage
+                    .get_instance(&id)
+                    .await?
+                    .ok_or_else(|| SmqlError::not_found("Instance", instance_id))?;
+
+                if instance.machine != query.machine {
+                    return Err(SmqlError::not_found("Instance", instance_id));
+                }
+
+                let current_state = instance.state.clone();
+                let timeout_remaining = self
+                    .timer_manager
+                    .timeout_remaining(instance_id, &current_state);
+
+                let mut ctx = EvalContext {
+                    data: instance.data.clone(),
+                    state: current_state.clone(),
+                    actor: query.as_actor.as_ref().map(|a| ActorInfo {
+                        id: a.clone(),
+                        role: None,
+                        capabilities: Vec::new(),
+                        fields: HashMap::new(),
+                    }),
+                    state_entered_at: instance.state_entered_at,
+                    created_at: instance.created_at,
+                    now: chrono::Utc::now(),
+                    timeout_remaining,
+                    children: HashMap::new(),
+                    parent_data: None,
+                    parent_state: None,
+                    terminal_states: None,
+                    visited_states: None,
+                    tags: instance.tags.clone(),
+                };
+
+                // Populate composition context if needed
+                if !machine_def.children.is_empty() || instance.parent_id.is_some() {
+                    self.populate_composition_context(&mut ctx, &instance, &machine_def)
+                        .await;
+                }
+
+                // Find all transitions valid from the current state
+                let mut available = Vec::new();
+                for t in &machine_def.transitions {
+                    let matches_source = match &t.from {
+                        smql_ast::machine::TransitionSource::State(s) => s == &current_state,
+                        smql_ast::machine::TransitionSource::Any { except } => {
+                            !except.iter().any(|e| e == &current_state)
+                        }
+                        smql_ast::machine::TransitionSource::Group(_) => false,
+                    };
+                    if !matches_source {
+                        continue;
+                    }
+
+                    let from_str = t.from.to_string();
+                    let guard_strings: Vec<String> =
+                        t.guards.iter().map(|g| g.to_string()).collect();
+                    let requires_data = extract_field_refs_from_guards(&t.guards);
+                    let requires_role = extract_actor_role_from_guards(&t.guards);
+
+                    // Evaluate each guard
+                    let mut blocking = Vec::new();
+                    for guard in &t.guards {
+                        match eval_guard(guard, &ctx) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                blocking.push(GuardFailure {
+                                    guard_expr: guard.to_string(),
+                                    actual_value: None,
+                                    expected: Some("true".to_string()),
+                                    hint: None,
+                                });
+                            }
+                            Err(e) => {
+                                blocking.push(GuardFailure {
+                                    guard_expr: guard.to_string(),
+                                    actual_value: Some(e.to_string()),
+                                    expected: None,
+                                    hint: None,
+                                });
+                            }
+                        }
+                    }
+
+                    // Also evaluate policy guards
+                    for policy_name in &t.policies {
+                        if let Ok(policy) = self.catalog.get_policy(policy_name) {
+                            for guard in &policy.guards {
+                                match eval_guard(guard, &ctx) {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        blocking.push(GuardFailure {
+                                            guard_expr: format!(
+                                                "[POLICY {}] {}",
+                                                policy_name, guard
+                                            ),
+                                            actual_value: None,
+                                            expected: Some("true".to_string()),
+                                            hint: Some(format!(
+                                                "Guard from policy '{}'",
+                                                policy_name
+                                            )),
+                                        });
+                                    }
+                                    Err(e) => {
+                                        blocking.push(GuardFailure {
+                                            guard_expr: format!(
+                                                "[POLICY {}] {}",
+                                                policy_name, guard
+                                            ),
+                                            actual_value: Some(e.to_string()),
+                                            expected: None,
+                                            hint: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let guards_met = blocking.is_empty();
+                    let recovery_options = if !guards_met {
+                        Engine::generate_recovery_options(
+                            &blocking,
+                            instance_id,
+                            &query.machine,
+                            &t.to,
+                        )
+                    } else {
+                        vec![]
+                    };
+
+                    available.push(AvailableTransition {
+                        from_state: from_str,
+                        to_state: t.to.clone(),
+                        guards: guard_strings,
+                        guards_met,
+                        blocking_guards: blocking,
+                        recovery_options,
+                        requires_data,
+                        requires_role,
+                    });
+                }
+
+                // Sort: guards_met=true first, then alphabetically by to_state
+                available.sort_by(|a, b| {
+                    b.guards_met
+                        .cmp(&a.guards_met)
+                        .then_with(|| a.to_state.cmp(&b.to_state))
+                });
+
+                Ok(QueryResult::ExplainTransitions(ExplainTransitionsResult {
+                    machine: query.machine.clone(),
+                    current_state: Some(current_state),
+                    instance_id: Some(instance_id.clone()),
+                    available,
+                }))
+            }
+        }
+    }
+}
+
+/// Extract data field names referenced in guard expressions.
+fn extract_field_refs_from_guards(guards: &[smql_ast::Expression]) -> Vec<String> {
+    let mut fields = Vec::new();
+    for guard in guards {
+        extract_field_refs_expr(&guard.kind, &mut fields);
+    }
+    fields.sort();
+    fields.dedup();
+    fields
+}
+
+fn extract_field_refs_expr(kind: &smql_ast::ExpressionKind, fields: &mut Vec<String>) {
+    use smql_ast::ExpressionKind::*;
+    match kind {
+        FieldAccess(parts) => {
+            if let Some(first) = parts.first() {
+                fields.push(first.clone());
+            }
+        }
+        QualifiedAccess { root, path: _ } => {
+            extract_field_refs_expr(&root.kind, fields);
+        }
+        BinaryOp { left, op: _, right } => {
+            extract_field_refs_expr(&left.kind, fields);
+            extract_field_refs_expr(&right.kind, fields);
+        }
+        UnaryOp { op: _, operand } => {
+            extract_field_refs_expr(&operand.kind, fields);
+        }
+        IsSet(inner) | IsNotSet(inner) => {
+            extract_field_refs_expr(&inner.kind, fields);
+        }
+        FunctionCall { name: _, args } => {
+            for arg in args {
+                extract_field_refs_expr(&arg.kind, fields);
+            }
+        }
+        InSet { expr, values } | InList { expr, values } => {
+            extract_field_refs_expr(&expr.kind, fields);
+            for v in values {
+                extract_field_refs_expr(&v.kind, fields);
+            }
+        }
+        InCollection { expr, collection } => {
+            extract_field_refs_expr(&expr.kind, fields);
+            extract_field_refs_expr(&collection.kind, fields);
+        }
+        All { collection, predicate } | Any { collection, predicate } => {
+            extract_field_refs_expr(&collection.kind, fields);
+            extract_field_refs_expr(&predicate.kind, fields);
+        }
+        Count(inner) => {
+            if let Some(inner) = inner {
+                extract_field_refs_expr(&inner.kind, fields);
+            }
+        }
+        SignalFrom { machine: _, condition } => {
+            extract_field_refs_expr(&condition.kind, fields);
+        }
+        Literal(_) | DurationLiteral(_) | SelfRef | ActorRef | StateIs(_) | StateIn(_)
+        | Pattern(_) | Alive | Terminated | StuckIn { .. } | HasVisited(_)
+        | NeverVisited(_) | TagEq { .. } => {}
+    }
+}
+
+/// Check if any guard references ACTOR.role and extract the expected role value.
+fn extract_actor_role_from_guards(guards: &[smql_ast::Expression]) -> Option<String> {
+    for guard in guards {
+        if let Some(role) = extract_actor_role_expr(&guard.kind) {
+            return Some(role);
+        }
+    }
+    None
+}
+
+fn extract_actor_role_expr(kind: &smql_ast::ExpressionKind) -> Option<String> {
+    use smql_ast::ExpressionKind::*;
+    match kind {
+        QualifiedAccess { root, path } => {
+            if matches!(root.kind, ActorRef)
+                && path.len() == 1
+                && path[0].eq_ignore_ascii_case("role")
+            {
+                return Some("*".to_string()); // Role is referenced but value unknown
+            }
+            None
+        }
+        BinaryOp { left, op: _, right } => {
+            // Check for ACTOR.role == "value" pattern
+            if let QualifiedAccess { root, path } = &left.kind {
+                if matches!(root.kind, ActorRef)
+                    && path.len() == 1
+                    && path[0].eq_ignore_ascii_case("role")
+                {
+                    if let Literal(Value::Text(role_val)) = &right.kind {
+                        return Some(role_val.clone());
+                    }
+                    return Some("*".to_string());
+                }
+            }
+            if let QualifiedAccess { root, path } = &right.kind {
+                if matches!(root.kind, ActorRef)
+                    && path.len() == 1
+                    && path[0].eq_ignore_ascii_case("role")
+                {
+                    if let Literal(Value::Text(role_val)) = &left.kind {
+                        return Some(role_val.clone());
+                    }
+                    return Some("*".to_string());
+                }
+            }
+            extract_actor_role_expr(&left.kind)
+                .or_else(|| extract_actor_role_expr(&right.kind))
+        }
+        UnaryOp { op: _, operand } => extract_actor_role_expr(&operand.kind),
+        _ => None,
     }
 }
 
@@ -661,4 +1103,76 @@ async fn count_instances_that_visited_state(
         }
     }
     count
+}
+
+/// Check if an expression tree contains any node matching a predicate.
+fn expr_uses_predicate(
+    expr: &smql_ast::Expression,
+    pred: impl Fn(&smql_ast::expression::ExpressionKind) -> bool + Copy,
+) -> bool {
+    use smql_ast::expression::ExpressionKind::*;
+    if pred(&expr.kind) {
+        return true;
+    }
+    match &expr.kind {
+        BinaryOp { left, right, .. } => {
+            expr_uses_predicate(left, pred) || expr_uses_predicate(right, pred)
+        }
+        UnaryOp { operand, .. } => expr_uses_predicate(operand, pred),
+        IsSet(inner) | IsNotSet(inner) => expr_uses_predicate(inner, pred),
+        FunctionCall { args, .. } => args.iter().any(|a| expr_uses_predicate(a, pred)),
+        InSet { expr: e, values } | InList { expr: e, values } => {
+            expr_uses_predicate(e, pred) || values.iter().any(|v| expr_uses_predicate(v, pred))
+        }
+        All { collection, predicate: p } | Any { collection, predicate: p } => {
+            expr_uses_predicate(collection, pred) || expr_uses_predicate(p, pred)
+        }
+        Count(inner) => inner.as_ref().map_or(false, |i| expr_uses_predicate(i, pred)),
+        SignalFrom { condition, .. } => expr_uses_predicate(condition, pred),
+        QualifiedAccess { root, .. } => expr_uses_predicate(root, pred),
+        _ => false,
+    }
+}
+
+/// Evaluate a SINCE/UNTIL expression to a DateTime. Supports string literals (ISO 8601).
+fn eval_to_datetime(expr: &smql_ast::Expression) -> Option<chrono::DateTime<chrono::Utc>> {
+    use crate::eval::eval_expr;
+    let ctx = EvalContext::new(HashMap::new(), String::new());
+    match eval_expr(expr, &ctx) {
+        Ok(Value::Text(s)) => {
+            // Try parsing as ISO 8601 datetime
+            chrono::DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .ok()
+                .or_else(|| {
+                    // Try parsing as date-only (YYYY-MM-DD)
+                    chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                        .ok()
+                        .and_then(|d| d.and_hms_opt(0, 0, 0))
+                        .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+                })
+        }
+        Ok(Value::DateTime(dt)) => Some(dt),
+        _ => None,
+    }
+}
+
+impl Engine {
+    /// GET EVENTS — retrieve durable event log entries.
+    async fn execute_get_events(
+        &self,
+        query: &smql_ast::query::GetEventsQuery,
+    ) -> SmqlResult<QueryResult> {
+        let limit = query.limit.unwrap_or(100);
+        let events = self
+            .storage
+            .get_events_after(
+                query.after_id.as_deref(),
+                query.machine.as_deref(),
+                query.event_name.as_deref(),
+                limit,
+            )
+            .await?;
+        Ok(QueryResult::Events(events))
+    }
 }

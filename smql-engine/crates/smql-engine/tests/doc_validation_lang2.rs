@@ -249,6 +249,9 @@ DEFINE MACHINE TicketHooked (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.state, "open");
@@ -379,6 +382,9 @@ DEFINE MACHINE WaitTimeout (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
 
@@ -530,6 +536,9 @@ DEFINE MACHINE WildEngine (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.state, "open");
@@ -768,6 +777,9 @@ DEFINE MACHINE ConstraintEngine (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await;
     assert!(result.is_err(), "spawn without required fields should fail");
@@ -785,6 +797,9 @@ DEFINE MACHINE ConstraintEngine (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await;
     assert!(result.is_ok(), "spawn with required fields should succeed");
@@ -1036,6 +1051,9 @@ DEFINE MACHINE DtSpawn (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn with types");
     assert_eq!(result.instance.state, "open");
@@ -1116,6 +1134,9 @@ DEFINE MACHINE FullFeature (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn full feature");
     assert_eq!(result.instance.state, "open");

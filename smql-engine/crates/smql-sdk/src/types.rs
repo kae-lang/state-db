@@ -7,6 +7,51 @@ pub struct ExecuteResponse {
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
     pub warnings: Option<Vec<String>>,
+    /// Error metadata for agents: retryable flag and error category.
+    #[serde(default)]
+    pub error_meta: Option<ErrorMeta>,
+}
+
+/// Metadata about an error to help agents decide how to respond.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ErrorMeta {
+    /// Whether the operation can be retried.
+    pub retryable: bool,
+    /// Error category: "conflict", "storage", "timeout", "internal", "validation".
+    pub category: String,
+}
+
+/// Structured detail from a denied transition.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TransitionDeniedDetail {
+    pub instance_id: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub guard_failures: Vec<GuardFailureDetail>,
+    #[serde(default)]
+    pub recovery_options: Vec<RecoveryOptionDetail>,
+    #[serde(default)]
+    pub llm_prompt: Option<String>,
+    pub hint: Option<String>,
+}
+
+/// A single guard failure.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuardFailureDetail {
+    pub guard_expr: String,
+    pub actual_value: Option<String>,
+    pub expected: Option<String>,
+    pub hint: Option<String>,
+}
+
+/// An actionable recovery option for AI agents.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecoveryOptionDetail {
+    pub action: String,
+    pub field: Option<String>,
+    pub suggested_value: Option<String>,
+    pub reason: String,
+    pub example: Option<String>,
 }
 
 /// An instance as returned by the server.
@@ -44,6 +89,11 @@ pub struct TransitionOptions {
     pub with_data: Vec<(String, serde_json::Value)>,
     pub memo: Option<String>,
     pub as_actor: Option<String>,
+    /// Actor role for role-based guards. Sets ACTOR to `{id: as_actor, role: as_role}`.
+    pub as_role: Option<String>,
+    /// Idempotency key for safe retries. If set, the server caches the result
+    /// and returns it on subsequent calls with the same key.
+    pub idempotency_key: Option<String>,
 }
 
 /// Machine info from GET /machines/{name}.
@@ -98,6 +148,8 @@ mod tests {
             with_data: vec![("key".to_string(), serde_json::json!(42))],
             memo: Some("memo".to_string()),
             as_actor: Some("admin".to_string()),
+            as_role: None,
+            idempotency_key: None,
         };
         let cloned = opts.clone();
         assert_eq!(cloned.with_data.len(), 1);

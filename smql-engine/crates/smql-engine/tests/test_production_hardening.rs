@@ -480,6 +480,9 @@ mod query_hardening {
                 parent_id: None,
                 parent_machine: None,
                 as_actor: None,
+                idempotency_key: None,
+                tags: Vec::new(),
+                ttl: None,
             };
             engine.spawn(&cmd).await.unwrap();
         }
@@ -487,6 +490,7 @@ mod query_hardening {
         // FIND Item WHERE priority > 5 LIMIT 2
         let query = FindQuery {
             machine: "Item".to_string(),
+            select: None,
             filter: Some(Expression::new(ExpressionKind::BinaryOp {
                 left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec!["priority".to_string()]))),
                 op: BinaryOperator::Gt,
@@ -539,6 +543,9 @@ mod query_hardening {
                 parent_id: None,
                 parent_machine: None,
                 as_actor: None,
+                idempotency_key: None,
+                tags: Vec::new(),
+                ttl: None,
             };
             engine.spawn(&cmd).await.unwrap();
         }
@@ -546,6 +553,7 @@ mod query_hardening {
         // FIND Item WHERE priority > 3 SORT BY priority ASC OFFSET 2 LIMIT 3
         let query = FindQuery {
             machine: "Item".to_string(),
+            select: None,
             filter: Some(Expression::new(ExpressionKind::BinaryOp {
                 left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec!["priority".to_string()]))),
                 op: BinaryOperator::Gt,
@@ -586,12 +594,16 @@ mod query_hardening {
                 parent_id: None,
                 parent_machine: None,
                 as_actor: None,
+                idempotency_key: None,
+                tags: Vec::new(),
+                ttl: None,
             };
             engine.spawn(&cmd).await.unwrap();
         }
 
         let query = FindQuery {
             machine: "Item".to_string(),
+            select: None,
             filter: None,
             sort: vec![SortClause {
                 field: "nonexistent_field".to_string(),
@@ -669,6 +681,9 @@ mod transition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let result = engine.spawn(&spawn).await.unwrap();
         let id = result.instance.id.as_str();
@@ -702,6 +717,9 @@ mod transition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let result = engine.spawn(&spawn).await.unwrap();
         let id = result.instance.id.as_str();
@@ -732,6 +750,9 @@ mod transition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let result = engine.spawn(&spawn).await.unwrap();
         let id = result.instance.id.as_str();
@@ -774,6 +795,9 @@ mod transition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let result = engine.spawn(&spawn).await.unwrap();
         let id = result.instance.id.as_str();
@@ -809,6 +833,9 @@ mod transition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let result = engine.spawn(&spawn).await.unwrap();
         let id = result.instance.id.as_str();
@@ -1114,6 +1141,9 @@ mod composition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let parent = engine.spawn(&parent_cmd).await.unwrap();
         let parent_id = parent.instance.id.clone();
@@ -1128,6 +1158,9 @@ mod composition_hardening {
             parent_id: Some(parent_id.as_str()),
             parent_machine: Some("Order".to_string()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let child = engine.spawn(&child_cmd).await.unwrap();
 
@@ -1157,6 +1190,9 @@ mod composition_hardening {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let parent = engine.spawn(&parent_cmd).await.unwrap();
         let parent_id = parent.instance.id.clone();
@@ -1170,6 +1206,9 @@ mod composition_hardening {
             parent_id: Some(parent_id.as_str()),
             parent_machine: Some("Order".to_string()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         let child = engine.spawn(&child_cmd).await.unwrap();
         let child_id = child.instance.id.clone();

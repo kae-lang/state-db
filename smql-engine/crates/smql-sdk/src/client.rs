@@ -53,12 +53,23 @@ impl SmqlClient {
 
     /// Execute raw SMQL and return the response.
     pub async fn execute(&self, smql: &str) -> SdkResult<ExecuteResponse> {
-        let resp = self
+        self.execute_with_key(smql, None).await
+    }
+
+    /// Execute raw SMQL with an optional idempotency key.
+    async fn execute_with_key(
+        &self,
+        smql: &str,
+        idempotency_key: Option<&str>,
+    ) -> SdkResult<ExecuteResponse> {
+        let mut req = self
             .http
             .post(format!("{}/execute", self.base_url))
-            .json(&serde_json::json!({ "smql": smql }))
-            .send()
-            .await?;
+            .json(&serde_json::json!({ "smql": smql }));
+        if let Some(key) = idempotency_key {
+            req = req.header("Idempotency-Key", key);
+        }
+        let resp = req.send().await?;
 
         let status = resp.status();
         let body: ExecuteResponse = resp
@@ -72,9 +83,21 @@ impl SmqlClient {
                 return Err(SdkError::NotFound(msg));
             }
             if status == reqwest::StatusCode::CONFLICT {
-                return Err(SdkError::TransitionDenied(msg));
+                // Try to parse structured TransitionDeniedError from the result field
+                let detail = body
+                    .result
+                    .and_then(|v| serde_json::from_value::<TransitionDeniedDetail>(v).ok());
+                return Err(SdkError::TransitionDenied { message: msg, detail });
             }
-            return Err(SdkError::Server(msg));
+            let (retryable, category) = body
+                .error_meta
+                .map(|m| (m.retryable, m.category))
+                .unwrap_or((false, "unknown".to_string()));
+            return Err(SdkError::Server {
+                message: msg,
+                retryable,
+                category,
+            });
         }
 
         Ok(body)
@@ -114,7 +137,9 @@ impl SmqlClient {
         opts: TransitionOptions,
     ) -> SdkResult<TransitionResponse> {
         let smql = smql_fmt::format_transition(machine, instance_id, to_state, &opts);
-        let resp = self.execute(&smql).await?;
+        let resp = self
+            .execute_with_key(&smql, opts.idempotency_key.as_deref())
+            .await?;
         let result = resp.result.ok_or_else(|| {
             SdkError::Deserialize("Missing result in transition response".to_string())
         })?;
@@ -130,7 +155,9 @@ impl SmqlClient {
         opts: TransitionOptions,
     ) -> SdkResult<Option<TransitionResponse>> {
         let smql = smql_fmt::format_try_transition(machine, instance_id, to_state, &opts);
-        let resp = self.execute(&smql).await?;
+        let resp = self
+            .execute_with_key(&smql, opts.idempotency_key.as_deref())
+            .await?;
         let result = resp.result.ok_or_else(|| {
             SdkError::Deserialize("Missing result in try_transition response".to_string())
         })?;
@@ -159,7 +186,11 @@ impl SmqlClient {
             if status == reqwest::StatusCode::NOT_FOUND {
                 return Err(SdkError::NotFound(msg));
             }
-            return Err(SdkError::Server(msg));
+            return Err(SdkError::Server {
+                message: msg,
+                retryable: false,
+                category: "unknown".to_string(),
+            });
         }
 
         let inst: InstanceResponse = resp

@@ -9,6 +9,8 @@ use crate::machine::MachineDefinition;
 pub enum Command {
     /// DEFINE MACHINE ...
     DefineMachine(MachineDefinition),
+    /// DEFINE TEMPLATE ...
+    DefineTemplate(MachineDefinition),
     /// DEFINE POLICY ...
     DefinePolicy(crate::machine::PolicyDefinition),
     /// DEFINE VIEW Name AS FIND ...
@@ -31,12 +33,19 @@ pub enum Command {
     BatchTransition(BatchTransitionCommand),
     /// ALTER MACHINE ...
     AlterMachine(AlterMachineCommand),
+    /// CLAIM Machine WHERE ... AS agent LEASE duration
+    Claim(ClaimCommand),
+    /// RELEASE Machine "instance_id" AS agent
+    Release(ReleaseCommand),
+    /// WATCH Machine "instance_id" UNTIL condition TIMEOUT duration
+    Watch(WatchCommand),
 }
 
 impl fmt::Display for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Command::DefineMachine(m) => write!(f, "DEFINE {}", m),
+            Command::DefineTemplate(t) => write!(f, "DEFINE TEMPLATE {}", t.name),
             Command::DefinePolicy(p) => write!(f, "DEFINE POLICY {}", p.name),
             Command::DefineView(v) => write!(f, "DEFINE VIEW {}", v.name),
             Command::DefineProjection(p) => write!(f, "DEFINE PROJECTION {}", p.name),
@@ -60,15 +69,28 @@ impl fmt::Display for Command {
                 write!(f, "TRANSITION ALL {} TO {}", b.machine, b.to_state)
             }
             Command::AlterMachine(a) => write!(f, "ALTER MACHINE {}", a.machine),
+            Command::Claim(c) => write!(f, "CLAIM {} AS {}", c.machine, c.agent_id),
+            Command::Release(r) => {
+                write!(f, "RELEASE {} \"{}\" AS {}", r.machine, r.instance_id, r.agent_id)
+            }
+            Command::Watch(w) => {
+                if let Some(ref id) = w.instance_id {
+                    write!(f, "WATCH {} \"{}\" UNTIL ...", w.machine, id)
+                } else {
+                    write!(f, "WATCH {} WHERE ... UNTIL ...", w.machine)
+                }
+            }
         }
     }
 }
 
-/// A top-level SMQL statement — either a command or a query.
+/// A top-level SMQL statement — either a command, a query, or a transaction block.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Statement {
     Command(Command),
     Query(crate::query::Query),
+    /// BEGIN ... COMMIT — atomic transaction block wrapping multiple commands.
+    Transaction(Vec<Statement>),
 }
 
 /// SPAWN command — create a new instance.
@@ -89,6 +111,15 @@ pub struct SpawnCommand {
     /// Optional actor role for field-level write permission checking.
     #[serde(default)]
     pub as_actor: Option<String>,
+    /// Idempotency key for safe retries.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    /// Untyped key-value tags for operational metadata.
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
+    /// Time-to-live: instance expires after this duration.
+    #[serde(default)]
+    pub ttl: Option<crate::value::SmqlDuration>,
 }
 
 impl SpawnCommand {
@@ -102,6 +133,9 @@ impl SpawnCommand {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 }
@@ -124,6 +158,12 @@ pub struct TransitionCommand {
     pub or_stay: bool,
     /// CASCADE — also transition all children to terminal states
     pub cascade: bool,
+    /// Idempotency key for safe retries.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    /// Untyped key-value tags for operational metadata.
+    #[serde(default)]
+    pub tags: Vec<(String, String)>,
 }
 
 impl TransitionCommand {
@@ -138,8 +178,47 @@ impl TransitionCommand {
             through: Vec::new(),
             or_stay: false,
             cascade: false,
+            idempotency_key: None,
+            tags: Vec::new(),
         }
     }
+}
+
+/// CLAIM command — atomically claim an unclaimed instance for exclusive processing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClaimCommand {
+    pub machine: String,
+    /// WHERE clause to filter candidates.
+    pub filter: Option<Expression>,
+    /// Agent ID performing the claim.
+    pub agent_id: String,
+    /// How long the claim lasts before expiring.
+    pub lease_duration: crate::value::SmqlDuration,
+    /// Optional state to transition to on claim.
+    pub transition_to: Option<String>,
+}
+
+/// RELEASE command — release a claim held by an agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseCommand {
+    pub machine: String,
+    pub instance_id: String,
+    /// Agent ID — must match current claimant.
+    pub agent_id: String,
+}
+
+/// WATCH command — block until a condition becomes true on an instance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchCommand {
+    pub machine: String,
+    /// Watch a specific instance (by ID), or None to watch any matching.
+    pub instance_id: Option<String>,
+    /// The UNTIL condition — watch fires when this evaluates to true.
+    pub condition: Expression,
+    /// Maximum time to wait before returning a timeout error.
+    pub timeout: Option<crate::value::SmqlDuration>,
+    /// WHERE clause to filter candidates (when instance_id is None).
+    pub filter: Option<Expression>,
 }
 
 /// Batch TRANSITION command — transition multiple instances.

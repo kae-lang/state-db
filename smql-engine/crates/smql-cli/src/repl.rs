@@ -149,6 +149,15 @@ async fn execute_input(input: &str, engine: &Engine) {
         match stmt {
             Statement::Command(cmd) => execute_command(cmd, engine).await,
             Statement::Query(query) => execute_query(query, engine).await,
+            Statement::Transaction(stmts) => match engine.execute_transaction(&stmts).await {
+                Ok(results) => {
+                    println!("Transaction committed ({} steps).", results.len());
+                    for (i, r) in results.iter().enumerate() {
+                        println!("  Step {}: {:?}", i, r);
+                    }
+                }
+                Err(e) => eprintln!("Transaction failed: {}", e),
+            },
         }
     }
 }
@@ -172,6 +181,30 @@ async fn execute_command(cmd: Command, engine: &Engine) {
                     println!("Machine '{}' defined.", name);
                     for w in warnings {
                         println!("  Warning: {}", w.message);
+                    }
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
+        Command::DefineTemplate(def) => {
+            let name = def.name.clone();
+            engine.catalog.register_template(def);
+            println!("Template '{}' defined.", name);
+        }
+
+        Command::Spawn(ref spawn_cmd) if spawn_cmd.batch => {
+            match engine.batch_spawn(spawn_cmd).await {
+                Ok(result) => {
+                    println!(
+                        "Batch spawned {} instances ({} failures)",
+                        result.created.len(),
+                        result.failures.len()
+                    );
+                    for inst in &result.created {
+                        println!("  Created: {} (state: {})", inst.id, inst.state);
+                    }
+                    for f in &result.failures {
+                        eprintln!("  Failed [{}]: {}", f.index, f.error);
                     }
                 }
                 Err(e) => eprintln!("Error: {}", e),
@@ -236,6 +269,38 @@ async fn execute_command(cmd: Command, engine: &Engine) {
                 for w in &result.warnings {
                     println!("  Warning: {}", w);
                 }
+            }
+            Err(e) => eprintln!("Error: {}", e),
+        },
+
+        Command::Claim(claim_cmd) => match engine.execute_claim(&claim_cmd).await {
+            Ok(result) => {
+                println!(
+                    "Claimed instance '{}' for agent '{}' (lease expires: {}).",
+                    result.instance.id,
+                    result.agent_id,
+                    result.lease_expires_at.to_rfc3339()
+                );
+            }
+            Err(e) => eprintln!("Error: {}", e),
+        },
+
+        Command::Release(release_cmd) => match engine.execute_release(&release_cmd).await {
+            Ok(result) => {
+                println!(
+                    "Released claim on instance '{}' by agent '{}'.",
+                    result.instance_id, result.agent_id
+                );
+            }
+            Err(e) => eprintln!("Error: {}", e),
+        },
+
+        Command::Watch(watch_cmd) => match engine.watch(&watch_cmd).await {
+            Ok(result) => {
+                println!(
+                    "Watch resolved: instance '{}' in state '{}' (waited {}ms).",
+                    result.instance.id, result.instance.state, result.waited_ms
+                );
             }
             Err(e) => eprintln!("Error: {}", e),
         },
@@ -350,6 +415,49 @@ fn print_query_result(result: QueryResult) {
                 for p in &seg.paths {
                     println!("    {} -> count: {}", p.path.join(" -> "), p.count);
                 }
+            }
+        }
+
+        QueryResult::ExplainTransitions(explain) => {
+            println!("Machine: {}", explain.machine);
+            if let Some(state) = &explain.current_state {
+                println!("Current state: {}", state);
+            }
+            if let Some(id) = &explain.instance_id {
+                println!("Instance: {}", id);
+            }
+            println!("{} transition(s) available:", explain.available.len());
+            for t in &explain.available {
+                let status = if t.guards_met { "READY" } else { "BLOCKED" };
+                println!(
+                    "  {} -> {} [{}]",
+                    t.from_state, t.to_state, status
+                );
+                if !t.guards.is_empty() {
+                    println!("    Guards: {}", t.guards.join(", "));
+                }
+                for bg in &t.blocking_guards {
+                    println!("    BLOCKED: {}", bg);
+                }
+                if !t.requires_data.is_empty() {
+                    println!("    Requires: {}", t.requires_data.join(", "));
+                }
+                if let Some(role) = &t.requires_role {
+                    println!("    Requires role: {}", role);
+                }
+            }
+        }
+        QueryResult::Events(events) => {
+            println!("{} event(s):", events.len());
+            for e in &events {
+                println!(
+                    "  [{}] {} {} ({}) @ {}",
+                    e.id,
+                    e.machine,
+                    e.event_name,
+                    e.instance_id,
+                    e.timestamp.to_rfc3339()
+                );
             }
         }
     }

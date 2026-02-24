@@ -1,6 +1,8 @@
 use chrono::Utc;
-use smql_ast::command::{BatchTransitionCommand, SpawnCommand, TransitionCommand};
+use dashmap::DashMap;
+use smql_ast::command::{BatchTransitionCommand, ClaimCommand, ReleaseCommand, SpawnCommand, TransitionCommand, WatchCommand};
 use smql_ast::error::{GuardFailure, RecoveryAction, RecoveryOption, TransitionDeniedError};
+use smql_ast::expression::Expression;
 use smql_ast::machine::{Action, HookTrigger, MachineDefinition, TransitionSource};
 use smql_ast::types::{Constraint, DefaultValue, TypeDefinition};
 use smql_ast::value::Value;
@@ -15,22 +17,48 @@ use std::sync::Arc;
 
 use crate::eval::{eval_expr, eval_guard, ActorInfo, ChildInfo, EvalContext};
 
+/// A registered watcher waiting for a condition to become true.
+struct Watcher {
+    id: String,
+    condition: Expression,
+    instance_id: Option<String>,
+    filter: Option<Expression>,
+    sender: tokio::sync::oneshot::Sender<Instance>,
+}
+
+/// Result of a watch operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WatchResult {
+    pub instance: Instance,
+    pub waited_ms: u64,
+}
+
+/// Result of one step in a transaction.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum TransactionStepResult {
+    Spawned { instance_id: String, state: String },
+    Transitioned { instance_id: String, from_state: String, to_state: String },
+    Skipped,
+}
+
 /// The core SMQL engine — executes spawn, transition, and query operations.
 pub struct Engine {
     pub catalog: Arc<MachineCatalog>,
     pub storage: Arc<dyn Storage>,
     pub timer_manager: Arc<TimerManager>,
     pub hook_executor: Arc<HookExecutor>,
+    /// Watcher registry: machine name -> list of watchers.
+    watchers: DashMap<String, Vec<Watcher>>,
 }
 
 /// Result of a spawn operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpawnResult {
     pub instance: Instance,
 }
 
 /// Result of a transition operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TransitionResult {
     pub instance: Instance,
     pub from_state: String,
@@ -47,11 +75,40 @@ pub struct BatchTransitionResult {
     pub from_states: HashMap<String, usize>,
 }
 
+/// Result of a batch spawn operation.
+#[derive(Debug, Clone)]
+pub struct BatchSpawnResult {
+    pub created: Vec<Instance>,
+    pub failures: Vec<BatchSpawnFailure>,
+}
+
+/// A single failure in a batch spawn.
+#[derive(Debug, Clone)]
+pub struct BatchSpawnFailure {
+    pub index: usize,
+    pub error: String,
+}
+
 /// A single failure in a batch transition.
 #[derive(Debug, Clone)]
 pub struct BatchTransitionFailure {
     pub instance_id: String,
     pub error: String,
+}
+
+/// Result of a claim operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ClaimResult {
+    pub instance: Instance,
+    pub agent_id: String,
+    pub lease_expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Result of a release operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ReleaseResult {
+    pub instance_id: String,
+    pub agent_id: String,
 }
 
 impl Engine {
@@ -62,6 +119,7 @@ impl Engine {
             storage,
             timer_manager: Arc::new(TimerManager::new()),
             hook_executor: Arc::new(HookExecutor::new(event_bus)),
+            watchers: DashMap::new(),
         }
     }
 
@@ -76,6 +134,7 @@ impl Engine {
             storage,
             timer_manager,
             hook_executor: Arc::new(HookExecutor::new(event_bus)),
+            watchers: DashMap::new(),
         }
     }
 
@@ -90,6 +149,7 @@ impl Engine {
             storage,
             timer_manager,
             hook_executor,
+            watchers: DashMap::new(),
         }
     }
 
@@ -103,11 +163,30 @@ impl Engine {
         &'a self,
         cmd: &'a SpawnCommand,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SmqlResult<SpawnResult>> + Send + 'a>> {
-        Box::pin(self.spawn_inner(cmd))
+        Box::pin(self.spawn_inner(cmd, None))
     }
 
-    #[tracing::instrument(skip(self, cmd), fields(machine = %cmd.machine))]
-    async fn spawn_inner(&self, cmd: &SpawnCommand) -> SmqlResult<SpawnResult> {
+    /// Spawn a new machine instance with an explicit actor override (from JWT auth).
+    pub fn spawn_with_actor<'a>(
+        &'a self,
+        cmd: &'a SpawnCommand,
+        actor: ActorInfo,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SmqlResult<SpawnResult>> + Send + 'a>> {
+        Box::pin(self.spawn_inner(cmd, Some(actor)))
+    }
+
+    #[tracing::instrument(skip(self, cmd, actor_override), fields(machine = %cmd.machine))]
+    async fn spawn_inner(&self, cmd: &SpawnCommand, actor_override: Option<ActorInfo>) -> SmqlResult<SpawnResult> {
+        // Idempotency check: if key is set, check for cached result
+        if let Some(ref ikey) = cmd.idempotency_key {
+            if let Some(cached) = self.storage.get_idempotency(ikey).await? {
+                if let Ok(result) = serde_json::from_slice::<SpawnResult>(&cached) {
+                    tracing::debug!(key = %ikey, "Returning cached idempotent spawn result");
+                    return Ok(result);
+                }
+            }
+        }
+
         let machine_def = self.catalog.get(&cmd.machine)?;
 
         // Evaluate data expressions and collect into HashMap
@@ -132,7 +211,11 @@ impl Engine {
         }
 
         // Check field-level write permissions on spawn data
-        let spawn_actor_role = cmd.as_actor.as_deref();
+        // If actor_override is present (from JWT), use its role; otherwise fall back to as_actor
+        let spawn_actor_role = actor_override
+            .as_ref()
+            .and_then(|a| a.role.as_deref())
+            .or_else(|| cmd.as_actor.as_deref());
         for (field, _) in &data {
             if !self.can_write_field(&machine_def, field, spawn_actor_role) {
                 return Err(SmqlError::SpawnRejected {
@@ -196,7 +279,7 @@ impl Engine {
         self.evaluate_computed_fields(&machine_def, &mut data, &machine_def.initial_state);
 
         // Create instance (with optional parent linkage)
-        let instance = if let (Some(parent_id_str), Some(parent_machine)) =
+        let mut instance = if let (Some(parent_id_str), Some(parent_machine)) =
             (&cmd.parent_id, &cmd.parent_machine)
         {
             let parent_id = smql_storage::InstanceId::from_string(parent_id_str)
@@ -218,7 +301,25 @@ impl Engine {
             Instance::new(cmd.machine.clone(), machine_def.initial_state.clone(), data)
         };
 
+        // Apply tags if provided
+        if !cmd.tags.is_empty() {
+            for (key, value) in &cmd.tags {
+                instance.tags.insert(key.clone(), value.clone());
+            }
+        }
+
+        // Apply TTL if provided
+        if let Some(ref ttl) = cmd.ttl {
+            let duration = chrono::Duration::seconds(ttl.seconds as i64);
+            instance.expires_at = Some(Utc::now() + duration);
+        }
+
         // Create initial trail entry (spawn event)
+        // If actor_override is present (from JWT), record the authenticated identity
+        let spawn_actor_id = actor_override
+            .as_ref()
+            .map(|a| a.id.clone())
+            .or_else(|| cmd.as_actor.clone());
         let trail_entry = TrailEntry {
             instance_id: instance.id.clone(),
             machine: cmd.machine.clone(),
@@ -226,7 +327,7 @@ impl Engine {
             from_state: String::new(),
             to_state: machine_def.initial_state.clone(),
             transition_name: Some("SPAWN".to_string()),
-            actor: None,
+            actor: spawn_actor_id.clone(),
             memo: None,
             timestamp: Utc::now(),
             data_snapshot: Some(instance.data.clone()),
@@ -236,6 +337,21 @@ impl Engine {
         self.storage.store_instance(&instance).await?;
         self.storage.append_trail_entry(&trail_entry).await?;
 
+        // --- Store durable event ---
+        let spawn_event = smql_storage::instance::StoredEvent {
+            id: ulid::Ulid::new().to_string(),
+            timestamp: Utc::now(),
+            machine: cmd.machine.clone(),
+            event_name: "spawn".to_string(),
+            instance_id: instance.id.as_str(),
+            payload: serde_json::json!({
+                "machine": cmd.machine,
+                "initial_state": machine_def.initial_state,
+            }),
+            actor: spawn_actor_id.clone(),
+        };
+        let _ = self.storage.store_event(&spawn_event).await;
+
         // --- Fire ON SPAWN hooks ---
         let hook_ctx = HookContext {
             instance_id: instance.id.as_str(),
@@ -243,7 +359,7 @@ impl Engine {
             from_state: String::new(),
             to_state: machine_def.initial_state.clone(),
             data: instance.data.clone(),
-            actor: None,
+            actor: spawn_actor_id,
             memo: None,
         };
         let eval_ctx = EvalContext::new(instance.data.clone(), machine_def.initial_state.clone());
@@ -307,6 +423,8 @@ impl Engine {
                 through: Vec::new(),
                 or_stay: false,
                 cascade: false,
+                idempotency_key: None,
+                tags: Vec::new(),
             };
             let result = self.transition(&transition_cmd).await?;
             return Ok(SpawnResult {
@@ -315,7 +433,21 @@ impl Engine {
         }
 
         tracing::info!(id = %instance.id, state = %instance.state, "instance spawned");
-        Ok(SpawnResult { instance })
+
+        // Notify any watchers waiting on this machine
+        self.notify_watchers(&cmd.machine, &instance);
+
+        let result = SpawnResult { instance };
+
+        // Store idempotency entry if key was provided
+        if let Some(ref ikey) = cmd.idempotency_key {
+            if let Ok(serialized) = serde_json::to_vec(&result) {
+                let expires_at = Utc::now() + chrono::Duration::hours(24);
+                let _ = self.storage.store_idempotency(ikey, &serialized, expires_at).await;
+            }
+        }
+
+        Ok(result)
     }
 
     /// Validate spawn data against the machine's DATA definition.
@@ -425,7 +557,18 @@ impl Engine {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = SmqlResult<TransitionResult>> + Send + 'a>,
     > {
-        Box::pin(self.transition_inner(cmd))
+        Box::pin(self.transition_inner(cmd, None))
+    }
+
+    /// Execute a transition with an explicit actor override (from JWT auth).
+    pub fn transition_with_actor<'a>(
+        &'a self,
+        cmd: &'a TransitionCommand,
+        actor: ActorInfo,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = SmqlResult<TransitionResult>> + Send + 'a>,
+    > {
+        Box::pin(self.transition_inner(cmd, Some(actor)))
     }
 
     /// Execute a transition and then check for REACTIVE WHEN auto-transitions.
@@ -433,7 +576,7 @@ impl Engine {
         &self,
         cmd: &TransitionCommand,
     ) -> SmqlResult<TransitionResult> {
-        let result = self.transition_inner(cmd).await?;
+        let result = self.transition_inner(cmd, None).await?;
         let iid = result.instance.id.to_string();
         let machine = result.instance.machine.clone();
         let new_state = result.to_state.clone();
@@ -444,15 +587,26 @@ impl Engine {
     fn transition_inner<'a>(
         &'a self,
         cmd: &'a TransitionCommand,
+        actor_override: Option<ActorInfo>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SmqlResult<TransitionResult>> + Send + 'a>> {
-        Box::pin(self.transition_inner_impl(cmd))
+        Box::pin(self.transition_inner_impl(cmd, actor_override))
     }
 
-    #[tracing::instrument(skip(self, cmd), fields(instance_id = %cmd.instance_id, to_state = %cmd.to_state))]
-    async fn transition_inner_impl(&self, cmd: &TransitionCommand) -> SmqlResult<TransitionResult> {
+    #[tracing::instrument(skip(self, cmd, actor_override), fields(instance_id = %cmd.instance_id, to_state = %cmd.to_state))]
+    async fn transition_inner_impl(&self, cmd: &TransitionCommand, actor_override: Option<ActorInfo>) -> SmqlResult<TransitionResult> {
+        // Idempotency check: if key is set, check for cached result
+        if let Some(ref ikey) = cmd.idempotency_key {
+            if let Some(cached) = self.storage.get_idempotency(ikey).await? {
+                if let Ok(result) = serde_json::from_slice::<TransitionResult>(&cached) {
+                    tracing::debug!(key = %ikey, "Returning cached idempotent transition result");
+                    return Ok(result);
+                }
+            }
+        }
+
         // Handle THROUGH (multi-hop)
         if !cmd.through.is_empty() {
-            return self.transition_through(cmd).await;
+            return self.transition_through(cmd, actor_override).await;
         }
 
         let id = smql_storage::InstanceId::from_string(&cmd.instance_id)
@@ -500,10 +654,13 @@ impl Engine {
         let mut ctx = EvalContext {
             data: eval_data,
             state: instance.state.clone(),
-            actor: cmd.as_actor.as_ref().map(|a| ActorInfo {
-                id: a.clone(),
-                role: None,
-                fields: HashMap::new(),
+            actor: actor_override.clone().or_else(|| {
+                cmd.as_actor.as_ref().map(|a| ActorInfo {
+                    id: a.clone(),
+                    role: None,
+                    capabilities: Vec::new(),
+                    fields: HashMap::new(),
+                })
             }),
             state_entered_at: instance.state_entered_at,
             created_at: instance.created_at,
@@ -512,6 +669,9 @@ impl Engine {
             children: HashMap::new(),
             parent_data: None,
             parent_state: None,
+            terminal_states: None,
+            visited_states: None,
+            tags: instance.tags.clone(),
         };
 
         // Populate children/parent context for composition guards
@@ -521,13 +681,18 @@ impl Engine {
         }
 
         // Build HookContext for this transition
+        // Use actor_override identity (from JWT) when present, otherwise fall back to command's AS clause
+        let effective_actor = actor_override
+            .as_ref()
+            .map(|a| a.id.clone())
+            .or_else(|| cmd.as_actor.clone());
         let hook_ctx = HookContext {
             instance_id: cmd.instance_id.clone(),
             machine: instance.machine.clone(),
             from_state: instance.state.clone(),
             to_state: cmd.to_state.clone(),
             data: ctx.data.clone(),
-            actor: cmd.as_actor.clone(),
+            actor: effective_actor.clone(),
             memo: cmd.memo.clone(),
         };
 
@@ -572,8 +737,11 @@ impl Engine {
         }
 
         // --- 2. Evaluate ALL guard conditions — collect ALL failures ---
-        // First expand APPLY POLICY guards, then evaluate inline guards
+        // First expand APPLY POLICY guards, then evaluate inline guards.
+        // We collect both GuardFailure (for error reporting) and the original Expression AST
+        // (for precise recovery option generation).
         let mut guard_failures = Vec::new();
+        let mut failed_guard_exprs: Vec<smql_ast::Expression> = Vec::new();
 
         for policy_name in &transition_def.policies {
             match self.catalog.get_policy(policy_name) {
@@ -588,6 +756,7 @@ impl Engine {
                                     expected: Some("true".to_string()),
                                     hint: Some(format!("Guard from policy '{}'", policy_name)),
                                 });
+                                failed_guard_exprs.push(guard.clone());
                             }
                             Err(e) => {
                                 guard_failures.push(GuardFailure {
@@ -596,6 +765,7 @@ impl Engine {
                                     expected: None,
                                     hint: None,
                                 });
+                                failed_guard_exprs.push(guard.clone());
                             }
                         }
                     }
@@ -621,6 +791,7 @@ impl Engine {
                         expected: Some("true".to_string()),
                         hint: None,
                     });
+                    failed_guard_exprs.push(guard.clone());
                 }
                 Err(e) => {
                     guard_failures.push(GuardFailure {
@@ -629,6 +800,7 @@ impl Engine {
                         expected: None,
                         hint: None,
                     });
+                    failed_guard_exprs.push(guard.clone());
                 }
             }
         }
@@ -645,6 +817,7 @@ impl Engine {
                         expected: Some("true".to_string()),
                         hint: rule.message.clone().or_else(|| Some(format!("Rule '{}' invariant failed", rule.name))),
                     });
+                    failed_guard_exprs.push(rule.invariant.clone());
                 }
                 Err(e) => {
                     guard_failures.push(GuardFailure {
@@ -653,6 +826,7 @@ impl Engine {
                         expected: None,
                         hint: None,
                     });
+                    failed_guard_exprs.push(rule.invariant.clone());
                 }
             }
         }
@@ -676,15 +850,23 @@ impl Engine {
                     .get_instance(&id)
                     .await?
                     .ok_or_else(|| SmqlError::not_found("Instance", &cmd.instance_id))?;
-                return Ok(TransitionResult {
+                let or_stay_result = TransitionResult {
                     from_state: instance.state.clone(),
                     to_state: instance.state.clone(),
                     instance: updated,
-                });
+                };
+                // Store idempotency entry if key was provided
+                if let Some(ref ikey) = cmd.idempotency_key {
+                    if let Ok(serialized) = serde_json::to_vec(&or_stay_result) {
+                        let expires_at = Utc::now() + chrono::Duration::hours(24);
+                        let _ = self.storage.store_idempotency(ikey, &serialized, expires_at).await;
+                    }
+                }
+                return Ok(or_stay_result);
             }
 
-            // Generate recovery options based on guard failures
-            let recovery_options = Self::generate_recovery_options(&guard_failures, &cmd.instance_id, &instance.machine, &cmd.to_state);
+            // Generate recovery options using AST-based analysis of failed guard expressions
+            let recovery_options = Self::generate_recovery_options_from_ast(&failed_guard_exprs, &guard_failures, &cmd.instance_id, &instance.machine, &cmd.to_state);
             let llm_prompt = Self::generate_llm_prompt(&guard_failures, &cmd.instance_id, &instance.state, &cmd.to_state);
 
             return Err(SmqlError::TransitionDenied(TransitionDeniedError {
@@ -700,7 +882,11 @@ impl Engine {
 
         // --- 3. Build mutations from WITH data and MUTATE clauses ---
         // Check field-level write permissions first
-        let actor_role = cmd.as_actor.as_deref();
+        // Use actor_override role (from JWT) when present, otherwise fall back to command's AS clause
+        let actor_role = actor_override
+            .as_ref()
+            .and_then(|a| a.role.as_deref())
+            .or_else(|| cmd.as_actor.as_deref());
         for (field, _) in &cmd.with_data {
             if !self.can_write_field(&machine_def, field, actor_role) {
                 return Err(SmqlError::TransitionDenied(TransitionDeniedError {
@@ -735,6 +921,22 @@ impl Engine {
                         instance.state, cmd.to_state, cmd.instance_id, actor_role.unwrap_or("unknown"), field
                     )),
                 }));
+            }
+        }
+
+        // Reject COMPUTED fields in WITH data — they are read-only
+        {
+            use smql_ast::types::Constraint;
+            for (field, _) in &cmd.with_data {
+                if let Some(field_def) = machine_def.data.iter().find(|d| d.name == *field) {
+                    if field_def.constraints.iter().any(|c| matches!(c, Constraint::Computed(_))) {
+                        return Err(SmqlError::ValidationError {
+                            message: format!("Field '{}' is COMPUTED and cannot be set directly", field),
+                            field: Some(field.clone()),
+                            hint: Some("Remove this field from WITH data — it is auto-derived".to_string()),
+                        });
+                    }
+                }
             }
         }
 
@@ -794,6 +996,9 @@ impl Engine {
                             parent_id: Some(cmd.instance_id.clone()),
                             parent_machine: Some(instance.machine.clone()),
                             as_actor: None,
+                            idempotency_key: None,
+                            tags: Vec::new(),
+                            ttl: None,
                         };
                         deferred_spawns.push((mutate.field.clone(), child_cmd));
                     }
@@ -825,7 +1030,12 @@ impl Engine {
             }
         }
 
-        // Create trail entry
+        // Apply tag mutations from command
+        for (key, value) in &cmd.tags {
+            mutations.push(Mutation::SetTag(key.clone(), value.clone()));
+        }
+
+        // Create trail entry — use authenticated actor identity when available
         let trail_entry = TrailEntry {
             instance_id: id.clone(),
             machine: instance.machine.clone(),
@@ -833,7 +1043,7 @@ impl Engine {
             from_state: instance.state.clone(),
             to_state: cmd.to_state.clone(),
             transition_name: Some(format!("{} -> {}", instance.state, cmd.to_state)),
-            actor: cmd.as_actor.clone(),
+            actor: effective_actor,
             memo: cmd.memo.clone(),
             timestamp: Utc::now(),
             data_snapshot: None,
@@ -849,6 +1059,21 @@ impl Engine {
                 trail_entry,
             )
             .await?;
+
+        // --- 4a. Store durable transition event ---
+        let transition_event = smql_storage::instance::StoredEvent {
+            id: ulid::Ulid::new().to_string(),
+            timestamp: Utc::now(),
+            machine: cmd.machine.clone(),
+            event_name: "transition".to_string(),
+            instance_id: cmd.instance_id.clone(),
+            payload: serde_json::json!({
+                "from_state": instance.state,
+                "to_state": cmd.to_state,
+            }),
+            actor: cmd.as_actor.clone(),
+        };
+        let _ = self.storage.store_event(&transition_event).await;
 
         // --- 4b. Execute deferred SPAWN commands (after version check succeeded) ---
         for (field, child_cmd) in deferred_spawns {
@@ -1009,11 +1234,24 @@ impl Engine {
             .ok_or_else(|| SmqlError::not_found("Instance", &cmd.instance_id))?;
 
         tracing::info!(from = %instance.state, to = %cmd.to_state, "transition complete");
-        Ok(TransitionResult {
+        let result = TransitionResult {
             from_state: instance.state,
             to_state: cmd.to_state.clone(),
             instance: updated,
-        })
+        };
+
+        // Notify any watchers waiting on this machine
+        self.notify_watchers(&cmd.machine, &result.instance);
+
+        // Store idempotency entry if key was provided
+        if let Some(ref ikey) = cmd.idempotency_key {
+            if let Ok(serialized) = serde_json::to_vec(&result) {
+                let expires_at = Utc::now() + chrono::Duration::hours(24);
+                let _ = self.storage.store_idempotency(ikey, &serialized, expires_at).await;
+            }
+        }
+
+        Ok(result)
     }
 
     /// Try a transition — returns Ok(None) if guards fail instead of an error.
@@ -1026,6 +1264,61 @@ impl Engine {
             Err(SmqlError::TransitionDenied(_)) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Try a transition with an explicit actor override (from JWT auth).
+    pub async fn try_transition_with_actor(
+        &self,
+        cmd: &TransitionCommand,
+        actor: ActorInfo,
+    ) -> SmqlResult<Option<TransitionResult>> {
+        match self.transition_with_actor(cmd, actor).await {
+            Ok(result) => Ok(Some(result)),
+            Err(SmqlError::TransitionDenied(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Batch spawn: create multiple instances in one call.
+    /// Each entry in `cmd.batch_data` is a separate instance's data fields.
+    /// Validation failures are collected per-index; valid instances are still created.
+    pub async fn batch_spawn(&self, cmd: &SpawnCommand) -> SmqlResult<BatchSpawnResult> {
+        if !cmd.batch || cmd.batch_data.is_empty() {
+            return Ok(BatchSpawnResult {
+                created: Vec::new(),
+                failures: Vec::new(),
+            });
+        }
+
+        let _machine_def = self.catalog.get(&cmd.machine)?;
+
+        let mut created = Vec::new();
+        let mut failures = Vec::new();
+
+        for (index, data_fields) in cmd.batch_data.iter().enumerate() {
+            let single = SpawnCommand {
+                machine: cmd.machine.clone(),
+                data: data_fields.clone(),
+                then_transition: None,
+                batch: false,
+                batch_data: Vec::new(),
+                parent_id: cmd.parent_id.clone(),
+                parent_machine: cmd.parent_machine.clone(),
+                as_actor: cmd.as_actor.clone(),
+                idempotency_key: None,
+                tags: cmd.tags.clone(),
+                ttl: cmd.ttl.clone(),
+            };
+            match self.spawn(&single).await {
+                Ok(result) => created.push(result.instance),
+                Err(e) => failures.push(BatchSpawnFailure {
+                    index,
+                    error: e.to_string(),
+                }),
+            }
+        }
+
+        Ok(BatchSpawnResult { created, failures })
     }
 
     /// Execute a batch transition — transition all matching instances.
@@ -1069,6 +1362,8 @@ impl Engine {
                 through: Vec::new(),
                 or_stay: false,
                 cascade: false,
+                idempotency_key: None,
+                tags: Vec::new(),
             };
 
             match self.transition(&t_cmd).await {
@@ -1095,7 +1390,7 @@ impl Engine {
     }
 
     /// Execute a multi-hop transition through intermediate states.
-    async fn transition_through(&self, cmd: &TransitionCommand) -> SmqlResult<TransitionResult> {
+    async fn transition_through(&self, cmd: &TransitionCommand, actor_override: Option<ActorInfo>) -> SmqlResult<TransitionResult> {
         // Validate THROUGH chain for cycles (repeated states)
         {
             let mut seen = std::collections::HashSet::new();
@@ -1143,9 +1438,11 @@ impl Engine {
                 through: Vec::new(),
                 or_stay: false,
                 cascade: false,
+                idempotency_key: None,
+                tags: Vec::new(),
             };
 
-            let result = self.transition(&step_cmd).await?;
+            let result = self.transition_inner(&step_cmd, actor_override.clone()).await?;
             current_id = result.instance.id.as_str();
             last_result = Some(result);
         }
@@ -1209,6 +1506,8 @@ impl Engine {
                         through: Vec::new(),
                         or_stay: false,
                         cascade: false, // Don't let transition() call cascade_children again
+                        idempotency_key: None,
+                        tags: Vec::new(),
                     };
                     // Use try_transition so failures don't propagate
                     let _ = self.try_transition(&cmd).await;
@@ -1518,6 +1817,255 @@ impl Engine {
         })
     }
 
+    // -----------------------------------------------------------------------
+    // Instance Claiming
+    // -----------------------------------------------------------------------
+
+    /// Execute a CLAIM command: find an unclaimed instance matching the filter
+    /// and atomically claim it for the given agent.
+    pub async fn execute_claim(&self, cmd: &ClaimCommand) -> SmqlResult<ClaimResult> {
+        // Validate machine exists
+        let _machine_def = self.catalog.get(&cmd.machine)?;
+
+        let now = Utc::now();
+        let expires_at = now + chrono::Duration::seconds(cmd.lease_duration.seconds as i64);
+
+        // Find candidates
+        let filter = Filter::default();
+        let instances = self.storage.find_instances(&cmd.machine, &filter).await?;
+
+        // Apply expression filter and skip already-claimed
+        let mut claimed_instance = None;
+        for inst in &instances {
+            // Apply WHERE filter if present
+            if let Some(ref filter_expr) = cmd.filter {
+                let ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                if !eval_guard(filter_expr, &ctx).unwrap_or(false) {
+                    continue;
+                }
+            }
+
+            // Try to claim this instance
+            match self
+                .storage
+                .claim_instance(&inst.id, &cmd.agent_id, expires_at)
+                .await
+            {
+                Ok(()) => {
+                    // Re-fetch to get updated fields
+                    let updated = self
+                        .storage
+                        .get_instance(&inst.id)
+                        .await?
+                        .ok_or_else(|| SmqlError::not_found("Instance", inst.id.as_str()))?;
+                    claimed_instance = Some(updated);
+                    break;
+                }
+                Err(SmqlError::Conflict { .. }) => continue, // already claimed, try next
+                Err(e) => return Err(e),
+            }
+        }
+
+        let mut instance = claimed_instance.ok_or_else(|| SmqlError::NotFound {
+            entity_type: "Unclaimed instance".to_string(),
+            id: cmd.machine.clone(),
+        })?;
+
+        // Optionally transition on claim
+        if let Some(ref target_state) = cmd.transition_to {
+            let t_cmd = TransitionCommand {
+                machine: cmd.machine.clone(),
+                instance_id: instance.id.as_str(),
+                to_state: target_state.clone(),
+                with_data: Vec::new(),
+                memo: Some(format!("Claimed by agent '{}'", cmd.agent_id)),
+                as_actor: Some(cmd.agent_id.clone()),
+                through: Vec::new(),
+                or_stay: false,
+                cascade: false,
+                idempotency_key: None,
+                tags: Vec::new(),
+            };
+            let result = self.transition(&t_cmd).await?;
+            instance = result.instance;
+        }
+
+        tracing::info!(
+            instance_id = %instance.id,
+            agent = %cmd.agent_id,
+            "instance claimed"
+        );
+
+        Ok(ClaimResult {
+            instance,
+            agent_id: cmd.agent_id.clone(),
+            lease_expires_at: expires_at,
+        })
+    }
+
+    /// Execute a RELEASE command: release a claim held by an agent.
+    pub async fn execute_release(&self, cmd: &ReleaseCommand) -> SmqlResult<ReleaseResult> {
+        let id = smql_storage::instance::InstanceId::from_string(&cmd.instance_id)
+            .map_err(|_| SmqlError::validation(format!("Invalid instance ID: {}", cmd.instance_id)))?;
+
+        self.storage.release_claim(&id, &cmd.agent_id).await?;
+
+        tracing::info!(
+            instance_id = %cmd.instance_id,
+            agent = %cmd.agent_id,
+            "claim released"
+        );
+
+        Ok(ReleaseResult {
+            instance_id: cmd.instance_id.clone(),
+            agent_id: cmd.agent_id.clone(),
+        })
+    }
+
+    /// Execute a WATCH command — block until a condition becomes true on an instance.
+    pub async fn watch(&self, cmd: &WatchCommand) -> SmqlResult<WatchResult> {
+        // Validate machine exists
+        let _machine_def = self.catalog.get(&cmd.machine)?;
+
+        let start = std::time::Instant::now();
+
+        // Check condition immediately — if already true, return instantly
+        if let Some(ref instance_id) = cmd.instance_id {
+            let id = smql_storage::instance::InstanceId::from_string(instance_id)
+                .map_err(|_| SmqlError::validation(format!("Invalid instance ID: {}", instance_id)))?;
+            if let Some(instance) = self.storage.get_instance(&id).await? {
+                if self.evaluate_watch_condition(&instance, &cmd.condition) {
+                    return Ok(WatchResult {
+                        instance,
+                        waited_ms: 0,
+                    });
+                }
+            } else {
+                return Err(SmqlError::not_found("Instance", instance_id));
+            }
+        } else {
+            // Check all matching instances
+            let filter = Filter {
+                state: None,
+                states: None,
+                predicate: None,
+                limit: None,
+                offset: None,
+                after_id: None,
+            };
+            let instances = self.storage.find_instances(&cmd.machine, &filter).await?;
+            for inst in &instances {
+                let matches_filter = if let Some(ref f) = cmd.filter {
+                    let ctx = EvalContext::new(inst.data.clone(), inst.state.clone());
+                    eval_guard(f, &ctx).unwrap_or(false)
+                } else {
+                    true
+                };
+                if matches_filter && self.evaluate_watch_condition(inst, &cmd.condition) {
+                    return Ok(WatchResult {
+                        instance: inst.clone(),
+                        waited_ms: 0,
+                    });
+                }
+            }
+        }
+
+        // Condition not yet met — register a watcher and wait
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let watcher_id = ulid::Ulid::new().to_string();
+
+        {
+            let watcher = Watcher {
+                id: watcher_id.clone(),
+                condition: cmd.condition.clone(),
+                instance_id: cmd.instance_id.clone(),
+                filter: cmd.filter.clone(),
+                sender: tx,
+            };
+            self.watchers
+                .entry(cmd.machine.clone())
+                .or_default()
+                .push(watcher);
+        }
+
+        // Set up timeout
+        let timeout_duration = cmd.timeout
+            .as_ref()
+            .map(|t| std::time::Duration::from_secs(t.seconds))
+            .unwrap_or(std::time::Duration::from_secs(300)); // default 5 minute max
+
+        match tokio::time::timeout(timeout_duration, rx).await {
+            Ok(Ok(instance)) => {
+                let waited = start.elapsed().as_millis() as u64;
+                Ok(WatchResult {
+                    instance,
+                    waited_ms: waited,
+                })
+            }
+            Ok(Err(_)) => {
+                // oneshot was dropped (watcher removed) — treat as cancelled
+                Err(SmqlError::validation("Watch was cancelled".to_string()))
+            }
+            Err(_) => {
+                // Timeout — remove the watcher
+                self.remove_watcher(&cmd.machine, &watcher_id);
+                Err(SmqlError::TimeoutError {
+                    message: format!(
+                        "Watch timed out after {}s",
+                        timeout_duration.as_secs()
+                    ),
+                    instance_id: cmd.instance_id.clone(),
+                    state: None,
+                })
+            }
+        }
+    }
+
+    /// Evaluate a watch UNTIL condition against an instance.
+    fn evaluate_watch_condition(&self, instance: &Instance, condition: &Expression) -> bool {
+        let ctx = EvalContext::new(instance.data.clone(), instance.state.clone());
+        eval_guard(condition, &ctx).unwrap_or(false)
+    }
+
+    /// Notify all watchers for a machine after a state change.
+    /// Called after successful spawn or transition.
+    pub(crate) fn notify_watchers(&self, machine: &str, instance: &Instance) {
+        let mut entry = match self.watchers.get_mut(machine) {
+            Some(e) => e,
+            None => return,
+        };
+
+        let watchers = entry.value_mut();
+        let mut i = 0;
+        while i < watchers.len() {
+            let watcher = &watchers[i];
+
+            // Check if watcher is interested in this instance
+            let interested = if let Some(ref watcher_inst_id) = watcher.instance_id {
+                instance.id.as_str() == watcher_inst_id.as_str()
+            } else if let Some(ref filter) = watcher.filter {
+                let ctx = EvalContext::new(instance.data.clone(), instance.state.clone());
+                eval_guard(filter, &ctx).unwrap_or(false)
+            } else {
+                true
+            };
+
+            if interested && self.evaluate_watch_condition(instance, &watcher.condition) {
+                let watcher = watchers.remove(i);
+                let _ = watcher.sender.send(instance.clone());
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Remove a watcher by ID (used on timeout/cancel).
+    fn remove_watcher(&self, machine: &str, watcher_id: &str) {
+        if let Some(mut entry) = self.watchers.get_mut(machine) {
+            entry.value_mut().retain(|w| w.id != watcher_id);
+        }
+    }
+
     /// Restore persisted timers from storage into the in-memory TimerManager.
     ///
     /// Call this on startup before `start_timer_loop()` to recover timers
@@ -1540,6 +2088,128 @@ impl Engine {
             tracing::info!(count, "restored timers from storage");
         }
         Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // Transaction support
+    // -----------------------------------------------------------------------
+
+    /// Execute a transaction: run all statements atomically.
+    /// On any failure, rollback all changes made so far.
+    pub async fn execute_transaction(
+        &self,
+        statements: &[smql_ast::command::Statement],
+    ) -> SmqlResult<Vec<TransactionStepResult>> {
+        use smql_ast::command::{Command, Statement};
+        use smql_storage::instance::InstanceId;
+
+        if statements.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Track snapshots for rollback: (instance_id, Option<Instance>) where None means "was newly created"
+        let mut snapshots: Vec<(InstanceId, Option<Instance>)> = Vec::new();
+        let mut results: Vec<TransactionStepResult> = Vec::new();
+
+        for (i, stmt) in statements.iter().enumerate() {
+            let step_result = match stmt {
+                Statement::Command(Command::Spawn(spawn_cmd)) => {
+                    match self.spawn(spawn_cmd).await {
+                        Ok(result) => {
+                            // Track: this instance was newly created (rollback = delete)
+                            snapshots.push((result.instance.id.clone(), None));
+                            Ok(TransactionStepResult::Spawned {
+                                instance_id: result.instance.id.as_str(),
+                                state: result.instance.state.clone(),
+                            })
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Statement::Command(Command::Transition(t_cmd)) => {
+                    let id_result = InstanceId::from_string(&t_cmd.instance_id)
+                        .map_err(|_| SmqlError::validation(format!("Invalid instance ID: {}", t_cmd.instance_id)));
+                    match id_result {
+                        Err(e) => Err(e),
+                        Ok(id) => {
+                            let snapshot_result = self.storage.get_instance(&id).await;
+                            match snapshot_result {
+                                Err(e) => Err(e),
+                                Ok(None) => Err(SmqlError::not_found("Instance", &t_cmd.instance_id)),
+                                Ok(Some(snapshot)) => match self.transition(t_cmd).await {
+                                    Ok(result) => {
+                                        snapshots.push((id, Some(snapshot)));
+                                        Ok(TransactionStepResult::Transitioned {
+                                            instance_id: result.instance.id.as_str(),
+                                            from_state: result.from_state,
+                                            to_state: result.to_state,
+                                        })
+                                    }
+                                    Err(e) => Err(e),
+                                },
+                            }
+                        }
+                    }
+                }
+                Statement::Command(Command::TryTransition(t_cmd)) => {
+                    let id_result = InstanceId::from_string(&t_cmd.instance_id)
+                        .map_err(|_| SmqlError::validation(format!("Invalid instance ID: {}", t_cmd.instance_id)));
+                    match id_result {
+                        Err(e) => Err(e),
+                        Ok(id) => {
+                            let snapshot_result = self.storage.get_instance(&id).await;
+                            match snapshot_result {
+                                Err(e) => Err(e),
+                                Ok(None) => Err(SmqlError::not_found("Instance", &t_cmd.instance_id)),
+                                Ok(Some(snapshot)) => match self.try_transition(t_cmd).await {
+                                    Ok(Some(result)) => {
+                                        snapshots.push((id, Some(snapshot)));
+                                        Ok(TransactionStepResult::Transitioned {
+                                            instance_id: result.instance.id.as_str(),
+                                            from_state: result.from_state,
+                                            to_state: result.to_state,
+                                        })
+                                    }
+                                    Ok(None) => Ok(TransactionStepResult::Skipped),
+                                    Err(e) => Err(e),
+                                },
+                            }
+                        }
+                    }
+                }
+                _ => Err(SmqlError::validation(
+                    "Only SPAWN, TRANSITION, and TRY TRANSITION are allowed inside BEGIN...COMMIT".to_string(),
+                )),
+            };
+
+            match step_result {
+                Ok(sr) => results.push(sr),
+                Err(e) => {
+                    // Rollback all changes in reverse order
+                    tracing::warn!(step = i, error = %e, "Transaction step failed — rolling back");
+                    for (id, snapshot) in snapshots.into_iter().rev() {
+                        match snapshot {
+                            None => {
+                                // Was newly created — delete it
+                                let _ = self.storage.delete_instance(&id).await;
+                            }
+                            Some(old_instance) => {
+                                // Was modified — restore the snapshot
+                                let _ = self.storage.delete_instance(&id).await;
+                                let _ = self.storage.store_instance(&old_instance).await;
+                            }
+                        }
+                    }
+                    return Err(SmqlError::TransactionFailed {
+                        message: format!("Transaction failed at step {}: {}", i, e),
+                        step: i,
+                        original_error: Box::new(e),
+                    });
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     // -----------------------------------------------------------------------
@@ -1592,9 +2262,11 @@ impl Engine {
                 through: Vec::new(),
                 or_stay: false,
                 cascade: false,
+                idempotency_key: None,
+                tags: Vec::new(),
             };
 
-            match self.transition_inner(&cmd).await {
+            match self.transition_inner(&cmd, None).await {
                 Ok(_) => {
                     tracing::info!(saga = saga_name, step = %step.name, "SAGA step completed");
                     completed_steps.push(i);
@@ -1621,8 +2293,10 @@ impl Engine {
                                     through: Vec::new(),
                                     or_stay: false,
                                     cascade: false,
+                                    idempotency_key: None,
+                                    tags: Vec::new(),
                                 };
-                                let _ = self.transition_inner(&comp_cmd).await;
+                                let _ = self.transition_inner(&comp_cmd, None).await;
                             }
                         }
                     }
@@ -1708,8 +2382,10 @@ impl Engine {
                                 through: Vec::new(),
                                 or_stay: false,
                                 cascade: false,
+                                idempotency_key: None,
+                                tags: Vec::new(),
                             };
-                            if let Ok(result) = self.transition_inner(&cmd).await {
+                            if let Ok(result) = self.transition_inner(&cmd, None).await {
                                 current_state = result.to_state;
                                 depth += 1;
                                 fired = true;
@@ -1888,8 +2564,8 @@ impl Engine {
     }
 
     /// Evaluate all COMPUTED fields in a machine definition and update the data map.
-    /// Called after spawn data validation and after each transition mutation.
-    fn evaluate_computed_fields(
+    /// Called after spawn data validation, after each transition mutation, and in query read paths.
+    pub(crate) fn evaluate_computed_fields(
         &self,
         machine_def: &MachineDefinition,
         data: &mut HashMap<String, Value>,
@@ -2045,7 +2721,12 @@ impl Engine {
                     event: event.clone(),
                 })
             }
-            Action::Webhook { url, payload } => {
+            Action::Webhook {
+                url,
+                payload,
+                response_field,
+                on_failure_state,
+            } => {
                 let resolved_payload = payload
                     .as_ref()
                     .map(|expr| eval_expr(expr, ctx))
@@ -2053,6 +2734,8 @@ impl Engine {
                 Ok(ResolvedAction::Webhook {
                     url: url.clone(),
                     payload: resolved_payload,
+                    response_field: response_field.clone(),
+                    on_failure_state: on_failure_state.clone(),
                 })
             }
             Action::SpawnChild { machine, data } => {
@@ -2154,6 +2837,9 @@ impl EngineCallback for EngineCallbackImpl {
             parent_id: Some(parent_instance_id.to_string()),
             parent_machine: Some(parent.machine.clone()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
 
         // Create a temporary engine to perform the spawn
@@ -2162,6 +2848,7 @@ impl EngineCallback for EngineCallbackImpl {
             storage: self.storage.clone(),
             timer_manager: self.timer_manager.clone(),
             hook_executor: self.hook_executor.clone(),
+            watchers: DashMap::new(),
         };
         let result = engine
             .spawn(&cmd)
@@ -2170,6 +2857,45 @@ impl EngineCallback for EngineCallbackImpl {
                 message: format!("Failed to spawn child: {}", e),
             })?;
         Ok(result.instance.id.as_str())
+    }
+
+    async fn update_instance_field(
+        &self,
+        instance_id: &str,
+        field: &str,
+        value: Value,
+    ) -> Result<(), HookError> {
+        let id = smql_storage::InstanceId::from_string(instance_id).map_err(|_| {
+            HookError::ActionFailed {
+                message: format!("Invalid instance ID: {}", instance_id),
+            }
+        })?;
+        let mut instance = self
+            .storage
+            .get_instance(&id)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to get instance: {}", e),
+            })?
+            .ok_or_else(|| HookError::ActionFailed {
+                message: format!("Instance not found: {}", instance_id),
+            })?;
+
+        instance.data.insert(field.to_string(), value);
+        self.storage
+            .delete_instance(&id)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to delete instance for update: {}", e),
+            })?;
+        self.storage
+            .store_instance(&instance)
+            .await
+            .map_err(|e| HookError::ActionFailed {
+                message: format!("Failed to store updated instance: {}", e),
+            })?;
+
+        Ok(())
     }
 
     async fn signal_parent(
@@ -2206,6 +2932,7 @@ impl EngineCallback for EngineCallbackImpl {
             storage: self.storage.clone(),
             timer_manager: self.timer_manager.clone(),
             hook_executor: self.hook_executor.clone(),
+            watchers: DashMap::new(),
         };
         // Use try_transition so if the parent can't transition, we don't fail the hook
         let _ = engine
@@ -2232,7 +2959,7 @@ impl Engine {
     }
 
     /// Populate the EvalContext with children and parent data for composition guards.
-    async fn populate_composition_context(
+    pub(crate) async fn populate_composition_context(
         &self,
         ctx: &mut EvalContext,
         instance: &Instance,
@@ -2269,7 +2996,378 @@ impl Engine {
     }
 
     /// Generate actionable recovery options from guard failures for AI agents.
-    fn generate_recovery_options(
+    /// Generate recovery options by walking the guard AST for precise analysis.
+    /// Falls back to string-based heuristics when no AST is available.
+    pub(crate) fn generate_recovery_options_from_ast(
+        failed_exprs: &[smql_ast::Expression],
+        guard_failures: &[GuardFailure],
+        instance_id: &str,
+        machine: &str,
+        target_state: &str,
+    ) -> Vec<RecoveryOption> {
+        let mut options = Vec::new();
+
+        for expr in failed_exprs {
+            Self::collect_recovery_from_expr(&expr.kind, instance_id, machine, target_state, &mut options);
+        }
+
+        // Deduplicate by (action, field) pair
+        options.dedup_by(|a, b| a.action == b.action && a.field == b.field);
+
+        // If AST analysis produced nothing, fall back to string-based heuristics
+        if options.is_empty() {
+            return Self::generate_recovery_options(guard_failures, instance_id, machine, target_state);
+        }
+
+        options
+    }
+
+    /// Recursively walk an expression AST and collect recovery options.
+    fn collect_recovery_from_expr(
+        kind: &smql_ast::expression::ExpressionKind,
+        instance_id: &str,
+        machine: &str,
+        target_state: &str,
+        options: &mut Vec<RecoveryOption>,
+    ) {
+        use smql_ast::expression::{BinaryOperator, ExpressionKind::*};
+
+        match kind {
+            // field IS SET → SetField
+            IsSet(inner) => {
+                if let FieldAccess(parts) = &inner.kind {
+                    let field = parts.first().cloned().unwrap_or_default();
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::SetField,
+                        field: Some(field.clone()),
+                        suggested_value: Some("Provide a value for this field".to_string()),
+                        reason: format!("Field '{}' must be set.", field),
+                        example: Some(format!(
+                            "TRANSITION {} {} TO {} WITH {{ {}: \"...\" }}",
+                            machine, instance_id, target_state, field
+                        )),
+                    });
+                }
+            }
+
+            // field IS NOT SET → inform that field must be absent
+            IsNotSet(inner) => {
+                if let FieldAccess(parts) = &inner.kind {
+                    let field = parts.first().cloned().unwrap_or_default();
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::SetField,
+                        field: Some(field.clone()),
+                        suggested_value: Some("Remove or clear this field".to_string()),
+                        reason: format!("Field '{}' must not be set.", field),
+                        example: None,
+                    });
+                }
+            }
+
+            // Binary comparisons: field > N, field == value, ACTOR.role == "admin", etc.
+            BinaryOp { left, op, right } => {
+                match op {
+                    // Logical operators: recurse into both sides
+                    BinaryOperator::And => {
+                        Self::collect_recovery_from_expr(&left.kind, instance_id, machine, target_state, options);
+                        Self::collect_recovery_from_expr(&right.kind, instance_id, machine, target_state, options);
+                    }
+                    BinaryOperator::Or => {
+                        // For OR, collect from both sides (agent can satisfy either)
+                        Self::collect_recovery_from_expr(&left.kind, instance_id, machine, target_state, options);
+                        Self::collect_recovery_from_expr(&right.kind, instance_id, machine, target_state, options);
+                    }
+
+                    // Comparison: field == value, field > N, ACTOR == assignee, etc.
+                    BinaryOperator::Eq | BinaryOperator::NotEq
+                    | BinaryOperator::Gt | BinaryOperator::GtEq
+                    | BinaryOperator::Lt | BinaryOperator::LtEq => {
+                        // Check for ACTOR.role == "value" pattern
+                        if let Some(role) = Self::extract_actor_role_comparison(left, right) {
+                            options.push(RecoveryOption {
+                                action: RecoveryAction::ChangeActor,
+                                field: None,
+                                suggested_value: Some(role.clone()),
+                                reason: format!("Actor role must be '{}'.", role),
+                                example: Some(format!(
+                                    "TRANSITION {} {} TO {} AS \"{}\"",
+                                    machine, instance_id, target_state, role
+                                )),
+                            });
+                            return;
+                        }
+
+                        // Check for ACTOR == value pattern (any ACTOR reference)
+                        if Self::expr_references_actor(&left.kind) || Self::expr_references_actor(&right.kind) {
+                            let suggested = Self::extract_literal_str(right)
+                                .or_else(|| Self::extract_literal_str(left));
+                            options.push(RecoveryOption {
+                                action: RecoveryAction::ChangeActor,
+                                field: None,
+                                suggested_value: suggested.map(|s| s.to_string()),
+                                reason: "The current actor does not satisfy this guard.".to_string(),
+                                example: Some(format!(
+                                    "TRANSITION {} {} TO {} AS \"appropriate_actor\"",
+                                    machine, instance_id, target_state
+                                )),
+                            });
+                            return;
+                        }
+
+                        // Field comparison: field > N, field == value
+                        if let FieldAccess(parts) = &left.kind {
+                            let field = parts.first().cloned().unwrap_or_default();
+                            let hint = match op {
+                                BinaryOperator::Eq => {
+                                    if let Some(v) = Self::extract_literal_str(right) {
+                                        format!("must equal '{}'", v)
+                                    } else {
+                                        format!("must equal {}", right)
+                                    }
+                                }
+                                BinaryOperator::Gt => format!("must be > {}", right),
+                                BinaryOperator::GtEq => format!("must be >= {}", right),
+                                BinaryOperator::Lt => format!("must be < {}", right),
+                                BinaryOperator::LtEq => format!("must be <= {}", right),
+                                BinaryOperator::NotEq => format!("must not equal {}", right),
+                                _ => format!("must satisfy: {} {} {}", left, op, right),
+                            };
+                            options.push(RecoveryOption {
+                                action: RecoveryAction::SetField,
+                                field: Some(field.clone()),
+                                suggested_value: Some(hint),
+                                reason: format!("Field '{}' does not satisfy guard.", field),
+                                example: Some(format!(
+                                    "TRANSITION {} {} TO {} WITH {{ {}: ... }}",
+                                    machine, instance_id, target_state, field
+                                )),
+                            });
+                        }
+                        if let FieldAccess(parts) = &right.kind {
+                            let field = parts.first().cloned().unwrap_or_default();
+                            // Only add if left is not also a field (avoid duplicate)
+                            if !matches!(&left.kind, FieldAccess(_)) {
+                                options.push(RecoveryOption {
+                                    action: RecoveryAction::SetField,
+                                    field: Some(field.clone()),
+                                    suggested_value: Some(format!("must satisfy: {} {} {}", left, op, field)),
+                                    reason: format!("Field '{}' does not satisfy guard.", field),
+                                    example: Some(format!(
+                                        "TRANSITION {} {} TO {} WITH {{ {}: ... }}",
+                                        machine, instance_id, target_state, field
+                                    )),
+                                });
+                            }
+                        }
+                    }
+
+                    // Arithmetic operators: don't generate recovery for intermediate math
+                    _ => {}
+                }
+            }
+
+            // STATE IS state_name → Retry
+            StateIs(state) => {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Retry,
+                    field: None,
+                    suggested_value: Some(state.clone()),
+                    reason: format!("Instance must be in state '{}'.", state),
+                    example: None,
+                });
+            }
+
+            // STATE IN { states } → Retry
+            StateIn(states) => {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Retry,
+                    field: None,
+                    suggested_value: Some(states.join(", ")),
+                    reason: format!("Instance must be in one of states: [{}].", states.join(", ")),
+                    example: None,
+                });
+            }
+
+            // field IN { values } → SetField
+            InSet { expr, values } | InList { expr, values } => {
+                if let FieldAccess(parts) = &expr.kind {
+                    let field = parts.first().cloned().unwrap_or_default();
+                    let vals: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::SetField,
+                        field: Some(field.clone()),
+                        suggested_value: Some(format!("must be one of [{}]", vals.join(", "))),
+                        reason: format!("Field '{}' must be one of the allowed values.", field),
+                        example: Some(format!(
+                            "TRANSITION {} {} TO {} WITH {{ {}: ... }}",
+                            machine, instance_id, target_state, field
+                        )),
+                    });
+                }
+                if Self::expr_references_actor(&expr.kind) {
+                    let vals: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::ChangeActor,
+                        field: None,
+                        suggested_value: Some(format!("must be one of [{}]", vals.join(", "))),
+                        reason: "Actor must be one of the allowed values.".to_string(),
+                        example: Some(format!(
+                            "TRANSITION {} {} TO {} AS \"...\"",
+                            machine, instance_id, target_state
+                        )),
+                    });
+                }
+            }
+
+            // expr IN collection (dynamic membership, e.g. "approve" IN ACTOR.capabilities) → ChangeActor
+            InCollection { expr, collection } => {
+                if Self::expr_references_actor(&collection.kind) {
+                    let hint = Self::extract_literal_str(expr)
+                        .map(|s| s.to_string());
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::ChangeActor,
+                        field: None,
+                        suggested_value: hint,
+                        reason: format!("Actor's collection does not contain required value: {}.", expr),
+                        example: Some(format!(
+                            "TRANSITION {} {} TO {} AS \"actor_with_capability\"",
+                            machine, instance_id, target_state
+                        )),
+                    });
+                } else if let FieldAccess(parts) = &collection.kind {
+                    let field = parts.first().cloned().unwrap_or_default();
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::SetField,
+                        field: Some(field.clone()),
+                        suggested_value: Some(format!("must contain {}", expr)),
+                        reason: format!("Collection field '{}' must contain the required value.", field),
+                        example: Some(format!(
+                            "TRANSITION {} {} TO {} WITH {{ {}: ... }}",
+                            machine, instance_id, target_state, field
+                        )),
+                    });
+                }
+            }
+
+            // ALL/ANY child guards → Escalate (agent can't easily fix child state)
+            All { collection: _, predicate } => {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Escalate,
+                    field: None,
+                    suggested_value: None,
+                    reason: format!("All children must satisfy: {}. Transition children first.", predicate),
+                    example: None,
+                });
+            }
+            Any { collection: _, predicate } => {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Escalate,
+                    field: None,
+                    suggested_value: None,
+                    reason: format!("At least one child must satisfy: {}. Transition a child first.", predicate),
+                    example: None,
+                });
+            }
+
+            // Time-based functions → Wait
+            FunctionCall { name, args: _ } => {
+                let lower = name.to_lowercase();
+                if lower.contains("elapsed") || lower.contains("timeout") || lower == "now" || lower == "today" {
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::Wait,
+                        field: None,
+                        suggested_value: None,
+                        reason: "A time-based condition is not yet met.".to_string(),
+                        example: None,
+                    });
+                }
+            }
+
+            // NOT expr → recurse into the negated expression
+            UnaryOp { op: _, operand } => {
+                Self::collect_recovery_from_expr(&operand.kind, instance_id, machine, target_state, options);
+            }
+
+            // SIGNAL FROM → Escalate (external dependency)
+            SignalFrom { machine: child_machine, condition } => {
+                options.push(RecoveryOption {
+                    action: RecoveryAction::Escalate,
+                    field: None,
+                    suggested_value: None,
+                    reason: format!("Waiting for signal from '{}' where {}.", child_machine, condition),
+                    example: None,
+                });
+            }
+
+            // Qualified access like ACTOR.role → ChangeActor
+            QualifiedAccess { root, path: _ } => {
+                if Self::expr_references_actor(&root.kind) {
+                    options.push(RecoveryOption {
+                        action: RecoveryAction::ChangeActor,
+                        field: None,
+                        suggested_value: None,
+                        reason: "Actor does not satisfy this guard.".to_string(),
+                        example: Some(format!(
+                            "TRANSITION {} {} TO {} AS \"appropriate_actor\"",
+                            machine, instance_id, target_state
+                        )),
+                    });
+                }
+            }
+
+            // Literals, SelfRef, Pattern, etc. — no actionable recovery
+            _ => {}
+        }
+    }
+
+    /// Check if an expression references the ACTOR.
+    fn expr_references_actor(kind: &smql_ast::expression::ExpressionKind) -> bool {
+        use smql_ast::expression::ExpressionKind::*;
+        match kind {
+            ActorRef => true,
+            QualifiedAccess { root, .. } => Self::expr_references_actor(&root.kind),
+            _ => false,
+        }
+    }
+
+    /// Extract ACTOR.role == "value" pattern: returns the expected role.
+    fn extract_actor_role_comparison(
+        left: &smql_ast::Expression,
+        right: &smql_ast::Expression,
+    ) -> Option<String> {
+        use smql_ast::expression::ExpressionKind::*;
+        // Check left = ACTOR.role, right = literal
+        if let QualifiedAccess { root, path } = &left.kind {
+            if matches!(root.kind, ActorRef) && path.len() == 1 && path[0].eq_ignore_ascii_case("role") {
+                if let Some(val) = Self::extract_literal_str(right) {
+                    return Some(val.to_string());
+                }
+                return Some("*".to_string());
+            }
+        }
+        // Check right = ACTOR.role, left = literal
+        if let QualifiedAccess { root, path } = &right.kind {
+            if matches!(root.kind, ActorRef) && path.len() == 1 && path[0].eq_ignore_ascii_case("role") {
+                if let Some(val) = Self::extract_literal_str(left) {
+                    return Some(val.to_string());
+                }
+                return Some("*".to_string());
+            }
+        }
+        None
+    }
+
+    /// Extract a string literal from an expression (if it is one).
+    fn extract_literal_str(expr: &smql_ast::Expression) -> Option<&str> {
+        use smql_ast::expression::ExpressionKind::*;
+        match &expr.kind {
+            Literal(Value::Text(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Fallback: string-based recovery option generation (used when no AST is available).
+    pub(crate) fn generate_recovery_options(
         guard_failures: &[GuardFailure],
         instance_id: &str,
         machine: &str,
@@ -2278,9 +3376,7 @@ impl Engine {
         let mut options = Vec::new();
 
         for failure in guard_failures {
-            // Detect "IS SET" failures - missing field values
             if failure.guard_expr.contains("IS SET") {
-                // Extract field name from guard like "resolution IS SET"
                 let field = failure.guard_expr.split_whitespace().next().map(|s| s.to_string());
                 options.push(RecoveryOption {
                     action: RecoveryAction::SetField,
@@ -2291,7 +3387,6 @@ impl Engine {
                 });
             }
 
-            // Detect ACTOR-related failures
             if failure.guard_expr.contains("ACTOR") {
                 options.push(RecoveryOption {
                     action: RecoveryAction::ChangeActor,
@@ -2300,16 +3395,8 @@ impl Engine {
                     reason: "The current actor does not have permission for this transition.".to_string(),
                     example: Some(format!("AS \"appropriate_actor\" TRANSITION {} {} TO {}", machine, instance_id, target_state)),
                 });
-                options.push(RecoveryOption {
-                    action: RecoveryAction::Escalate,
-                    field: None,
-                    suggested_value: None,
-                    reason: "Escalate to an agent with appropriate permissions.".to_string(),
-                    example: Some(format!("TRANSITION {} {} TO awaiting_agent", machine, instance_id)),
-                });
             }
 
-            // Detect timeout-related failures
             if failure.guard_expr.contains("elapsed") {
                 options.push(RecoveryOption {
                     action: RecoveryAction::Wait,
@@ -2321,7 +3408,6 @@ impl Engine {
             }
         }
 
-        // If no specific options were generated, add a generic escalate option
         if options.is_empty() {
             options.push(RecoveryOption {
                 action: RecoveryAction::Escalate,

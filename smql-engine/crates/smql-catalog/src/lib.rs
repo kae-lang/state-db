@@ -22,6 +22,7 @@ pub use validation::{validate_machine, ValidationWarning};
 #[derive(Clone)]
 pub struct MachineCatalog {
     machines: Arc<DashMap<String, MachineEntry>>,
+    templates: Arc<DashMap<String, MachineDefinition>>,
     policies: Arc<DashMap<String, PolicyDefinition>>,
     views: Arc<DashMap<String, ViewDefinition>>,
     projections: Arc<DashMap<String, ProjectionDefinition>>,
@@ -42,6 +43,7 @@ impl MachineCatalog {
     pub fn new() -> Self {
         Self {
             machines: Arc::new(DashMap::new()),
+            templates: Arc::new(DashMap::new()),
             policies: Arc::new(DashMap::new()),
             views: Arc::new(DashMap::new()),
             projections: Arc::new(DashMap::new()),
@@ -220,10 +222,116 @@ impl MachineCatalog {
         self.policies.iter().map(|e| e.key().clone()).collect()
     }
 
+    /// Register a machine template.
+    pub fn register_template(&self, definition: MachineDefinition) {
+        self.templates.insert(definition.name.clone(), definition);
+    }
+
+    /// Retrieve a template by name.
+    pub fn get_template(&self, name: &str) -> SmqlResult<MachineDefinition> {
+        self.templates
+            .get(name)
+            .map(|t| t.value().clone())
+            .ok_or_else(|| SmqlError::not_found("Template", name))
+    }
+
+    /// List all template names.
+    pub fn list_templates(&self) -> Vec<String> {
+        self.templates.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Merge a template into a machine definition.
+    /// Machine-specific definitions override template definitions.
+    pub fn merge_template(
+        template: &MachineDefinition,
+        machine: &mut MachineDefinition,
+    ) {
+        // Inherit states: add template states that aren't already defined
+        let existing_state_names: std::collections::HashSet<String> =
+            machine.states.iter().map(|s| s.name.clone()).collect();
+        for state in &template.states {
+            if !existing_state_names.contains(&state.name) {
+                machine.states.push(state.clone());
+            }
+        }
+
+        // Inherit data fields: add template fields that aren't already defined
+        let existing_field_names: std::collections::HashSet<String> =
+            machine.data.iter().map(|f| f.name.clone()).collect();
+        for field in &template.data {
+            if !existing_field_names.contains(&field.name) {
+                machine.data.push(field.clone());
+            }
+        }
+
+        // Inherit transitions: add all template transitions
+        // (machine-specific transitions with same from->to override by being checked first at runtime)
+        let existing_transitions: std::collections::HashSet<(String, String)> = machine
+            .transitions
+            .iter()
+            .map(|t| (t.from.to_string(), t.to.clone()))
+            .collect();
+        for trans in &template.transitions {
+            let key = (trans.from.to_string(), trans.to.clone());
+            if !existing_transitions.contains(&key) {
+                machine.transitions.push(trans.clone());
+            }
+        }
+
+        // Inherit hooks: append template hooks
+        for hook in &template.hooks {
+            machine.hooks.push(hook.clone());
+        }
+
+        // Inherit roles: add template roles not already defined
+        let existing_role_names: std::collections::HashSet<String> =
+            machine.roles.iter().map(|r| r.name.clone()).collect();
+        for role in &template.roles {
+            if !existing_role_names.contains(&role.name) {
+                machine.roles.push(role.clone());
+            }
+        }
+
+        // Inherit initial_state if machine doesn't specify one
+        if machine.initial_state.is_empty() {
+            machine.initial_state = template.initial_state.clone();
+        }
+
+        // Inherit terminal_states: merge
+        for ts in &template.terminal_states {
+            if !machine.terminal_states.contains(ts) {
+                machine.terminal_states.push(ts.clone());
+            }
+        }
+
+        // Inherit children
+        let existing_child_names: std::collections::HashSet<String> =
+            machine.children.iter().map(|c| c.name.clone()).collect();
+        for child in &template.children {
+            if !existing_child_names.contains(&child.name) {
+                machine.children.push(child.clone());
+            }
+        }
+
+        // Inherit metadata
+        for (k, v) in &template.metadata {
+            machine.metadata.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
+
     /// Register a new machine definition.
+    /// If the machine EXTENDS a template, merge the template first.
     /// Validates the definition before storing it.
     /// Returns any warnings from validation.
     pub fn register(&self, definition: MachineDefinition) -> SmqlResult<Vec<ValidationWarning>> {
+        let mut definition = definition;
+
+        // If the machine extends a template, merge the template first
+        if let Some(ref template_name) = definition.extends {
+            let template = self.get_template(template_name)?;
+            Self::merge_template(&template, &mut definition);
+        }
+
         let warnings = validate_machine(&definition, self)?;
 
         let name = definition.name.clone();

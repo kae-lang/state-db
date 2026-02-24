@@ -44,12 +44,13 @@ impl WebhookClient {
     ///
     /// Retries on 5xx responses and network errors.
     /// Does NOT retry on 4xx (client errors).
+    /// Returns the parsed JSON response body on success (if any).
     pub async fn execute(
         &self,
         url: &str,
         ctx: &HookContext,
         payload: Option<&Value>,
-    ) -> Result<(), WebhookError> {
+    ) -> Result<Option<serde_json::Value>, WebhookError> {
         let body = build_webhook_body(ctx, payload);
         let mut last_error = None;
 
@@ -63,7 +64,9 @@ impl WebhookClient {
                 Ok(response) => {
                     let status = response.status();
                     if status.is_success() {
-                        return Ok(());
+                        let body_text = response.text().await.unwrap_or_default();
+                        let json_body = serde_json::from_str(&body_text).ok();
+                        return Ok(json_body);
                     } else if status.is_client_error() || status.is_redirection() {
                         // 3xx/4xx: don't retry (redirects are treated as client-side config errors)
                         let body_text = response.text().await.unwrap_or_default();
@@ -619,6 +622,8 @@ mod tests {
         let url = format!("http://127.0.0.1:{}/webhook", addr.port());
         let result = client.execute(&url, &ctx, Some(&payload)).await;
         assert!(result.is_ok());
+        // "ok" is not valid JSON, so json_body should be None
+        assert!(result.unwrap().is_none());
 
         handle.await.unwrap();
     }

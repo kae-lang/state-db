@@ -24,13 +24,15 @@ const CF_TRAILS: &str = "trails";
 const CF_PARENT_INDEX: &str = "parent_index";
 const CF_ID_INDEX: &str = "id_index";
 const CF_TIMERS: &str = "timers";
+const CF_IDEMPOTENCY: &str = "idempotency";
+const CF_EVENTS: &str = "events";
 
 const SEP: u8 = 0x00;
 
 /// RocksDB-backed persistent storage backend.
 ///
-/// Uses 7 column families: instances, state_index, machine_index, trails,
-/// parent_index, id_index, and timers. Atomic writes use WriteBatch.
+/// Uses 8 column families: instances, state_index, machine_index, trails,
+/// parent_index, id_index, timers, and idempotency. Atomic writes use WriteBatch.
 ///
 /// **Concurrency note:** Operations like `store_instance`, `update_instance`,
 /// and `transition_instance` use a read-check-write pattern that is not
@@ -57,6 +59,8 @@ impl RocksDBStorage {
             CF_PARENT_INDEX,
             CF_ID_INDEX,
             CF_TIMERS,
+            CF_IDEMPOTENCY,
+            CF_EVENTS,
         ];
 
         let cf_descriptors: Vec<ColumnFamilyDescriptor> = cf_names
@@ -268,6 +272,9 @@ impl RocksDBStorage {
                     if let Some(Value::List(list)) = instance.data.get_mut(field) {
                         list.push(value.clone());
                     }
+                }
+                Mutation::SetTag(key, value) => {
+                    instance.tags.insert(key.clone(), value.clone());
                 }
             }
         }
@@ -824,5 +831,315 @@ impl Storage for RocksDBStorage {
             timers.push(timer);
         }
         Ok(timers)
+    }
+
+    async fn store_idempotency(
+        &self,
+        key: &str,
+        response: &[u8],
+        expires_at: chrono::DateTime<Utc>,
+    ) -> SmqlResult<bool> {
+        let cf = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+        // Check if already exists and not expired
+        if let Some(existing) = self
+            .db
+            .get_cf(&cf, key.as_bytes())
+            .map_err(|e| SmqlError::storage(e.to_string()))?
+        {
+            // Deserialize to check expiry: stored as (response_bytes, expires_at_rfc3339)
+            if let Ok(entry) =
+                serde_json::from_slice::<(Vec<u8>, String)>(&existing)
+            {
+                if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&entry.1) {
+                    if exp > Utc::now() {
+                        return Ok(false); // Key exists and not expired
+                    }
+                }
+            }
+        }
+        let entry = (response.to_vec(), expires_at.to_rfc3339());
+        let serialized = serde_json::to_vec(&entry)
+            .map_err(|e| SmqlError::storage(format!("Serialize idempotency: {}", e)))?;
+        self.db
+            .put_cf(&cf, key.as_bytes(), &serialized)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(true)
+    }
+
+    async fn get_idempotency(&self, key: &str) -> SmqlResult<Option<Vec<u8>>> {
+        let cf = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+        if let Some(raw) = self
+            .db
+            .get_cf(&cf, key.as_bytes())
+            .map_err(|e| SmqlError::storage(e.to_string()))?
+        {
+            let entry: (Vec<u8>, String) = serde_json::from_slice(&raw)
+                .map_err(|e| SmqlError::storage(format!("Deserialize idempotency: {}", e)))?;
+            if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&entry.1) {
+                if exp > Utc::now() {
+                    return Ok(Some(entry.0));
+                }
+            }
+            // Expired — clean up
+            self.db
+                .delete_cf(&cf, key.as_bytes())
+                .map_err(|e| SmqlError::storage(e.to_string()))?;
+        }
+        Ok(None)
+    }
+
+    async fn cleanup_expired_idempotency(&self) -> SmqlResult<usize> {
+        let cf = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+        let now = Utc::now();
+        let mut expired_keys = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| SmqlError::storage(e.to_string()))?;
+            if let Ok(entry) = serde_json::from_slice::<(Vec<u8>, String)>(&value) {
+                if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&entry.1) {
+                    if exp <= now {
+                        expired_keys.push(key.to_vec());
+                    }
+                }
+            }
+        }
+
+        let count = expired_keys.len();
+        for key in &expired_keys {
+            self.db
+                .delete_cf(&cf, key)
+                .map_err(|e| SmqlError::storage(e.to_string()))?;
+        }
+        Ok(count)
+    }
+
+    async fn claim_instance(
+        &self,
+        id: &InstanceId,
+        agent_id: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> SmqlResult<()> {
+        let id_str = id.as_str();
+        let cf_instances = self.db.cf_handle(CF_INSTANCES).unwrap();
+
+        // Find the instance by scanning the machine index
+        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let machine_key = self
+            .db
+            .get_cf(&cf_id, id_str.as_bytes())
+            .map_err(|e| SmqlError::storage(e.to_string()))?
+            .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+        let machine =
+            String::from_utf8(machine_key).map_err(|e| SmqlError::storage(e.to_string()))?;
+
+        let key = Self::instance_key(&machine, &id_str);
+        let raw = self
+            .db
+            .get_cf(&cf_instances, &key)
+            .map_err(|e| SmqlError::storage(e.to_string()))?
+            .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+        let mut inst: Instance =
+            serde_json::from_slice(&raw).map_err(|e| SmqlError::storage(e.to_string()))?;
+
+        let now = Utc::now();
+        if let Some(ref holder) = inst.claimed_by {
+            if holder != agent_id {
+                if let Some(exp) = inst.claim_expires_at {
+                    if exp > now {
+                        return Err(SmqlError::conflict(format!(
+                            "Instance already claimed by '{}'",
+                            holder
+                        )));
+                    }
+                }
+            }
+        }
+
+        inst.claimed_by = Some(agent_id.to_string());
+        inst.claim_expires_at = Some(expires_at);
+        inst.updated_at = now;
+
+        let serialized =
+            serde_json::to_vec(&inst).map_err(|e| SmqlError::storage(e.to_string()))?;
+        self.db
+            .put_cf(&cf_instances, &key, &serialized)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn release_claim(&self, id: &InstanceId, agent_id: &str) -> SmqlResult<()> {
+        let id_str = id.as_str();
+        let cf_instances = self.db.cf_handle(CF_INSTANCES).unwrap();
+
+        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let machine_key = self
+            .db
+            .get_cf(&cf_id, id_str.as_bytes())
+            .map_err(|e| SmqlError::storage(e.to_string()))?
+            .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+        let machine =
+            String::from_utf8(machine_key).map_err(|e| SmqlError::storage(e.to_string()))?;
+
+        let key = Self::instance_key(&machine, &id_str);
+        let raw = self
+            .db
+            .get_cf(&cf_instances, &key)
+            .map_err(|e| SmqlError::storage(e.to_string()))?
+            .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+        let mut inst: Instance =
+            serde_json::from_slice(&raw).map_err(|e| SmqlError::storage(e.to_string()))?;
+
+        if let Some(ref holder) = inst.claimed_by {
+            if holder != agent_id {
+                return Err(SmqlError::conflict(format!(
+                    "Instance claimed by '{}', not '{}'",
+                    holder, agent_id
+                )));
+            }
+        }
+
+        inst.claimed_by = None;
+        inst.claim_expires_at = None;
+        inst.updated_at = Utc::now();
+
+        let serialized =
+            serde_json::to_vec(&inst).map_err(|e| SmqlError::storage(e.to_string()))?;
+        self.db
+            .put_cf(&cf_instances, &key, &serialized)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn find_and_claim(
+        &self,
+        machine: &str,
+        filter: &Filter,
+        agent_id: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> SmqlResult<Option<Instance>> {
+        let now = Utc::now();
+        let candidates = self.find_instances(machine, filter).await?;
+
+        let cf_instances = self.db.cf_handle(CF_INSTANCES).unwrap();
+        for candidate in candidates {
+            let id_str = candidate.id.as_str();
+            let key = Self::instance_key(machine, &id_str);
+            let raw = self
+                .db
+                .get_cf(&cf_instances, &key)
+                .map_err(|e| SmqlError::storage(e.to_string()))?
+                .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+            let mut inst: Instance =
+                serde_json::from_slice(&raw).map_err(|e| SmqlError::storage(e.to_string()))?;
+
+            // Skip if claimed by another agent and not expired
+            if let Some(ref holder) = inst.claimed_by {
+                if holder != agent_id {
+                    if let Some(exp) = inst.claim_expires_at {
+                        if exp > now {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            inst.claimed_by = Some(agent_id.to_string());
+            inst.claim_expires_at = Some(expires_at);
+            inst.updated_at = now;
+
+            let serialized =
+                serde_json::to_vec(&inst).map_err(|e| SmqlError::storage(e.to_string()))?;
+            self.db
+                .put_cf(&cf_instances, &key, &serialized)
+                .map_err(|e| SmqlError::storage(e.to_string()))?;
+            return Ok(Some(inst));
+        }
+
+        Ok(None)
+    }
+
+    async fn store_event(&self, event: &crate::instance::StoredEvent) -> SmqlResult<()> {
+        let cf = self.db.cf_handle(CF_EVENTS).unwrap();
+        let serialized =
+            serde_json::to_vec(event).map_err(|e| SmqlError::storage(e.to_string()))?;
+        // Key = ULID string (preserves time-ordering in byte sort)
+        self.db
+            .put_cf(&cf, event.id.as_bytes(), &serialized)
+            .map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_events_after(
+        &self,
+        after_id: Option<&str>,
+        machine: Option<&str>,
+        event_name: Option<&str>,
+        limit: usize,
+    ) -> SmqlResult<Vec<crate::instance::StoredEvent>> {
+        let cf = self.db.cf_handle(CF_EVENTS).unwrap();
+        let start_key_buf = after_id.map(|after| {
+            let mut k = after.as_bytes().to_vec();
+            k.push(0x01);
+            k
+        });
+        let mode = match &start_key_buf {
+            Some(key) => IteratorMode::From(key, rocksdb::Direction::Forward),
+            None => IteratorMode::Start,
+        };
+
+        let iter = self.db.iterator_cf(&cf, mode);
+        let mut results = Vec::new();
+
+        for item in iter {
+            if results.len() >= limit {
+                break;
+            }
+            let (_key, value) = item.map_err(|e| SmqlError::storage(e.to_string()))?;
+            let event: crate::instance::StoredEvent = serde_json::from_slice(&value)
+                .map_err(|e| SmqlError::storage(format!("Deserialize event: {}", e)))?;
+
+            if let Some(m) = machine {
+                if event.machine != m {
+                    continue;
+                }
+            }
+            if let Some(name) = event_name {
+                if event.event_name != name {
+                    continue;
+                }
+            }
+            results.push(event);
+        }
+
+        Ok(results)
+    }
+
+    async fn cleanup_events_before(
+        &self,
+        before: chrono::DateTime<Utc>,
+    ) -> SmqlResult<usize> {
+        let cf = self.db.cf_handle(CF_EVENTS).unwrap();
+        let mut expired_keys = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
+        for item in iter {
+            let (key, value) = item.map_err(|e| SmqlError::storage(e.to_string()))?;
+            if let Ok(event) = serde_json::from_slice::<crate::instance::StoredEvent>(&value) {
+                if event.timestamp < before {
+                    expired_keys.push(key.to_vec());
+                } else {
+                    break; // Events are time-ordered, stop once we pass the cutoff
+                }
+            }
+        }
+
+        let count = expired_keys.len();
+        for key in &expired_keys {
+            self.db
+                .delete_cf(&cf, key)
+                .map_err(|e| SmqlError::storage(e.to_string()))?;
+        }
+        Ok(count)
     }
 }

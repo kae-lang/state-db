@@ -10,7 +10,7 @@ use smql_ast::{SmqlError, SmqlResult};
 /// Parse GET Machine instance_id [AS ACTOR role] | GET VIEW name | GET PROJECTION name.
 pub fn parse_get(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     parser.expect_keyword("GET")?;
-    // Peek ahead: GET VIEW name | GET PROJECTION name | GET Machine id
+    // Peek ahead: GET VIEW name | GET PROJECTION name | GET EVENTS ... | GET Machine id
     if parser.try_keyword("VIEW") {
         let name = parser.expect_ident()?;
         return Ok(Query::GetView(GetViewQuery { name }));
@@ -18,6 +18,9 @@ pub fn parse_get(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     if parser.try_keyword("PROJECTION") {
         let name = parser.expect_ident()?;
         return Ok(Query::GetProjection(GetProjectionQuery { name }));
+    }
+    if parser.try_keyword("EVENTS") {
+        return parse_get_events(parser);
     }
     let machine = parser.expect_ident()?;
     let instance_id = parser.expect_ident_or_string()?;
@@ -34,10 +37,24 @@ pub fn parse_get(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     }))
 }
 
-/// Parse FIND Machine [WHERE ...] [SORT ...] [LIMIT n] [OFFSET n].
+/// Parse FIND Machine [SELECT field1, field2] [WHERE ...] [SORT ...] [LIMIT n] [OFFSET n].
 pub fn parse_find(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     parser.expect_keyword("FIND")?;
     let machine = parser.expect_ident()?;
+
+    // Optional field projection: SELECT field1, field2, ...
+    let select = if parser.try_keyword("SELECT") {
+        let mut fields = Vec::new();
+        loop {
+            fields.push(parser.expect_ident()?);
+            if !parser.try_punct(",") {
+                break;
+            }
+        }
+        Some(fields)
+    } else {
+        None
+    };
 
     let filter = if parser.try_keyword("WHERE") {
         Some(expr::parse_expression(parser)?)
@@ -90,6 +107,7 @@ pub fn parse_find(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
 
     Ok(Query::Find(FindQuery {
         machine,
+        select,
         filter,
         sort,
         limit,
@@ -205,7 +223,7 @@ pub fn parse_trail(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
             since: None,
             until: None,
         };
-        // Parse trail-specific filter clauses: ACTOR, FROM, TO
+        // Parse trail-specific filter clauses: ACTOR, FROM, TO, SINCE, UNTIL
         loop {
             if parser.try_keyword("ACTOR") {
                 trail_filter.actor = Some(parser.expect_ident_or_string()?);
@@ -213,6 +231,10 @@ pub fn parse_trail(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
                 trail_filter.from_state = Some(parser.expect_ident_or_string()?);
             } else if parser.try_keyword("TO") {
                 trail_filter.to_state = Some(parser.expect_ident_or_string()?);
+            } else if parser.try_keyword("SINCE") {
+                trail_filter.since = Some(expr::parse_expression(parser)?);
+            } else if parser.try_keyword("UNTIL") {
+                trail_filter.until = Some(expr::parse_expression(parser)?);
             } else {
                 break;
             }
@@ -332,6 +354,7 @@ pub fn parse_define_view(parser: &mut Parser) -> SmqlResult<ViewDefinition> {
         name,
         query: FindQuery {
             machine,
+            select: None,
             filter,
             sort,
             limit,
@@ -413,6 +436,39 @@ pub fn parse_define_projection(parser: &mut Parser) -> SmqlResult<ProjectionDefi
     })
 }
 
+/// Parse EXPLAIN TRANSITIONS FOR Machine [instance_id] [AS actor].
+pub fn parse_explain_transitions(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
+    parser.expect_keyword("EXPLAIN")?;
+    parser.expect_keyword("TRANSITIONS")?;
+    parser.expect_keyword("FOR")?;
+    let machine = parser.expect_ident()?;
+
+    // Optional instance_id — present if next token is a string literal or non-keyword identifier
+    let instance_id = if !parser.is_eof() && !parser.check_keyword("AS") {
+        match parser.peek_kind() {
+            Some(crate::lexer::TokenKind::StringLiteral(_))
+            | Some(crate::lexer::TokenKind::Identifier(_)) => {
+                Some(parser.expect_ident_or_string()?)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let as_actor = if parser.try_keyword("AS") {
+        Some(parser.expect_ident_or_string()?)
+    } else {
+        None
+    };
+
+    Ok(Query::ExplainTransitions(ExplainTransitionsQuery {
+        machine,
+        instance_id,
+        as_actor,
+    }))
+}
+
 /// Parse COMPARE PATHS Machine SEGMENT BY field [WHERE ...].
 pub fn parse_compare_paths(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
     parser.expect_keyword("COMPARE")?;
@@ -432,5 +488,39 @@ pub fn parse_compare_paths(parser: &mut Parser) -> SmqlResult<smql_ast::query::Q
         machine,
         segment_by,
         filter,
+    }))
+}
+
+/// Parse GET EVENTS [Machine] [AFTER "event_id"] [LIMIT n].
+fn parse_get_events(parser: &mut Parser) -> SmqlResult<smql_ast::query::Query> {
+    // Optional machine name (if next token is an identifier, not a keyword like AFTER/LIMIT)
+    let machine = if matches!(parser.peek_kind(), Some(TokenKind::Identifier(_)))
+        && !parser.check_keyword("AFTER")
+        && !parser.check_keyword("LIMIT")
+    {
+        Some(parser.expect_ident()?)
+    } else {
+        None
+    };
+
+    let event_name = None; // Could extend later: GET EVENTS Machine "event_name"
+
+    let after_id = if parser.try_keyword("AFTER") {
+        Some(common::parse_string_literal(parser)?)
+    } else {
+        None
+    };
+
+    let limit = if parser.try_keyword("LIMIT") {
+        Some(common::parse_int_literal(parser)? as usize)
+    } else {
+        None
+    };
+
+    Ok(Query::GetEvents(GetEventsQuery {
+        machine,
+        event_name,
+        after_id,
+        limit,
     }))
 }

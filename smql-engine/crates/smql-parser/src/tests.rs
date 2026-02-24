@@ -827,6 +827,53 @@ mod query_tests {
             _ => panic!("Expected Find"),
         }
     }
+
+    // --- EXPLAIN TRANSITIONS ---
+
+    #[test]
+    fn parse_explain_transitions_schema() {
+        let input = "EXPLAIN TRANSITIONS FOR Machine";
+        let stmts = parse(input).unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Statement::Query(Query::ExplainTransitions(q)) => {
+                assert_eq!(q.machine, "Machine");
+                assert_eq!(q.instance_id, None);
+                assert_eq!(q.as_actor, None);
+            }
+            _ => panic!("Expected ExplainTransitions query"),
+        }
+    }
+
+    #[test]
+    fn parse_explain_transitions_instance() {
+        let input = r#"EXPLAIN TRANSITIONS FOR Machine "01ABC123""#;
+        let stmts = parse(input).unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Statement::Query(Query::ExplainTransitions(q)) => {
+                assert_eq!(q.machine, "Machine");
+                assert_eq!(q.instance_id, Some("01ABC123".to_string()));
+                assert_eq!(q.as_actor, None);
+            }
+            _ => panic!("Expected ExplainTransitions query"),
+        }
+    }
+
+    #[test]
+    fn parse_explain_transitions_with_actor() {
+        let input = r#"EXPLAIN TRANSITIONS FOR Machine "01ABC123" AS "admin""#;
+        let stmts = parse(input).unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Statement::Query(Query::ExplainTransitions(q)) => {
+                assert_eq!(q.machine, "Machine");
+                assert_eq!(q.instance_id, Some("01ABC123".to_string()));
+                assert_eq!(q.as_actor, Some("admin".to_string()));
+            }
+            _ => panic!("Expected ExplainTransitions query"),
+        }
+    }
 }
 
 // ===========================================================================
@@ -2363,7 +2410,7 @@ DEFINE MACHINE WithWebhook (
 "#;
         let m = parse_machine(input).unwrap();
         match &m.transitions[0].actions[0] {
-            smql_ast::machine::Action::Webhook { url, payload } => {
+            smql_ast::machine::Action::Webhook { url, payload, .. } => {
                 assert_eq!(url, "https://example.com/hook");
                 assert!(payload.is_some());
             }

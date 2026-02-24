@@ -271,6 +271,12 @@ impl<'a> Parser<'a> {
                         smql_ast::command::Command::DefineSaga(saga),
                     ));
                 }
+                Some("TEMPLATE") => {
+                    let template = machine::parse_define_template(self)?;
+                    return Ok(Statement::Command(
+                        smql_ast::command::Command::DefineTemplate(template),
+                    ));
+                }
                 _ => {}
             }
             let machine = machine::parse_define_machine(self)?;
@@ -289,6 +295,25 @@ impl<'a> Parser<'a> {
         } else if self.check_keyword("ALTER") {
             let cmd = commands::parse_alter_machine(self)?;
             Ok(Statement::Command(cmd))
+        } else if self.check_keyword("CLAIM") {
+            let cmd = commands::parse_claim(self)?;
+            Ok(Statement::Command(cmd))
+        } else if self.check_keyword("RELEASE") {
+            let cmd = commands::parse_release(self)?;
+            Ok(Statement::Command(cmd))
+        } else if self.check_keyword("WATCH") {
+            let cmd = commands::parse_watch(self)?;
+            Ok(Statement::Command(cmd))
+        } else if self.check_keyword("BEGIN") {
+            self.expect_keyword("BEGIN")?;
+            let mut stmts = Vec::new();
+            while !self.check_keyword("COMMIT") && !self.is_eof() {
+                stmts.push(self.parse_statement()?);
+                // Allow optional semicolons between statements
+                self.try_punct(";");
+            }
+            self.expect_keyword("COMMIT")?;
+            Ok(Statement::Transaction(stmts))
         } else if self.check_keyword("GET") {
             let q = queries::parse_get(self)?;
             Ok(Statement::Query(q))
@@ -309,6 +334,9 @@ impl<'a> Parser<'a> {
             Ok(Statement::Query(q))
         } else if self.check_keyword("COMPARE") {
             let q = queries::parse_compare_paths(self)?;
+            Ok(Statement::Query(q))
+        } else if self.check_keyword("EXPLAIN") {
+            let q = queries::parse_explain_transitions(self)?;
             Ok(Statement::Query(q))
         } else {
             let tok = self.peek();

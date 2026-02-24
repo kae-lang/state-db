@@ -59,6 +59,8 @@ pub enum ResolvedAction {
     Webhook {
         url: String,
         payload: Option<Value>,
+        response_field: Option<String>,
+        on_failure_state: Option<String>,
     },
     SpawnChild {
         machine: String,
@@ -87,6 +89,14 @@ pub trait EngineCallback: Send + Sync {
         child_instance_id: &str,
         target_state: &str,
     ) -> Result<(), HookError>;
+
+    /// Update a field on an instance (used by webhook response handling).
+    async fn update_instance_field(
+        &self,
+        instance_id: &str,
+        field: &str,
+        value: Value,
+    ) -> Result<(), HookError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,27 +117,49 @@ pub struct Event {
 
 pub struct EventBus {
     sender: broadcast::Sender<Event>,
+    capacity: usize,
+    dropped: std::sync::atomic::AtomicU64,
 }
 
 impl EventBus {
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        Self { sender }
+        Self {
+            sender,
+            capacity,
+            dropped: std::sync::atomic::AtomicU64::new(0),
+        }
     }
 
     pub fn emit(&self, event: Event) {
-        // Ignore error if no receivers
-        let _ = self.sender.send(event);
+        match self.sender.send(event) {
+            Ok(_) => {}
+            Err(_) => {
+                // No active receivers — count as dropped
+                self.dropped
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.sender.subscribe()
     }
+
+    /// Returns the configured capacity.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns the total number of events dropped (no receivers).
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl Default for EventBus {
     fn default() -> Self {
-        Self::new(256)
+        Self::new(1024)
     }
 }
 
@@ -263,16 +295,44 @@ impl HookExecutor {
                 Ok(())
             }
 
-            ResolvedAction::Webhook { url, payload } => {
+            ResolvedAction::Webhook {
+                url,
+                payload,
+                response_field,
+                on_failure_state,
+            } => {
                 let client = self.webhook_client.read().unwrap().clone();
                 if let Some(client) = client {
                     match client.execute(url, ctx, payload.as_ref()).await {
-                        Ok(()) => {
+                        Ok(response_body) => {
                             tracing::info!(
                                 url = %url,
                                 instance_id = %ctx.instance_id,
                                 "WEBHOOK delivered"
                             );
+                            // Store response in instance field if requested
+                            if let Some(field) = response_field {
+                                if let Some(json_body) = response_body {
+                                    let cb = self.callback.read().unwrap().clone();
+                                    if let Some(cb) = cb {
+                                        let value = json_to_value(&json_body);
+                                        if let Err(e) = cb
+                                            .update_instance_field(
+                                                &ctx.instance_id,
+                                                field,
+                                                value,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                field = %field,
+                                                error = %e,
+                                                "Failed to store webhook response"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -281,6 +341,15 @@ impl HookExecutor {
                                 error = %e,
                                 "WEBHOOK failed"
                             );
+                            // If on_failure_state is set, we don't propagate the error —
+                            // the caller (engine) handles the state transition separately.
+                            // We return a special error that includes the target state.
+                            if let Some(_failure_state) = on_failure_state {
+                                return Err(HookError::WebhookFailed {
+                                    url: url.clone(),
+                                    message: e.to_string(),
+                                });
+                            }
                             return Err(HookError::WebhookFailed {
                                 url: url.clone(),
                                 message: e.to_string(),
@@ -350,6 +419,32 @@ fn trigger_matches(hook_trigger: &HookTrigger, fired: &HookTrigger) -> bool {
             hook_state == fired_state
         }
         _ => false,
+    }
+}
+
+/// Convert a serde_json::Value to an SMQL Value.
+pub fn json_to_value(json: &serde_json::Value) -> Value {
+    match json {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else {
+                Value::Float(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(s) => Value::Text(s.clone()),
+        serde_json::Value::Array(arr) => {
+            Value::List(arr.iter().map(json_to_value).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            let map: std::collections::BTreeMap<String, Value> = obj
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .collect();
+            Value::Map(map)
+        }
     }
 }
 
@@ -507,6 +602,8 @@ mod tests {
         let actions = vec![ResolvedAction::Webhook {
             url: "https://example.com/hook".to_string(),
             payload: None,
+            response_field: None,
+            on_failure_state: None,
         }];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_ok());
@@ -682,6 +779,15 @@ mod tests {
         ) -> Result<(), HookError> {
             Ok(())
         }
+
+        async fn update_instance_field(
+            &self,
+            _instance_id: &str,
+            _field: &str,
+            _value: Value,
+        ) -> Result<(), HookError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -759,6 +865,17 @@ mod tests {
         ) -> Result<(), HookError> {
             Err(HookError::ActionFailed {
                 message: "signal failed".to_string(),
+            })
+        }
+
+        async fn update_instance_field(
+            &self,
+            _instance_id: &str,
+            _field: &str,
+            _value: Value,
+        ) -> Result<(), HookError> {
+            Err(HookError::ActionFailed {
+                message: "update failed".to_string(),
             })
         }
     }
@@ -861,6 +978,15 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((child_instance_id.to_string(), target_state.to_string()));
+            Ok(())
+        }
+
+        async fn update_instance_field(
+            &self,
+            _instance_id: &str,
+            _field: &str,
+            _value: Value,
+        ) -> Result<(), HookError> {
             Ok(())
         }
     }
@@ -1066,6 +1192,8 @@ mod tests {
             ResolvedAction::Webhook {
                 url: "https://example.com".to_string(),
                 payload: None,
+                response_field: None,
+                on_failure_state: None,
             },
         ];
 
@@ -1220,6 +1348,8 @@ mod tests {
         let actions = vec![ResolvedAction::Webhook {
             url: "http://127.0.0.1:1/nonexistent".to_string(),
             payload: None,
+            response_field: None,
+            on_failure_state: None,
         }];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_err()); // Should be a WebhookFailed error, not dry-run OK
@@ -1234,6 +1364,8 @@ mod tests {
             payload: Some(Value::Map(std::collections::BTreeMap::from([
                 ("key".to_string(), Value::Text("val".to_string())),
             ]))),
+            response_field: None,
+            on_failure_state: None,
         }];
         // No webhook client set → dry-run mode
         let result = exec.execute_actions(&actions, &ctx).await;
@@ -1512,6 +1644,8 @@ mod tests {
         let actions = vec![ResolvedAction::Webhook {
             url: "http://127.0.0.1:1/unreachable".to_string(),
             payload: Some(Value::Text("test_payload".to_string())),
+            response_field: None,
+            on_failure_state: None,
         }];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_err());
@@ -1546,6 +1680,8 @@ mod tests {
         let resolved = vec![vec![ResolvedAction::Webhook {
             url: "http://127.0.0.1:1/fail".to_string(),
             payload: None,
+            response_field: None,
+            on_failure_state: None,
         }]];
 
         // AFTER hook — error is swallowed
@@ -1580,6 +1716,8 @@ mod tests {
         let resolved = vec![vec![ResolvedAction::Webhook {
             url: "http://127.0.0.1:1/fail".to_string(),
             payload: None,
+            response_field: None,
+            on_failure_state: None,
         }]];
 
         // BEFORE hook — error should propagate
@@ -1618,6 +1756,8 @@ mod tests {
             ResolvedAction::Webhook {
                 url: "https://example.com/dry".to_string(),
                 payload: None,
+                response_field: None,
+                on_failure_state: None,
             },
             ResolvedAction::SpawnChild {
                 machine: "ChildTask".to_string(),
@@ -1698,6 +1838,8 @@ mod tests {
         let actions = vec![ResolvedAction::Webhook {
             url,
             payload: Some(Value::Text("hello".to_string())),
+            response_field: None,
+            on_failure_state: None,
         }];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_ok(), "Webhook to 200 OK server should succeed");
@@ -1804,6 +1946,8 @@ mod tests {
         let actions = vec![ResolvedAction::Webhook {
             url: "https://example.com/hook".to_string(),
             payload: Some(Value::List(vec![Value::Int(1), Value::Int(2)])),
+            response_field: None,
+            on_failure_state: None,
         }];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_ok());
@@ -1817,8 +1961,265 @@ mod tests {
         let actions = vec![ResolvedAction::Webhook {
             url: "https://example.com/no_payload".to_string(),
             payload: None,
+            response_field: None,
+            on_failure_state: None,
         }];
         let result = exec.execute_actions(&actions, &ctx).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn eventbus_configurable_capacity() {
+        let bus = EventBus::new(2048);
+        assert_eq!(bus.capacity(), 2048);
+    }
+
+    #[test]
+    fn eventbus_default_capacity_is_1024() {
+        let bus = EventBus::default();
+        assert_eq!(bus.capacity(), 1024);
+    }
+
+    #[test]
+    fn eventbus_tracks_dropped_events() {
+        // No subscribers → emits should count as dropped
+        let bus = EventBus::new(16);
+        assert_eq!(bus.dropped_count(), 0);
+        bus.emit(Event {
+            name: "test".to_string(),
+            instance_id: "i1".to_string(),
+            machine: "M".to_string(),
+            payload: None,
+        });
+        assert_eq!(bus.dropped_count(), 1);
+
+        bus.emit(Event {
+            name: "test2".to_string(),
+            instance_id: "i2".to_string(),
+            machine: "M".to_string(),
+            payload: None,
+        });
+        assert_eq!(bus.dropped_count(), 2);
+    }
+
+    // ---------------------------------------------------------------
+    // E14: Webhook response handling tests
+    // ---------------------------------------------------------------
+
+    /// A callback that records update_instance_field calls.
+    struct FieldRecordingCallback {
+        updates: std::sync::Mutex<Vec<(String, String, Value)>>,
+    }
+
+    impl FieldRecordingCallback {
+        fn new() -> Self {
+            Self {
+                updates: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl EngineCallback for FieldRecordingCallback {
+        async fn spawn_child(
+            &self,
+            _parent_instance_id: &str,
+            _machine: &str,
+            _data: Vec<(String, Value)>,
+        ) -> Result<String, HookError> {
+            Ok("CHILD".to_string())
+        }
+
+        async fn signal_parent(
+            &self,
+            _child_instance_id: &str,
+            _target_state: &str,
+        ) -> Result<(), HookError> {
+            Ok(())
+        }
+
+        async fn update_instance_field(
+            &self,
+            instance_id: &str,
+            field: &str,
+            value: Value,
+        ) -> Result<(), HookError> {
+            self.updates.lock().unwrap().push((
+                instance_id.to_string(),
+                field.to_string(),
+                value,
+            ));
+            Ok(())
+        }
+    }
+
+    /// Webhook with STORE — response body stored via callback.
+    #[tokio::test]
+    async fn webhook_response_stored_in_field() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        // Start a local server that returns JSON
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+            let json_body = r#"{"status":"approved","score":95}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                json_body.len(),
+                json_body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let bus = Arc::new(EventBus::new(16));
+        let cb = Arc::new(FieldRecordingCallback::new());
+        let exec = HookExecutor::with_callback(Arc::clone(&bus), Arc::clone(&cb) as Arc<dyn EngineCallback>);
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(5),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let url = format!("http://127.0.0.1:{}/webhook", addr.port());
+        let actions = vec![ResolvedAction::Webhook {
+            url,
+            payload: None,
+            response_field: Some("api_result".to_string()),
+            on_failure_state: None,
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+
+        // Verify the callback was called with the right data
+        let updates = cb.updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, "INST001"); // instance_id from ctx
+        assert_eq!(updates[0].1, "api_result"); // field name from response_field
+
+        // The stored value should be a Map with status and score
+        match &updates[0].2 {
+            Value::Map(map) => {
+                assert_eq!(map.get("status"), Some(&Value::Text("approved".to_string())));
+                assert_eq!(map.get("score"), Some(&Value::Int(95)));
+            }
+            other => panic!("Expected Map, got {:?}", other),
+        }
+
+        handle.await.unwrap();
+    }
+
+    /// Webhook without STORE — no callback update even on success with JSON body.
+    #[tokio::test]
+    async fn webhook_without_store_does_not_update_field() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await;
+            let json_body = r#"{"result":"ok"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                json_body.len(),
+                json_body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let bus = Arc::new(EventBus::new(16));
+        let cb = Arc::new(FieldRecordingCallback::new());
+        let exec = HookExecutor::with_callback(Arc::clone(&bus), Arc::clone(&cb) as Arc<dyn EngineCallback>);
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(5),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let url = format!("http://127.0.0.1:{}/webhook", addr.port());
+        let actions = vec![ResolvedAction::Webhook {
+            url,
+            payload: None,
+            response_field: None, // No STORE
+            on_failure_state: None,
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_ok());
+
+        // No field update should have happened
+        let updates = cb.updates.lock().unwrap();
+        assert_eq!(updates.len(), 0);
+
+        handle.await.unwrap();
+    }
+
+    /// Webhook failure with on_failure_state returns WebhookFailed error.
+    #[tokio::test]
+    async fn webhook_failure_with_on_failure_state() {
+        let bus = Arc::new(EventBus::new(16));
+        let exec = HookExecutor::new(Arc::clone(&bus));
+
+        let wh_config = webhook::WebhookConfig {
+            timeout: std::time::Duration::from_secs(1),
+            max_retries: 0,
+            retry_delay: std::time::Duration::from_millis(10),
+        };
+        let wh_client = Arc::new(webhook::WebhookClient::new(wh_config));
+        exec.set_webhook_client(wh_client);
+
+        let ctx = test_ctx();
+        let actions = vec![ResolvedAction::Webhook {
+            url: "http://127.0.0.1:1/fail".to_string(),
+            payload: None,
+            response_field: None,
+            on_failure_state: Some("error_state".to_string()),
+        }];
+        let result = exec.execute_actions(&actions, &ctx).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HookError::WebhookFailed { url, message } => {
+                assert!(url.contains("/fail"));
+                assert!(!message.is_empty());
+            }
+            other => panic!("Expected WebhookFailed, got {:?}", other),
+        }
+    }
+
+    /// json_to_value round-trip: convert SMQL Value to JSON and back.
+    #[test]
+    fn json_to_value_round_trip() {
+        use webhook::value_to_json;
+
+        let original = Value::Map(std::collections::BTreeMap::from([
+            ("name".to_string(), Value::Text("test".to_string())),
+            ("count".to_string(), Value::Int(42)),
+            ("active".to_string(), Value::Bool(true)),
+            ("tags".to_string(), Value::List(vec![
+                Value::Text("a".to_string()),
+                Value::Text("b".to_string()),
+            ])),
+        ]));
+
+        let json = value_to_json(&original);
+        let back = json_to_value(&json);
+        assert_eq!(original, back);
     }
 }

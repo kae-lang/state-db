@@ -67,6 +67,9 @@ async fn spawn_ticket(engine: &Engine) -> String {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let r = engine.spawn(&cmd).await.expect("spawn ticket");
     assert_eq!(r.instance.state, "open");
@@ -199,6 +202,7 @@ async fn level2_find_all() {
 
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: None,
         sort: vec![],
         limit: None,
@@ -237,6 +241,7 @@ async fn level2_find_by_state() {
     // Find open tickets (should be 2)
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("open".into()))),
         sort: vec![],
         limit: None,
@@ -258,6 +263,7 @@ async fn level2_find_by_state() {
     // Find triaged tickets (should be 1)
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("triaged".into()))),
         sort: vec![],
         limit: None,
@@ -285,6 +291,7 @@ async fn level2_find_with_limit() {
 
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: None,
         sort: vec![],
         limit: Some(3),
@@ -311,6 +318,7 @@ async fn level2_find_with_limit_offset() {
 
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: None,
         sort: vec![],
         limit: Some(2),
@@ -877,6 +885,9 @@ fn spawn_order_cmd(customer: &str, total: i64) -> smql_ast::command::SpawnComman
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -902,6 +913,9 @@ fn spawn_item_cmd(
         parent_id: Some(order_id.to_string()),
         parent_machine: Some("Order".to_string()),
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -1005,6 +1019,7 @@ async fn level7_find_children() {
     // Find all pending line items
     let q = Query::Find(FindQuery {
         machine: "LineItem".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("pending".into()))),
         sort: vec![],
         limit: None,
@@ -1022,6 +1037,7 @@ async fn level7_find_children() {
     // Find confirmed items
     let q = Query::Find(FindQuery {
         machine: "LineItem".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("confirmed".into()))),
         sort: vec![],
         limit: None,
@@ -1899,6 +1915,9 @@ fn spawn_metric_cmd(sensor: &str, reading: f64, category: Option<&str>) -> smql_
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -2116,6 +2135,7 @@ async fn level11_find_sort_asc() {
 
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: None,
         sort: vec![SortClause {
             field: "total".into(),
@@ -2154,6 +2174,7 @@ async fn level11_find_sort_desc() {
 
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: None,
         sort: vec![SortClause {
             field: "total".into(),
@@ -2192,6 +2213,7 @@ async fn level11_find_sort_by_text() {
 
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: None,
         sort: vec![SortClause {
             field: "customer".into(),
@@ -2244,6 +2266,7 @@ async fn level11_find_filter_limit_post_filter() {
     // FIND draft orders with LIMIT 2 — all 5 match the filter, truncated to 2
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("draft".into()))),
         sort: vec![],
         limit: Some(2),
@@ -2267,6 +2290,7 @@ async fn level11_find_filter_limit_post_filter() {
     // This exercises the offset branch at lines 158-165.
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("draft".into()))),
         sort: vec![],
         limit: Some(10),
@@ -2304,6 +2328,7 @@ async fn level11_find_filter_offset_beyond() {
     // FIND with filter (all are draft) but offset=100 — way beyond count
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("draft".into()))),
         sort: vec![],
         limit: Some(10),
@@ -3112,6 +3137,7 @@ async fn level12_find_with_filter_and_offset() {
     // Storage returns 9 (skipping 1), all pass filter, then post-filter skips 1 more = 8, limit 3 = 3
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("open".into()))),
         sort: vec![],
         limit: Some(3),
@@ -3151,6 +3177,7 @@ async fn level12_find_with_filter_and_offset_beyond() {
     // Offset 10 exceeds all 2 matching instances
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("open".into()))),
         sort: vec![],
         limit: Some(5),
@@ -3338,6 +3365,9 @@ DEFINE MACHINE DtSort (
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         engine.spawn(&cmd).await.unwrap();
     }
@@ -3345,6 +3375,7 @@ DEFINE MACHINE DtSort (
     // SORT BY created ASC
     let q = Query::Find(FindQuery {
         machine: "DtSort".into(),
+        select: None,
         filter: None,
         sort: vec![SortClause {
             field: "created".into(),
@@ -3419,6 +3450,9 @@ DEFINE MACHINE BoolSort (
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         };
         engine.spawn(&cmd).await.unwrap();
     }
@@ -3426,6 +3460,7 @@ DEFINE MACHINE BoolSort (
     // SORT BY active ASC (false < true)
     let q = Query::Find(FindQuery {
         machine: "BoolSort".into(),
+        select: None,
         filter: None,
         sort: vec![SortClause {
             field: "active".into(),
@@ -3522,6 +3557,7 @@ async fn level12_find_sort_by_mixed_types() {
     // SORT BY val ASC — mixed types (Int vs List vs Map) hit the fallback `_ => Ordering::Equal`
     let q = Query::Find(FindQuery {
         machine: "MixedSort".into(),
+        select: None,
         filter: None,
         sort: vec![SortClause {
             field: "val".into(),
@@ -3638,6 +3674,7 @@ async fn level12_find_where_data_field_filter() {
     // Filter: total > 999
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::BinaryOp {
             left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec![
                 "total".to_string(),

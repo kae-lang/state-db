@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::error::{GuardFailure, RecoveryOption};
 use crate::expression::Expression;
 use crate::types::{AggregateFunction, SortClause};
 
@@ -25,6 +26,10 @@ pub enum Query {
     GetView(GetViewQuery),
     /// GET PROJECTION name — execute a named projection
     GetProjection(GetProjectionQuery),
+    /// EXPLAIN TRANSITIONS FOR Machine [instance_id] [AS actor]
+    ExplainTransitions(ExplainTransitionsQuery),
+    /// GET EVENTS [Machine] [AFTER "event_id"] [LIMIT n]
+    GetEvents(GetEventsQuery),
 }
 
 impl fmt::Display for Query {
@@ -39,6 +44,26 @@ impl fmt::Display for Query {
             Query::ComparePaths(q) => write!(f, "COMPARE PATHS {}", q.machine),
             Query::GetView(q) => write!(f, "GET VIEW {}", q.name),
             Query::GetProjection(q) => write!(f, "GET PROJECTION {}", q.name),
+            Query::ExplainTransitions(q) => {
+                write!(f, "EXPLAIN TRANSITIONS FOR {}", q.machine)?;
+                if let Some(id) = &q.instance_id {
+                    write!(f, " {}", id)?;
+                }
+                Ok(())
+            }
+            Query::GetEvents(q) => {
+                write!(f, "GET EVENTS")?;
+                if let Some(m) = &q.machine {
+                    write!(f, " {}", m)?;
+                }
+                if let Some(after) = &q.after_id {
+                    write!(f, " AFTER \"{}\"", after)?;
+                }
+                if let Some(limit) = q.limit {
+                    write!(f, " LIMIT {}", limit)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -57,6 +82,9 @@ pub struct GetQuery {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FindQuery {
     pub machine: String,
+    /// Field projection: if Some, only include listed fields (plus id/state/machine).
+    #[serde(default)]
+    pub select: Option<Vec<String>>,
     pub filter: Option<Expression>,
     pub sort: Vec<SortClause>,
     pub limit: Option<u64>,
@@ -146,4 +174,50 @@ pub struct GetViewQuery {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GetProjectionQuery {
     pub name: String,
+}
+
+/// EXPLAIN TRANSITIONS FOR Machine [instance_id] [AS actor]
+/// Schema-level (no instance_id): returns all transitions from the machine definition.
+/// Instance-level (with instance_id): evaluates guards against real instance data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExplainTransitionsQuery {
+    pub machine: String,
+    /// If set, evaluate guards against this specific instance.
+    pub instance_id: Option<String>,
+    /// Optional actor context for guard evaluation.
+    pub as_actor: Option<String>,
+}
+
+/// A transition available from the current state, with guard evaluation results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableTransition {
+    /// Source state (or "ANY" for wildcard transitions).
+    pub from_state: String,
+    /// Target state.
+    pub to_state: String,
+    /// Guard expression strings defined on this transition.
+    pub guards: Vec<String>,
+    /// Whether all guards are currently satisfied (always false for schema-level).
+    pub guards_met: bool,
+    /// Details of which guards are blocking (empty if guards_met is true).
+    pub blocking_guards: Vec<GuardFailure>,
+    /// Actionable recovery suggestions for blocked guards.
+    pub recovery_options: Vec<RecoveryOption>,
+    /// Data fields referenced in guard expressions.
+    pub requires_data: Vec<String>,
+    /// Required actor role if guard references ACTOR.role.
+    pub requires_role: Option<String>,
+}
+
+/// GET EVENTS query — retrieve durable events with optional filters.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GetEventsQuery {
+    /// Optional machine filter (None = all machines).
+    pub machine: Option<String>,
+    /// Optional event name filter.
+    pub event_name: Option<String>,
+    /// Cursor: only return events after this event ID.
+    pub after_id: Option<String>,
+    /// Max number of events to return.
+    pub limit: Option<usize>,
 }

@@ -16,6 +16,9 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 ulid = { workspace = true }
 tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dashmap = { workspace = true }
 
 [dev-dependencies]
 smql-parser = { path = "../smql-parser" }

@@ -55,6 +55,9 @@ fn spawn_ticket(data: Vec<(&str, Value)>) -> SpawnCommand {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -328,6 +331,7 @@ async fn find_by_state() {
 
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("open".into()))),
         sort: vec![],
         limit: None,
@@ -479,6 +483,7 @@ async fn multiple_tickets_diverse_paths() {
     // FIND open tickets
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("open".into()))),
         sort: vec![],
         limit: None,
@@ -632,6 +637,7 @@ async fn find_with_limit_offset() {
 
     let q = Query::Find(FindQuery {
         machine: "SupportTicket".into(),
+        select: None,
         filter: None,
         sort: vec![],
         limit: Some(2),

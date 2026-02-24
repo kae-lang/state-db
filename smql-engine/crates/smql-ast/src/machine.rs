@@ -21,6 +21,9 @@ pub struct MachineDefinition {
     pub roles: Vec<RoleDefinition>,
     pub version: u64,
     pub metadata: BTreeMap<String, String>,
+    /// EXTENDS template_name — inherit from a template.
+    #[serde(default)]
+    pub extends: Option<String>,
 }
 
 impl MachineDefinition {
@@ -38,6 +41,7 @@ impl MachineDefinition {
             roles: Vec::new(),
             version: 1,
             metadata: BTreeMap::new(),
+            extends: None,
         }
     }
 }
@@ -187,10 +191,16 @@ pub enum Action {
         event: String,
         payload: Option<Expression>,
     },
-    /// WEBHOOK(url, payload)
+    /// WEBHOOK(url, payload) [STORE response_field] [ON_FAILURE state]
     Webhook {
         url: String,
         payload: Option<Expression>,
+        /// Field name to store the webhook response body.
+        #[serde(default)]
+        response_field: Option<String>,
+        /// State to transition to if the webhook fails.
+        #[serde(default)]
+        on_failure_state: Option<String>,
     },
     /// SPAWN child machine
     SpawnChild {

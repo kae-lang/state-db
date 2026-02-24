@@ -35,6 +35,12 @@ pub struct EvalContext {
     pub parent_data: Option<HashMap<String, Value>>,
     /// Parent's state (if this instance has a parent)
     pub parent_state: Option<String>,
+    /// Terminal states for ALIVE/TERMINATED predicates (set by FIND queries).
+    pub terminal_states: Option<Vec<String>>,
+    /// Set of states visited by the instance (from trail), for HAS_VISITED/NEVER_VISITED.
+    pub visited_states: Option<std::collections::HashSet<String>>,
+    /// Instance tags for TAG predicate evaluation.
+    pub tags: HashMap<String, String>,
 }
 
 /// Information about the actor performing a transition.
@@ -42,6 +48,7 @@ pub struct EvalContext {
 pub struct ActorInfo {
     pub id: String,
     pub role: Option<String>,
+    pub capabilities: Vec<String>,
     pub fields: HashMap<String, Value>,
 }
 
@@ -59,6 +66,9 @@ impl EvalContext {
             children: HashMap::new(),
             parent_data: None,
             parent_state: None,
+            terminal_states: None,
+            visited_states: None,
+            tags: HashMap::new(),
         }
     }
 }
@@ -141,6 +151,14 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
                 map.insert("id".to_string(), Value::Text(actor.id.clone()));
                 if let Some(role) = &actor.role {
                     map.insert("role".to_string(), Value::Text(role.clone()));
+                }
+                if !actor.capabilities.is_empty() {
+                    let caps = actor
+                        .capabilities
+                        .iter()
+                        .map(|c| Value::Text(c.clone()))
+                        .collect();
+                    map.insert("capabilities".to_string(), Value::List(caps));
                 }
                 for (k, v) in &actor.fields {
                     map.insert(k.clone(), v.clone());
@@ -235,6 +253,15 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
             Ok(Value::Bool(found))
         }
 
+        ExpressionKind::InCollection { expr, collection } => {
+            let needle = eval_expr(expr, ctx)?;
+            let haystack = eval_expr(collection, ctx)?;
+            match haystack {
+                Value::List(items) => Ok(Value::Bool(items.contains(&needle))),
+                _ => Ok(Value::Bool(false)),
+            }
+        }
+
         ExpressionKind::All {
             collection,
             predicate,
@@ -310,6 +337,59 @@ pub fn eval_expr(expr: &Expression, ctx: &EvalContext) -> SmqlResult<Value> {
         ExpressionKind::Pattern(regex_str) => {
             // Return the pattern as a text value; comparison happens in binary ops
             Ok(Value::Text(regex_str.clone()))
+        }
+
+        ExpressionKind::Alive => {
+            if let Some(terminal) = &ctx.terminal_states {
+                Ok(Value::Bool(!terminal.contains(&ctx.state)))
+            } else {
+                Err(SmqlError::QueryError {
+                    message: "ALIVE predicate requires machine context (use in FIND WHERE)".into(),
+                    hint: None,
+                })
+            }
+        }
+
+        ExpressionKind::Terminated => {
+            if let Some(terminal) = &ctx.terminal_states {
+                Ok(Value::Bool(terminal.contains(&ctx.state)))
+            } else {
+                Err(SmqlError::QueryError {
+                    message: "TERMINATED predicate requires machine context (use in FIND WHERE)".into(),
+                    hint: None,
+                })
+            }
+        }
+
+        ExpressionKind::StuckIn { state, duration } => {
+            if ctx.state != *state {
+                Ok(Value::Bool(false))
+            } else {
+                let elapsed = ctx.now.signed_duration_since(ctx.state_entered_at);
+                let threshold = chrono::TimeDelta::seconds(duration.seconds as i64);
+                Ok(Value::Bool(elapsed >= threshold))
+            }
+        }
+
+        ExpressionKind::HasVisited(state) => {
+            if let Some(visited) = &ctx.visited_states {
+                Ok(Value::Bool(visited.contains(state)))
+            } else {
+                // Fallback: check if currently in the state (trail not loaded)
+                Ok(Value::Bool(ctx.state == *state))
+            }
+        }
+
+        ExpressionKind::NeverVisited(state) => {
+            if let Some(visited) = &ctx.visited_states {
+                Ok(Value::Bool(!visited.contains(state)))
+            } else {
+                Ok(Value::Bool(ctx.state != *state))
+            }
+        }
+
+        ExpressionKind::TagEq { key, value } => {
+            Ok(Value::Bool(ctx.tags.get(key).map_or(false, |v| v == value)))
         }
     }
 }
@@ -726,6 +806,9 @@ fn make_child_eval_context(child: &ChildInfo, parent_ctx: &EvalContext) -> EvalC
         children: HashMap::new(),
         parent_data: Some(parent_ctx.data.clone()),
         parent_state: Some(parent_ctx.state.clone()),
+        terminal_states: None,
+        visited_states: None,
+        tags: HashMap::new(),
     }
 }
 

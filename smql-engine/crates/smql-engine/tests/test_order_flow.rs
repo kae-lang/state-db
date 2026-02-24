@@ -42,6 +42,9 @@ fn spawn_cmd(machine: &str, data: Vec<(&str, Value)>) -> SpawnCommand {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -63,6 +66,9 @@ fn spawn_child_cmd(
         parent_id: Some(parent_id.to_string()),
         parent_machine: Some(parent_machine.to_string()),
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     }
 }
 
@@ -478,6 +484,7 @@ async fn find_line_items_by_state() {
     // Find pending
     let q = Query::Find(FindQuery {
         machine: "LineItem".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("pending".into()))),
         sort: vec![],
         limit: None,
@@ -495,6 +502,7 @@ async fn find_line_items_by_state() {
     // Find confirmed
     let q = Query::Find(FindQuery {
         machine: "LineItem".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("confirmed".into()))),
         sort: vec![],
         limit: None,
@@ -573,6 +581,7 @@ async fn multiple_orders_lifecycle() {
     // FIND placed orders
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("placed".into()))),
         sort: vec![],
         limit: None,
@@ -590,6 +599,7 @@ async fn multiple_orders_lifecycle() {
     // FIND cancelled orders
     let q = Query::Find(FindQuery {
         machine: "Order".into(),
+        select: None,
         filter: Some(Expression::new(ExpressionKind::StateIs("cancelled".into()))),
         sort: vec![],
         limit: None,

@@ -969,3 +969,346 @@ async fn batch_transition_then_verify_with_queries() {
         ]
     );
 }
+
+// Instance Tags via HTTP
+
+#[tokio::test]
+async fn tags_spawn_and_find_via_http() {
+    let app = test_router();
+
+    // Define a simple machine
+    let resp = app
+        .clone()
+        .oneshot(exec(r#"DEFINE MACHINE TagTest (
+            STATES { open, closed }
+            INITIAL STATE open
+            TERMINAL STATES { closed }
+            TRANSITIONS { open -> closed {} }
+        )"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Spawn with tags
+    let resp = app
+        .clone()
+        .oneshot(exec(r#"SPAWN TagTest {} TAGS { batch: "run-99", agent: "test-bot" }"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // GET instance should include tags
+    let resp = app
+        .clone()
+        .oneshot(exec(&format!(r#"GET TagTest "{}""#, instance_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let tags = json["result"]["tags"].as_object().unwrap();
+    assert_eq!(tags["batch"], "run-99");
+    assert_eq!(tags["agent"], "test-bot");
+
+    // Spawn another with different tag
+    let resp = app
+        .clone()
+        .oneshot(exec(r#"SPAWN TagTest {} TAGS { batch: "run-100" }"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // FIND by TAG predicate
+    let resp = app
+        .clone()
+        .oneshot(exec(r#"FIND TagTest WHERE TAG "batch" == "run-99""#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let instances = json["result"]["instances"].as_array().unwrap();
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0]["tags"]["batch"], "run-99");
+
+    // Transition with TAGS to merge
+    let resp = app
+        .clone()
+        .oneshot(exec(&format!(
+            r#"TRANSITION TagTest "{}" TO closed TAGS {{ priority: "high" }}"#,
+            instance_id
+        )))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify merged tags
+    let resp = app
+        .clone()
+        .oneshot(exec(&format!(r#"GET TagTest "{}""#, instance_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let tags = json["result"]["tags"].as_object().unwrap();
+    assert_eq!(tags["batch"], "run-99");
+    assert_eq!(tags["agent"], "test-bot");
+    assert_eq!(tags["priority"], "high");
+}
+
+/// Test: CLAIM and RELEASE via HTTP API
+#[tokio::test]
+async fn claim_and_release_via_http() {
+    let app = test_router();
+
+    // Define a simple machine
+    let define = r#"DEFINE MACHINE WorkQueue (
+        DATA {
+            task_name : TEXT -> REQUIRED
+        }
+        STATES { pending, processing, done }
+        INITIAL STATE pending
+        TERMINAL STATES { done }
+        TRANSITIONS {
+            pending -> processing {}
+            processing -> done {}
+        }
+    )"#;
+    let resp = app.clone().oneshot(exec(define)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Spawn an instance
+    let spawn = r#"SPAWN WorkQueue { task_name: "task-1" }"#;
+    let resp = app.clone().oneshot(exec(spawn)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    let instance_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // Claim the instance
+    let claim = r#"CLAIM WorkQueue AS "agent-alpha" LEASE 5m"#;
+    let resp = app.clone().oneshot(exec(claim)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["result"]["action"], "instance_claimed");
+    assert_eq!(json["result"]["agent_id"], "agent-alpha");
+    assert!(json["result"]["lease_expires_at"].as_str().is_some());
+
+    let claimed_id = json["result"]["instance"]["id"].as_str().unwrap().to_string();
+    assert_eq!(claimed_id, instance_id);
+    assert_eq!(json["result"]["instance"]["claimed_by"], "agent-alpha");
+
+    // GET instance should show claimed_by
+    let resp = app
+        .clone()
+        .oneshot(exec(&format!(r#"GET WorkQueue "{}""#, instance_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["result"]["claimed_by"], "agent-alpha");
+    assert!(json["result"]["claim_expires_at"].as_str().is_some());
+
+    // Another agent trying to claim should fail (no unclaimed instances)
+    let claim2 = r#"CLAIM WorkQueue AS "agent-beta" LEASE 5m"#;
+    let resp = app.clone().oneshot(exec(claim2)).await.unwrap();
+    let json = body_json(resp.into_body()).await;
+    assert!(!json["success"].as_bool().unwrap());
+
+    // Release the claim
+    let release = format!(
+        r#"RELEASE WorkQueue "{}" AS "agent-alpha""#,
+        instance_id
+    );
+    let resp = app.clone().oneshot(exec(&release)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["result"]["action"], "claim_released");
+
+    // Now agent-beta can claim
+    let resp = app.clone().oneshot(exec(claim2)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["result"]["agent_id"], "agent-beta");
+}
+
+/// Test: CLAIM with THEN TRANSITION via HTTP API
+#[tokio::test]
+async fn claim_with_transition_via_http() {
+    let app = test_router();
+
+    let define = r#"DEFINE MACHINE JobQueue (
+        DATA {
+            job_type : TEXT -> REQUIRED
+        }
+        STATES { queued, running, finished }
+        INITIAL STATE queued
+        TERMINAL STATES { finished }
+        TRANSITIONS {
+            queued -> running {}
+            running -> finished {}
+        }
+    )"#;
+    let resp = app.clone().oneshot(exec(define)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let spawn = r#"SPAWN JobQueue { job_type: "build" }"#;
+    let resp = app.clone().oneshot(exec(spawn)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Claim with transition
+    let claim = r#"CLAIM JobQueue AS "runner-1" LEASE 10m THEN TRANSITION TO running"#;
+    let resp = app.clone().oneshot(exec(claim)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert!(json["success"].as_bool().unwrap());
+    assert_eq!(json["result"]["instance"]["state"], "running");
+    assert_eq!(json["result"]["agent_id"], "runner-1");
+}
+
+// ─── GET EVENTS (Durable Event Log) ────────────────────────────────────────
+
+#[tokio::test]
+async fn get_events_via_http() {
+    let app = test_router();
+
+    // Define machine and spawn instances
+    let define = r#"DEFINE MACHINE EvtMachine (
+        DATA {
+            label : TEXT -> REQUIRED
+        }
+        STATES { open, closed }
+        INITIAL STATE open
+        TERMINAL STATES { closed }
+        TRANSITIONS {
+            open -> closed {}
+        }
+    )"#;
+    let resp = app.clone().oneshot(exec(define)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let spawn1 = r#"SPAWN EvtMachine { label: "first" }"#;
+    let resp = app.clone().oneshot(exec(spawn1)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    let id1 = json["result"]["id"].as_str().unwrap().to_string();
+
+    let spawn2 = r#"SPAWN EvtMachine { label: "second" }"#;
+    let resp = app.clone().oneshot(exec(spawn2)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Transition first instance
+    let transition = format!(r#"TRANSITION EvtMachine "{}" TO closed"#, id1);
+    let resp = app.clone().oneshot(exec(&transition)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET EVENTS — should return at least 3 events (2 spawns + 1 transition)
+    let resp = app.clone().oneshot(exec("GET EVENTS")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    assert!(json["success"].as_bool().unwrap());
+    let events = json["result"]["events"].as_array().unwrap();
+    assert!(events.len() >= 3, "Expected at least 3 events, got {}", events.len());
+
+    // Verify event structure
+    let first_event = &events[0];
+    assert!(first_event["id"].is_string());
+    assert!(first_event["timestamp"].is_string());
+    assert!(first_event["machine"].is_string());
+    assert!(first_event["event_name"].is_string());
+
+    // GET EVENTS with machine filter
+    let resp = app.clone().oneshot(exec("GET EVENTS EvtMachine")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let events = json["result"]["events"].as_array().unwrap();
+    assert!(events.len() >= 3);
+
+    // GET EVENTS with LIMIT
+    let resp = app.clone().oneshot(exec("GET EVENTS LIMIT 1")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let events = json["result"]["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    let cursor = json["result"]["next_cursor"].as_str().unwrap().to_string();
+
+    // GET EVENTS with AFTER cursor for pagination
+    let query = format!(r#"GET EVENTS AFTER "{}" LIMIT 1"#, cursor);
+    let resp = app.clone().oneshot(exec(&query)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let events2 = json["result"]["events"].as_array().unwrap();
+    assert_eq!(events2.len(), 1);
+    // Should be a different event than the first page
+    assert_ne!(events2[0]["id"], cursor);
+}
+
+// ─── BATCH SPAWN ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn batch_spawn_via_http() {
+    let app = test_router();
+
+    let define = r#"DEFINE MACHINE BatchJob (
+        DATA {
+            label : TEXT -> REQUIRED
+        }
+        STATES { pending, done }
+        INITIAL STATE pending
+        TERMINAL STATES { done }
+        TRANSITIONS {
+            pending -> done {}
+        }
+    )"#;
+    let resp = app.clone().oneshot(exec(define)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Batch spawn 3 instances
+    let batch = r#"SPAWN BATCH BatchJob [{ label: "a" }, { label: "b" }, { label: "c" }]"#;
+    let resp = app.clone().oneshot(exec(batch)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["result"]["total_created"], 3);
+    assert_eq!(json["result"]["total_failures"], 0);
+    let created = json["result"]["created"].as_array().unwrap();
+    assert_eq!(created.len(), 3);
+
+    // Verify all instances exist
+    let find = r#"FIND BatchJob"#;
+    let resp = app.clone().oneshot(exec(find)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp.into_body()).await;
+    let instances = json["result"]["instances"].as_array().unwrap();
+    assert_eq!(instances.len(), 3);
+}
+
+#[tokio::test]
+async fn batch_spawn_partial_failure_via_http() {
+    let app = test_router();
+
+    let define = r#"DEFINE MACHINE BatchJob2 (
+        DATA {
+            label : TEXT -> REQUIRED
+        }
+        STATES { pending, done }
+        INITIAL STATE pending
+        TERMINAL STATES { done }
+        TRANSITIONS {
+            pending -> done {}
+        }
+    )"#;
+    let resp = app.clone().oneshot(exec(define)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Second entry missing required field
+    let batch = r#"SPAWN BATCH BatchJob2 [{ label: "ok" }, { }, { label: "also-ok" }]"#;
+    let resp = app.clone().oneshot(exec(batch)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let json = body_json(resp.into_body()).await;
+    assert_eq!(json["result"]["total_created"], 2);
+    assert_eq!(json["result"]["total_failures"], 1);
+    // success is false when there are failures
+    assert_eq!(json["success"], false);
+}

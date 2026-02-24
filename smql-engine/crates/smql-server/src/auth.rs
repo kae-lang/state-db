@@ -18,6 +18,9 @@ pub struct AuthClaims {
     pub role: Option<String>,
     /// Expiration time (Unix timestamp).
     pub exp: usize,
+    /// Capabilities/permissions — derived from JWT `permissions` or `scope` claim.
+    #[serde(default)]
+    pub permissions: Vec<String>,
 }
 
 /// Configuration for JWT authentication.
@@ -29,6 +32,9 @@ pub struct AuthConfig {
     pub required: bool,
     /// Paths that skip authentication entirely.
     pub skip_paths: Vec<String>,
+    /// When true, the SMQL `AS` clause is trusted even when JWT auth is present.
+    /// When false (default), the JWT identity overrides any client-provided AS clause.
+    pub trust_client_actor: bool,
 }
 
 impl Default for AuthConfig {
@@ -37,6 +43,7 @@ impl Default for AuthConfig {
             secret: String::new(),
             required: true,
             skip_paths: vec!["/health".to_string(), "/metrics".to_string()],
+            trust_client_actor: false,
         }
     }
 }
@@ -206,6 +213,7 @@ mod tests {
             secret: "test-secret-key".to_string(),
             required: true,
             skip_paths: vec!["/health".to_string(), "/metrics".to_string()],
+            trust_client_actor: false,
         }
     }
 
@@ -223,6 +231,7 @@ mod tests {
             sub: "user-123".to_string(),
             role: Some("admin".to_string()),
             exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as usize,
+            permissions: Vec::new(),
         }
     }
 
@@ -231,6 +240,7 @@ mod tests {
             sub: "user-123".to_string(),
             role: None,
             exp: (chrono::Utc::now() - chrono::Duration::hours(1)).timestamp() as usize,
+            permissions: Vec::new(),
         }
     }
 

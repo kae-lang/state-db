@@ -33,6 +33,9 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }));
     }
 
@@ -46,6 +49,24 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
         None
     };
 
+    let idempotency_key = if parser.try_keyword("IDEMPOTENCY_KEY") {
+        Some(common::parse_string_literal(parser)?)
+    } else {
+        None
+    };
+
+    let tags = if parser.try_keyword("TAGS") {
+        parse_tags_block(parser)?
+    } else {
+        Vec::new()
+    };
+
+    let ttl = if parser.try_keyword("TTL") {
+        Some(common::parse_duration(parser)?)
+    } else {
+        None
+    };
+
     Ok(Command::Spawn(SpawnCommand {
         machine: machine_name,
         data,
@@ -55,6 +76,9 @@ pub fn parse_spawn(parser: &mut Parser) -> SmqlResult<Command> {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key,
+        tags,
+        ttl,
     }))
 }
 
@@ -109,6 +133,10 @@ pub fn parse_transition(parser: &mut Parser) -> SmqlResult<Command> {
             cmd.or_stay = true;
         } else if parser.try_keyword("CASCADE") {
             cmd.cascade = true;
+        } else if parser.try_keyword("IDEMPOTENCY_KEY") {
+            cmd.idempotency_key = Some(common::parse_string_literal(parser)?);
+        } else if parser.try_keyword("TAGS") {
+            cmd.tags = parse_tags_block(parser)?;
         } else {
             break;
         }
@@ -136,6 +164,10 @@ pub fn parse_try_transition(parser: &mut Parser) -> SmqlResult<Command> {
             cmd.memo = Some(common::parse_string_literal(parser)?);
         } else if parser.try_keyword("AS") {
             cmd.as_actor = Some(parser.expect_ident_or_string()?);
+        } else if parser.try_keyword("IDEMPOTENCY_KEY") {
+            cmd.idempotency_key = Some(common::parse_string_literal(parser)?);
+        } else if parser.try_keyword("TAGS") {
+            cmd.tags = parse_tags_block(parser)?;
         } else {
             break;
         }
@@ -245,4 +277,102 @@ pub fn parse_alter_machine(parser: &mut Parser) -> SmqlResult<Command> {
         machine,
         operations,
     }))
+}
+
+/// Parse TAGS { key: "value", key2: "value2" }.
+/// Parse CLAIM Machine WHERE ... AS agent LEASE duration [THEN TRANSITION TO state].
+pub fn parse_claim(parser: &mut Parser) -> SmqlResult<Command> {
+    parser.expect_keyword("CLAIM")?;
+    let machine = parser.expect_ident()?;
+
+    let filter = if parser.try_keyword("WHERE") {
+        Some(expr::parse_expression(parser)?)
+    } else {
+        None
+    };
+
+    parser.expect_keyword("AS")?;
+    let agent_id = common::parse_string_literal(parser)?;
+
+    parser.expect_keyword("LEASE")?;
+    let lease_duration = common::parse_duration(parser)?;
+
+    let transition_to = if parser.try_keyword("THEN") {
+        parser.expect_keyword("TRANSITION")?;
+        parser.expect_keyword("TO")?;
+        Some(parser.expect_ident()?)
+    } else {
+        None
+    };
+
+    Ok(Command::Claim(ClaimCommand {
+        machine,
+        filter,
+        agent_id,
+        lease_duration,
+        transition_to,
+    }))
+}
+
+/// Parse RELEASE Machine "instance_id" AS agent.
+pub fn parse_release(parser: &mut Parser) -> SmqlResult<Command> {
+    parser.expect_keyword("RELEASE")?;
+    let machine = parser.expect_ident()?;
+    let instance_id = common::parse_string_literal(parser)?;
+    parser.expect_keyword("AS")?;
+    let agent_id = common::parse_string_literal(parser)?;
+
+    Ok(Command::Release(ReleaseCommand {
+        machine,
+        instance_id,
+        agent_id,
+    }))
+}
+
+/// Parse WATCH Machine "instance_id" UNTIL condition [TIMEOUT duration].
+/// Also: WATCH Machine WHERE filter UNTIL condition [TIMEOUT duration].
+pub fn parse_watch(parser: &mut Parser) -> SmqlResult<Command> {
+    parser.expect_keyword("WATCH")?;
+    let machine = parser.expect_ident()?;
+
+    let (instance_id, filter) = if parser.try_keyword("WHERE") {
+        // WATCH Machine WHERE ... UNTIL ...
+        let filter_expr = expr::parse_expression(parser)?;
+        (None, Some(filter_expr))
+    } else {
+        // WATCH Machine "instance_id" UNTIL ...
+        let id = common::parse_string_literal(parser)?;
+        (Some(id), None)
+    };
+
+    parser.expect_keyword("UNTIL")?;
+    let condition = expr::parse_expression(parser)?;
+
+    let timeout = if parser.try_keyword("TIMEOUT") {
+        Some(common::parse_duration(parser)?)
+    } else {
+        None
+    };
+
+    Ok(Command::Watch(smql_ast::command::WatchCommand {
+        machine,
+        instance_id,
+        condition,
+        timeout,
+        filter,
+    }))
+}
+
+fn parse_tags_block(parser: &mut Parser) -> SmqlResult<Vec<(String, String)>> {
+    parser.expect_punct("{")?;
+    let mut tags = Vec::new();
+    while !parser.check_punct("}") {
+        let key = parser.expect_ident()?;
+        parser.expect_punct(":")?;
+        let value = common::parse_string_literal(parser)?;
+        tags.push((key, value));
+        parser.try_punct(",");
+    }
+    parser.expect_punct("}")?;
+    Ok(tags)
 }

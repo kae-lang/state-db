@@ -74,6 +74,9 @@ async fn spawn_ticket(engine: &Engine) -> String {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let r = engine.spawn(&cmd).await.expect("spawn ticket");
     r.instance.id.as_str()
@@ -98,6 +101,9 @@ async fn spawn_ticket_with_priority(engine: &Engine, priority: &str) -> String {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let r = engine.spawn(&cmd).await.expect("spawn ticket");
     r.instance.id.as_str()
@@ -203,6 +209,9 @@ async fn spawn_order(engine: &Engine, customer: &str, total: i64) -> String {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let r = engine.spawn(&cmd).await.expect("spawn order");
     r.instance.id.as_str()
@@ -225,6 +234,9 @@ async fn spawn_order_with_payment(engine: &Engine, customer: &str, total: i64, p
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let r = engine.spawn(&cmd).await.expect("spawn order");
     r.instance.id.as_str()

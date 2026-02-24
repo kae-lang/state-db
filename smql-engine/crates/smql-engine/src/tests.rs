@@ -217,6 +217,7 @@ mod eval_tests {
         ctx.actor = Some(ActorInfo {
             id: "user_123".to_string(),
             role: Some("admin".to_string()),
+            capabilities: Vec::new(),
             fields: HashMap::new(),
         });
 
@@ -313,6 +314,7 @@ mod eval_tests {
         ctx.actor = Some(ActorInfo {
             id: "user_456".to_string(),
             role: Some("editor".to_string()),
+            capabilities: Vec::new(),
             fields: HashMap::new(),
         });
 
@@ -507,6 +509,9 @@ mod engine_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -1010,6 +1015,9 @@ mod query_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -1061,6 +1069,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: None,
@@ -1105,6 +1114,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: Some(filter),
             sort: Vec::new(),
             limit: None,
@@ -1135,6 +1145,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -1170,6 +1181,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: Some(2),
@@ -1465,6 +1477,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -1516,6 +1529,7 @@ mod query_tests {
         // Sort by priority DESC — highest first
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -1552,6 +1566,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: Some(2),
@@ -1590,6 +1605,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: Some(filter),
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -1628,6 +1644,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: Some(filter),
             sort: Vec::new(),
             limit: None,
@@ -1972,6 +1989,7 @@ mod query_tests {
         // Page 1: first 2
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: Some(2),
@@ -1991,6 +2009,7 @@ mod query_tests {
         let cursor = page1.last().unwrap().id.as_str();
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: Some(2),
@@ -2017,6 +2036,7 @@ mod query_tests {
         let cursor2 = page2.last().unwrap().id.as_str();
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: Some(2),
@@ -2046,6 +2066,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: Some(2),
@@ -2075,6 +2096,7 @@ mod query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: Vec::new(),
             limit: None,
@@ -2164,6 +2186,9 @@ mod timer_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -2785,6 +2810,9 @@ mod hook_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -3367,6 +3395,9 @@ mod composition_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -3388,6 +3419,9 @@ mod composition_tests {
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -5645,6 +5679,9 @@ mod coverage_cascade_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -5666,6 +5703,9 @@ mod coverage_cascade_tests {
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -6063,6 +6103,9 @@ mod coverage_query_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -6084,6 +6127,7 @@ mod coverage_query_tests {
         // Sort by priority ASC, take 3 => get the 3 lowest priorities
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -6142,6 +6186,7 @@ mod coverage_query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: Some(filter),
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -6204,6 +6249,7 @@ mod coverage_query_tests {
         // This is the double-application issue. Let's just test without offset to cover the limit path.
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: Some(filter),
             sort: vec![SortClause {
                 field: "priority".into(),
@@ -6254,6 +6300,7 @@ mod coverage_query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: Some(filter),
             sort: Vec::new(),
             limit: None,
@@ -6575,6 +6622,9 @@ mod coverage_query_tests {
                 parent_id: None,
                 parent_machine: None,
                 as_actor: None,
+                idempotency_key: None,
+                tags: Vec::new(),
+                ttl: None,
             };
             engine.spawn(&cmd).await.unwrap();
         }
@@ -6880,6 +6930,7 @@ mod coverage_query_tests {
 
         let query = Query::Find(FindQuery {
             machine: "Ticket".into(),
+            select: None,
             filter: None,
             sort: vec![SortClause {
                 field: "category".into(),
@@ -7603,6 +7654,9 @@ mod coverage_timeout_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -7789,6 +7843,9 @@ mod coverage_type_validation_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -7810,6 +7867,9 @@ mod coverage_type_validation_tests {
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -8353,10 +8413,14 @@ mod coverage_type_validation_tests {
                         payload: Some(Expression::new(ExpressionKind::FieldAccess(vec![
                             "owner".to_string(),
                         ]))),
+                        response_field: None,
+                        on_failure_state: None,
                     },
                     Action::Webhook {
                         url: "https://example.com/webhook-no-payload".to_string(),
                         payload: None,
+                        response_field: None,
+                        on_failure_state: None,
                     },
                 ],
             },
@@ -8511,6 +8575,8 @@ mod coverage_type_validation_tests {
                 through: Vec::new(),
                 or_stay: false,
                 cascade: true,
+                idempotency_key: None,
+                tags: Vec::new(),
             })
             .await;
         assert!(result.is_ok());
@@ -8735,6 +8801,9 @@ mod callback_coverage_tests {
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -8761,6 +8830,9 @@ mod callback_coverage_tests {
             parent_id: Some(parent_id.to_string()),
             parent_machine: Some(parent_machine.to_string()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         }
     }
 
@@ -9069,5 +9141,2598 @@ mod callback_coverage_tests {
             .unwrap()
             .unwrap();
         assert_eq!(updated.state, "b");
+    }
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use crate::engine::Engine;
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::machine::*;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+
+        let mut m = MachineDefinition::new("TagMachine".into(), "open".into());
+        m.states = vec![
+            StateDefinition::new("open".into()),
+            StateDefinition::new("closed".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("open".into()), "closed".into()),
+            TransitionDefinition::new(TransitionSource::State("closed".into()), "done".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+        engine
+    }
+
+    #[tokio::test]
+    async fn spawn_with_tags() {
+        let engine = setup_engine();
+        let cmd = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![
+                ("batch".into(), "run-42".into()),
+                ("agent".into(), "planner".into()),
+            ],
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        assert_eq!(result.instance.tags.get("batch").unwrap(), "run-42");
+        assert_eq!(result.instance.tags.get("agent").unwrap(), "planner");
+    }
+
+    #[tokio::test]
+    async fn tags_persisted_in_storage() {
+        let engine = setup_engine();
+        let cmd = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("env".into(), "staging".into())],
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let id = result.instance.id.clone();
+
+        // Re-read from storage
+        let fetched = engine.storage.get_instance(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.tags.get("env").unwrap(), "staging");
+    }
+
+    #[tokio::test]
+    async fn transition_merges_tags() {
+        let engine = setup_engine();
+        let cmd = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![
+                ("batch".into(), "run-42".into()),
+                ("priority".into(), "low".into()),
+            ],
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let id = result.instance.id.as_str();
+
+        // Transition with new tags — should merge (overwrite "priority", add "retry")
+        let t_cmd = TransitionCommand {
+            machine: "TagMachine".into(),
+            instance_id: id.to_string(),
+            to_state: "closed".into(),
+            with_data: Vec::new(),
+            memo: None,
+            as_actor: None,
+            through: Vec::new(),
+            or_stay: false,
+            cascade: false,
+            idempotency_key: None,
+            tags: vec![
+                ("priority".into(), "high".into()),
+                ("retry_count".into(), "1".into()),
+            ],
+        };
+        engine.transition(&t_cmd).await.unwrap();
+
+        let fetched = engine
+            .storage
+            .get_instance(&result.instance.id)
+            .await
+            .unwrap()
+            .unwrap();
+        // "batch" preserved from spawn
+        assert_eq!(fetched.tags.get("batch").unwrap(), "run-42");
+        // "priority" overwritten by transition
+        assert_eq!(fetched.tags.get("priority").unwrap(), "high");
+        // "retry_count" added by transition
+        assert_eq!(fetched.tags.get("retry_count").unwrap(), "1");
+    }
+
+    #[tokio::test]
+    async fn spawn_no_tags_has_empty_map() {
+        let engine = setup_engine();
+        let cmd = SpawnCommand::new("TagMachine".into(), Vec::new());
+        let result = engine.spawn(&cmd).await.unwrap();
+        assert!(result.instance.tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_by_tag_predicate() {
+        let engine = setup_engine();
+
+        // Spawn 3 instances: 2 with batch=run-42, 1 with batch=run-43
+        let cmd1 = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("batch".into(), "run-42".into())],
+            ttl: None,
+        };
+        let cmd2 = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("batch".into(), "run-42".into())],
+            ttl: None,
+        };
+        let cmd3 = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("batch".into(), "run-43".into())],
+            ttl: None,
+        };
+        engine.spawn(&cmd1).await.unwrap();
+        engine.spawn(&cmd2).await.unwrap();
+        engine.spawn(&cmd3).await.unwrap();
+
+        // Query: FIND TagMachine WHERE TAG "batch" == "run-42"
+        let query_smql = r#"FIND TagMachine WHERE TAG "batch" == "run-42""#;
+        let stmts = smql_parser::parse(query_smql).unwrap();
+        if let smql_ast::Statement::Query(query) = &stmts[0] {
+            let result = engine.execute_query(query).await.unwrap();
+            if let crate::QueryResult::Instances(instances) = result {
+                assert_eq!(instances.len(), 2);
+                for inst in &instances {
+                    assert_eq!(inst.tags.get("batch").unwrap(), "run-42");
+                }
+            } else {
+                panic!("Expected Instances result");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[tokio::test]
+    async fn find_by_tag_no_match() {
+        let engine = setup_engine();
+
+        let cmd = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("batch".into(), "run-42".into())],
+            ttl: None,
+        };
+        engine.spawn(&cmd).await.unwrap();
+
+        let query_smql = r#"FIND TagMachine WHERE TAG "batch" == "run-99""#;
+        let stmts = smql_parser::parse(query_smql).unwrap();
+        if let smql_ast::Statement::Query(query) = &stmts[0] {
+            let result = engine.execute_query(query).await.unwrap();
+            if let crate::QueryResult::Instances(instances) = result {
+                assert_eq!(instances.len(), 0);
+            } else {
+                panic!("Expected Instances result");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[tokio::test]
+    async fn tags_in_json_response() {
+        // Verify that instance_to_json includes tags
+        use smql_storage::Instance;
+        use std::collections::HashMap;
+
+        let mut inst = Instance::new("M".into(), "s".into(), HashMap::new());
+        inst.tags.insert("batch".into(), "run-42".into());
+        inst.tags.insert("agent".into(), "planner".into());
+
+        // Serialize via serde_json (Instance derives Serialize)
+        let json = serde_json::to_value(&inst).unwrap();
+        let tags = json["tags"].as_object().unwrap();
+        assert_eq!(tags["batch"], "run-42");
+        assert_eq!(tags["agent"], "planner");
+    }
+
+    #[tokio::test]
+    async fn tags_empty_not_serialized_as_default() {
+        use smql_storage::Instance;
+        use std::collections::HashMap;
+
+        let inst = Instance::new("M".into(), "s".into(), HashMap::new());
+        let json = serde_json::to_value(&inst).unwrap();
+        // Tags field should be present but empty
+        let tags = json["tags"].as_object().unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[tokio::test]
+    async fn parse_spawn_with_tags() {
+        let smql = r#"SPAWN TagMachine {} TAGS { batch: "run-42", agent: "planner" }"#;
+        let stmts = smql_parser::parse(smql).unwrap();
+        if let smql_ast::Statement::Command(smql_ast::command::Command::Spawn(cmd)) = &stmts[0] {
+            assert_eq!(cmd.tags.len(), 2);
+            assert_eq!(cmd.tags[0], ("batch".into(), "run-42".into()));
+            assert_eq!(cmd.tags[1], ("agent".into(), "planner".into()));
+        } else {
+            panic!("Expected Spawn command");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_transition_with_tags() {
+        let smql =
+            r#"TRANSITION TagMachine "abc" TO closed TAGS { retry_count: "3", source: "api" }"#;
+        let stmts = smql_parser::parse(smql).unwrap();
+        if let smql_ast::Statement::Command(smql_ast::command::Command::Transition(cmd)) =
+            &stmts[0]
+        {
+            assert_eq!(cmd.tags.len(), 2);
+            assert_eq!(cmd.tags[0], ("retry_count".into(), "3".into()));
+            assert_eq!(cmd.tags[1], ("source".into(), "api".into()));
+        } else {
+            panic!("Expected Transition command");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_find_with_tag_predicate() {
+        let smql = r#"FIND TagMachine WHERE TAG "batch" == "run-42""#;
+        let stmts = smql_parser::parse(smql).unwrap();
+        if let smql_ast::Statement::Query(smql_ast::query::Query::Find(q)) = &stmts[0] {
+            assert!(q.filter.is_some());
+            let filter = q.filter.as_ref().unwrap();
+            if let smql_ast::expression::ExpressionKind::TagEq { key, value } = &filter.kind {
+                assert_eq!(key, "batch");
+                assert_eq!(value, "run-42");
+            } else {
+                panic!("Expected TagEq expression, got {:?}", filter.kind);
+            }
+        } else {
+            panic!("Expected Find query");
+        }
+    }
+
+    #[tokio::test]
+    async fn find_by_tag_combined_with_state() {
+        let engine = setup_engine();
+
+        // Spawn 2 instances with same tag
+        let cmd1 = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("batch".into(), "run-42".into())],
+            ttl: None,
+        };
+        let cmd2 = SpawnCommand {
+            machine: "TagMachine".into(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: vec![("batch".into(), "run-42".into())],
+            ttl: None,
+        };
+        let r1 = engine.spawn(&cmd1).await.unwrap();
+        engine.spawn(&cmd2).await.unwrap();
+
+        // Transition first one to closed
+        let t_cmd = TransitionCommand::new(
+            "TagMachine".into(),
+            r1.instance.id.as_str(),
+            "closed".into(),
+        );
+        engine.transition(&t_cmd).await.unwrap();
+
+        // Query: FIND where TAG matches AND state is open
+        let query_smql =
+            r#"FIND TagMachine WHERE TAG "batch" == "run-42" AND STATE IS open"#;
+        let stmts = smql_parser::parse(query_smql).unwrap();
+        if let smql_ast::Statement::Query(query) = &stmts[0] {
+            let result = engine.execute_query(query).await.unwrap();
+            if let crate::QueryResult::Instances(instances) = result {
+                assert_eq!(instances.len(), 1);
+                assert_eq!(instances[0].state, "open");
+            } else {
+                panic!("Expected Instances result");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+}
+
+// =============================================================================
+// Claim Tests
+// =============================================================================
+
+#[cfg(test)]
+mod claim_tests {
+    use crate::Engine;
+    use smql_ast::command::{ClaimCommand, ReleaseCommand, SpawnCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::{MachineDefinition, StateDefinition, TransitionDefinition, TransitionSource};
+    use smql_ast::value::{SmqlDuration, Value};
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+
+        let mut m = MachineDefinition::new("TaskQueue".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("processing".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("pending".into()), "processing".into()),
+            TransitionDefinition::new(TransitionSource::State("processing".into()), "done".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+        engine
+    }
+
+    fn spawn_cmd() -> SpawnCommand {
+        SpawnCommand {
+            machine: "TaskQueue".into(),
+            data: vec![("priority".into(), Expression::new(
+                ExpressionKind::Literal(Value::Int(1)),
+            ))],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn claim_unclaimed_instance() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let claim_cmd = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        let result = engine.execute_claim(&claim_cmd).await.unwrap();
+        assert_eq!(result.agent_id, "agent-1");
+        assert_eq!(result.instance.claimed_by.as_deref(), Some("agent-1"));
+        assert!(result.instance.claim_expires_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn claim_with_transition() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let claim_cmd = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: Some("processing".into()),
+        };
+        let result = engine.execute_claim(&claim_cmd).await.unwrap();
+        assert_eq!(result.instance.state, "processing");
+        assert_eq!(result.agent_id, "agent-1");
+    }
+
+    #[tokio::test]
+    async fn claim_conflict_different_agent() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let claim1 = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        engine.execute_claim(&claim1).await.unwrap();
+
+        // Second agent tries to claim — should fail (no unclaimed instances)
+        let claim2 = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-2".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        let result = engine.execute_claim(&claim2).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn claim_same_agent_reclaim() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let claim = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        engine.execute_claim(&claim).await.unwrap();
+
+        // Same agent re-claims — should succeed
+        let result = engine.execute_claim(&claim).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn release_claim() {
+        let engine = setup_engine();
+        let spawn_result = engine.spawn(&spawn_cmd()).await.unwrap();
+        let id = spawn_result.instance.id.as_str();
+
+        let claim = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        engine.execute_claim(&claim).await.unwrap();
+
+        // Release
+        let release = ReleaseCommand {
+            machine: "TaskQueue".into(),
+            instance_id: id.clone(),
+            agent_id: "agent-1".into(),
+        };
+        let result = engine.execute_release(&release).await.unwrap();
+        assert_eq!(result.instance_id, id);
+        assert_eq!(result.agent_id, "agent-1");
+
+        // Instance should no longer be claimed
+        let inst = engine.storage.get_instance(&spawn_result.instance.id).await.unwrap().unwrap();
+        assert!(inst.claimed_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn release_wrong_agent_fails() {
+        let engine = setup_engine();
+        let spawn_result = engine.spawn(&spawn_cmd()).await.unwrap();
+        let id = spawn_result.instance.id.as_str();
+
+        let claim = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        engine.execute_claim(&claim).await.unwrap();
+
+        // Different agent tries to release
+        let release = ReleaseCommand {
+            machine: "TaskQueue".into(),
+            instance_id: id.clone(),
+            agent_id: "agent-2".into(),
+        };
+        let result = engine.execute_release(&release).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn claim_multiple_instances_claims_first_unclaimed() {
+        let engine = setup_engine();
+        let r1 = engine.spawn(&spawn_cmd()).await.unwrap();
+        let r2 = engine.spawn(&spawn_cmd()).await.unwrap();
+
+        // Agent-1 claims first
+        let claim1 = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        let result1 = engine.execute_claim(&claim1).await.unwrap();
+
+        // Agent-2 claims — should get the other instance
+        let claim2 = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-2".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        let result2 = engine.execute_claim(&claim2).await.unwrap();
+
+        assert_ne!(result1.instance.id.as_str(), result2.instance.id.as_str());
+
+        // Verify both are different known IDs
+        let ids: std::collections::HashSet<String> = [
+            result1.instance.id.as_str(),
+            result2.instance.id.as_str(),
+        ].into_iter().collect();
+        assert!(ids.contains(&r1.instance.id.as_str()) || ids.contains(&r2.instance.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn claim_with_where_filter() {
+        let engine = setup_engine();
+        // Spawn two tasks with different priorities
+        let mut cmd1 = spawn_cmd();
+        cmd1.data = vec![("priority".into(), smql_ast::expression::Expression::new(
+            ExpressionKind::Literal(Value::Int(1)),
+        ))];
+        let r1 = engine.spawn(&cmd1).await.unwrap();
+
+        let mut cmd2 = spawn_cmd();
+        cmd2.data = vec![("priority".into(), Expression::new(
+            ExpressionKind::Literal(Value::Int(5)),
+        ))];
+        let r2 = engine.spawn(&cmd2).await.unwrap();
+
+        // Claim only high priority (priority == 5)
+        let stmts = smql_parser::parse(r#"CLAIM TaskQueue WHERE priority == 5 AS "agent-1" LEASE 5m"#).unwrap();
+        if let smql_ast::Statement::Command(smql_ast::command::Command::Claim(claim_cmd)) = &stmts[0] {
+            let result = engine.execute_claim(claim_cmd).await.unwrap();
+            assert_eq!(result.instance.id.as_str(), r2.instance.id.as_str());
+        } else {
+            panic!("Expected Claim command");
+        }
+    }
+
+    #[tokio::test]
+    async fn claim_no_match_returns_not_found() {
+        let engine = setup_engine();
+        // No instances at all
+        let claim = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        let result = engine.execute_claim(&claim).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            smql_ast::SmqlError::NotFound { .. } => {}
+            e => panic!("Expected NotFound, got: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_claim_command() {
+        let stmts = smql_parser::parse(r#"CLAIM TaskQueue WHERE state IS pending AS "worker-1" LEASE 5m"#).unwrap();
+        assert_eq!(stmts.len(), 1);
+        if let smql_ast::Statement::Command(smql_ast::command::Command::Claim(cmd)) = &stmts[0] {
+            assert_eq!(cmd.machine, "TaskQueue");
+            assert_eq!(cmd.agent_id, "worker-1");
+            assert_eq!(cmd.lease_duration.seconds, 300);
+            assert!(cmd.filter.is_some());
+            assert!(cmd.transition_to.is_none());
+        } else {
+            panic!("Expected Claim command");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_claim_with_transition() {
+        let stmts = smql_parser::parse(r#"CLAIM TaskQueue AS "worker-1" LEASE 10m THEN TRANSITION TO processing"#).unwrap();
+        if let smql_ast::Statement::Command(smql_ast::command::Command::Claim(cmd)) = &stmts[0] {
+            assert_eq!(cmd.machine, "TaskQueue");
+            assert_eq!(cmd.agent_id, "worker-1");
+            assert_eq!(cmd.lease_duration.seconds, 600);
+            assert!(cmd.filter.is_none());
+            assert_eq!(cmd.transition_to.as_deref(), Some("processing"));
+        } else {
+            panic!("Expected Claim command");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_release_command() {
+        let stmts = smql_parser::parse(r#"RELEASE TaskQueue "01HWXYZ" AS "worker-1""#).unwrap();
+        if let smql_ast::Statement::Command(smql_ast::command::Command::Release(cmd)) = &stmts[0] {
+            assert_eq!(cmd.machine, "TaskQueue");
+            assert_eq!(cmd.instance_id, "01HWXYZ");
+            assert_eq!(cmd.agent_id, "worker-1");
+        } else {
+            panic!("Expected Release command");
+        }
+    }
+
+    #[tokio::test]
+    async fn claim_and_release_then_reclaim_by_other() {
+        let engine = setup_engine();
+        let spawn_result = engine.spawn(&spawn_cmd()).await.unwrap();
+        let id = spawn_result.instance.id.as_str();
+
+        // Agent-1 claims
+        let claim1 = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-1".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        engine.execute_claim(&claim1).await.unwrap();
+
+        // Agent-1 releases
+        let release = ReleaseCommand {
+            machine: "TaskQueue".into(),
+            instance_id: id.clone(),
+            agent_id: "agent-1".into(),
+        };
+        engine.execute_release(&release).await.unwrap();
+
+        // Agent-2 can now claim
+        let claim2 = ClaimCommand {
+            machine: "TaskQueue".into(),
+            filter: None,
+            agent_id: "agent-2".into(),
+            lease_duration: SmqlDuration::from_seconds(300),
+            transition_to: None,
+        };
+        let result = engine.execute_claim(&claim2).await.unwrap();
+        assert_eq!(result.agent_id, "agent-2");
+    }
+}
+
+// =============================================================================
+// Durable Event Log Tests
+// =============================================================================
+
+#[cfg(test)]
+mod event_log_tests {
+    use crate::Engine;
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::machine::{MachineDefinition, StateDefinition, TransitionDefinition, TransitionSource};
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        let engine = Engine::new(catalog, storage);
+
+        let mut m = MachineDefinition::new("EventMachine".into(), "created".into());
+        m.states = vec![
+            StateDefinition::new("created".into()),
+            StateDefinition::new("active".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("created".into()), "active".into()),
+            TransitionDefinition::new(TransitionSource::State("active".into()), "done".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+        engine
+    }
+
+    fn spawn_cmd() -> SpawnCommand {
+        SpawnCommand::new("EventMachine".into(), Vec::new())
+    }
+
+    #[tokio::test]
+    async fn spawn_generates_event() {
+        let engine = setup_engine();
+        let result = engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let events = engine
+            .storage
+            .get_events_after(None, None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_name, "spawn");
+        assert_eq!(events[0].machine, "EventMachine");
+        assert_eq!(events[0].instance_id, result.instance.id.as_str());
+    }
+
+    #[tokio::test]
+    async fn transition_generates_event() {
+        let engine = setup_engine();
+        let spawn_result = engine.spawn(&spawn_cmd()).await.unwrap();
+        let id = spawn_result.instance.id.as_str();
+
+        let t_cmd = TransitionCommand::new("EventMachine".into(), id.clone(), "active".into());
+        engine.transition(&t_cmd).await.unwrap();
+
+        let events = engine
+            .storage
+            .get_events_after(None, None, None, 100)
+            .await
+            .unwrap();
+        // spawn event + transition event
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_name, "spawn");
+        assert_eq!(events[1].event_name, "transition");
+        assert_eq!(events[1].payload["from_state"], "created");
+        assert_eq!(events[1].payload["to_state"], "active");
+    }
+
+    #[tokio::test]
+    async fn get_events_after_cursor() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+        let r2 = engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let all_events = engine
+            .storage
+            .get_events_after(None, None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(all_events.len(), 2);
+
+        // Get events after the first one
+        let after = engine
+            .storage
+            .get_events_after(Some(&all_events[0].id), None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].instance_id, r2.instance.id.as_str());
+    }
+
+    #[tokio::test]
+    async fn get_events_with_machine_filter() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        // Filter by machine
+        let events = engine
+            .storage
+            .get_events_after(None, Some("EventMachine"), None, 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+
+        // Non-matching machine
+        let events = engine
+            .storage
+            .get_events_after(None, Some("OtherMachine"), None, 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_old_events() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let events = engine
+            .storage
+            .get_events_after(None, None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+
+        // Clean up events before the future
+        let future = chrono::Utc::now() + chrono::Duration::hours(1);
+        let removed = engine.storage.cleanup_events_before(future).await.unwrap();
+        assert_eq!(removed, 2);
+
+        let events = engine
+            .storage
+            .get_events_after(None, None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn parse_get_events_query() {
+        let stmts = smql_parser::parse(r#"GET EVENTS EventMachine AFTER "01ABC" LIMIT 50"#).unwrap();
+        if let smql_ast::Statement::Query(smql_ast::query::Query::GetEvents(q)) = &stmts[0] {
+            assert_eq!(q.machine.as_deref(), Some("EventMachine"));
+            assert_eq!(q.after_id.as_deref(), Some("01ABC"));
+            assert_eq!(q.limit, Some(50));
+        } else {
+            panic!("Expected GetEvents query");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_get_events_no_filter() {
+        let stmts = smql_parser::parse("GET EVENTS").unwrap();
+        if let smql_ast::Statement::Query(smql_ast::query::Query::GetEvents(q)) = &stmts[0] {
+            assert!(q.machine.is_none());
+            assert!(q.after_id.is_none());
+            assert!(q.limit.is_none());
+        } else {
+            panic!("Expected GetEvents query");
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_get_events_query() {
+        let engine = setup_engine();
+        let spawn_result = engine.spawn(&spawn_cmd()).await.unwrap();
+        let id = spawn_result.instance.id.as_str();
+
+        let t_cmd = TransitionCommand::new("EventMachine".into(), id.clone(), "active".into());
+        engine.transition(&t_cmd).await.unwrap();
+
+        // Execute via query
+        let stmts = smql_parser::parse("GET EVENTS EventMachine LIMIT 10").unwrap();
+        if let smql_ast::Statement::Query(query) = &stmts[0] {
+            let result = engine.execute_query(query).await.unwrap();
+            if let crate::QueryResult::Events(events) = result {
+                assert_eq!(events.len(), 2);
+                assert_eq!(events[0].event_name, "spawn");
+                assert_eq!(events[1].event_name, "transition");
+            } else {
+                panic!("Expected Events result");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[tokio::test]
+    async fn events_have_unique_ulid_ids() {
+        let engine = setup_engine();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+        engine.spawn(&spawn_cmd()).await.unwrap();
+
+        let events = engine
+            .storage
+            .get_events_after(None, None, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_ne!(events[0].id, events[1].id);
+    }
+}
+
+// ─── Computed Fields Tests ──────────────────────────────────────────────────
+
+mod computed_field_tests {
+    use crate::Engine;
+    use crate::query::QueryResult;
+    use smql_ast::expression::{BinaryOperator, Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::command::{SpawnCommand, TransitionCommand};
+    use smql_ast::query::{GetQuery, FindQuery, Query};
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn field(name: &str) -> Expression {
+        Expression::new(ExpressionKind::FieldAccess(vec![name.to_string()]))
+    }
+
+    fn multiply(left: Expression, right: Expression) -> Expression {
+        Expression::new(ExpressionKind::BinaryOp {
+            left: Box::new(left),
+            op: BinaryOperator::Mul,
+            right: Box::new(right),
+        })
+    }
+
+    fn register_computed_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("ComputedTest".into(), "draft".into());
+        m.states = vec![
+            StateDefinition::new("draft".into()),
+            StateDefinition::new("confirmed".into()),
+        ];
+        m.terminal_states = vec!["confirmed".into()];
+        m.data = vec![
+            DataFieldDefinition {
+                name: "quantity".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "price".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "total".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Computed(multiply(field("quantity"), field("price")))],
+            },
+        ];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("draft".into()), "confirmed".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    fn spawn_computed(qty: i64, price: i64) -> SpawnCommand {
+        SpawnCommand {
+            machine: "ComputedTest".to_string(),
+            data: vec![
+                ("quantity".to_string(), Expression::new(ExpressionKind::Literal(Value::Int(qty)))),
+                ("price".to_string(), Expression::new(ExpressionKind::Literal(Value::Int(price)))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn computed_field_in_get() {
+        let engine = setup_engine();
+        register_computed_machine(&engine);
+
+        let result = engine.spawn(&spawn_computed(5, 100)).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // GET query should include computed field
+        let query = Query::Get(GetQuery {
+            machine: "ComputedTest".into(),
+            instance_id: inst_id.clone(),
+            as_actor: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instance(inst) = result {
+            assert_eq!(inst.data.get("quantity"), Some(&Value::Int(5)));
+            assert_eq!(inst.data.get("price"), Some(&Value::Int(100)));
+            assert_eq!(inst.data.get("total"), Some(&Value::Int(500)));
+        } else {
+            panic!("Expected Instance result");
+        }
+    }
+
+    #[tokio::test]
+    async fn computed_field_in_find() {
+        let engine = setup_engine();
+        register_computed_machine(&engine);
+
+        engine.spawn(&spawn_computed(3, 200)).await.unwrap();
+        engine.spawn(&spawn_computed(7, 50)).await.unwrap();
+
+        // FIND should include computed fields
+        let query = Query::Find(FindQuery {
+            machine: "ComputedTest".into(),
+            select: None,
+            filter: None,
+            sort: vec![],
+            limit: None,
+            offset: None,
+            after: None,
+            as_actor: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(instances) = result {
+            assert_eq!(instances.len(), 2);
+            let totals: Vec<&Value> = instances.iter()
+                .map(|i| i.data.get("total").unwrap())
+                .collect();
+            assert!(totals.contains(&&Value::Int(600)));  // 3 * 200
+            assert!(totals.contains(&&Value::Int(350)));  // 7 * 50
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_computed_field_in_transition_with() {
+        let engine = setup_engine();
+        register_computed_machine(&engine);
+
+        let result = engine.spawn(&spawn_computed(1, 10)).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Attempting to set a COMPUTED field in TRANSITION WITH should fail
+        let mut cmd = TransitionCommand::new(
+            "ComputedTest".into(),
+            inst_id,
+            "confirmed".into(),
+        );
+        cmd.with_data = vec![
+            ("total".into(), Expression::new(ExpressionKind::Literal(Value::Int(999)))),
+        ];
+        let result = engine.transition(&cmd).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("COMPUTED"), "Error should mention COMPUTED: {}", err_msg);
+    }
+
+    #[tokio::test]
+    async fn reject_computed_field_in_spawn() {
+        let engine = setup_engine();
+        register_computed_machine(&engine);
+
+        // Attempting to provide a COMPUTED field in SPAWN should fail
+        let cmd = SpawnCommand {
+            machine: "ComputedTest".to_string(),
+            data: vec![
+                ("quantity".to_string(), Expression::new(ExpressionKind::Literal(Value::Int(1)))),
+                ("price".to_string(), Expression::new(ExpressionKind::Literal(Value::Int(10)))),
+                ("total".to_string(), Expression::new(ExpressionKind::Literal(Value::Int(999)))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("COMPUTED"), "Error should mention COMPUTED: {}", err_msg);
+    }
+
+    #[tokio::test]
+    async fn computed_field_updates_after_transition_mutation() {
+        let engine = setup_engine();
+
+        // Machine with a mutable field and a computed field
+        let mut m = MachineDefinition::new("MutableComputed".into(), "draft".into());
+        m.states = vec![
+            StateDefinition::new("draft".into()),
+            StateDefinition::new("updated".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.data = vec![
+            DataFieldDefinition {
+                name: "base_price".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "multiplier".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Default(DefaultValue::Int(1))],
+            },
+            DataFieldDefinition {
+                name: "final_price".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Computed(multiply(field("base_price"), field("multiplier")))],
+            },
+        ];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("draft".into()), "updated".into()),
+            TransitionDefinition::new(TransitionSource::State("updated".into()), "done".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+
+        let cmd = SpawnCommand {
+            machine: "MutableComputed".to_string(),
+            data: vec![
+                ("base_price".to_string(), Expression::new(ExpressionKind::Literal(Value::Int(100)))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // After spawn, computed = 100 * 1 = 100
+        let query = Query::Get(GetQuery {
+            machine: "MutableComputed".into(),
+            instance_id: inst_id.clone(),
+            as_actor: None,
+        });
+        let get_result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instance(inst) = get_result {
+            assert_eq!(inst.data.get("final_price"), Some(&Value::Int(100)));
+        } else {
+            panic!("Expected Instance result");
+        }
+
+        // Transition with mutated multiplier → computed should update
+        let mut t_cmd = TransitionCommand::new(
+            "MutableComputed".into(),
+            inst_id.clone(),
+            "updated".into(),
+        );
+        t_cmd.with_data = vec![
+            ("multiplier".into(), Expression::new(ExpressionKind::Literal(Value::Int(3)))),
+        ];
+        engine.transition(&t_cmd).await.unwrap();
+
+        // After transition, computed = 100 * 3 = 300
+        let get_result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instance(inst) = get_result {
+            assert_eq!(inst.data.get("final_price"), Some(&Value::Int(300)));
+        } else {
+            panic!("Expected Instance result");
+        }
+    }
+}
+
+// ─── Batch Spawn Tests ──────────────────────────────────────────────────────
+
+mod batch_spawn_tests {
+    use crate::Engine;
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::command::SpawnCommand;
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use smql_storage::instance::Filter;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn register_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("BatchTest".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.data = vec![
+            DataFieldDefinition {
+                name: "name".into(),
+                field_type: TypeDefinition::Text,
+                constraints: vec![Constraint::Required],
+            },
+            DataFieldDefinition {
+                name: "priority".into(),
+                field_type: TypeDefinition::Int,
+                constraints: vec![Constraint::Default(DefaultValue::Int(0))],
+            },
+        ];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("pending".into()), "done".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    fn data_entry(fields: Vec<(&str, Value)>) -> Vec<(String, Expression)> {
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), Expression::new(ExpressionKind::Literal(v))))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn batch_spawn_success() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "BatchTest".to_string(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: true,
+            batch_data: vec![
+                data_entry(vec![("name", Value::Text("item-1".into()))]),
+                data_entry(vec![("name", Value::Text("item-2".into()))]),
+                data_entry(vec![("name", Value::Text("item-3".into()))]),
+            ],
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.batch_spawn(&cmd).await.unwrap();
+        assert_eq!(result.created.len(), 3);
+        assert_eq!(result.failures.len(), 0);
+
+        // Verify all instances exist in storage
+        let instances = engine.storage.find_instances("BatchTest", &Filter::default()).await.unwrap();
+        assert_eq!(instances.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn batch_spawn_partial_failure() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Second entry missing required "name" field
+        let cmd = SpawnCommand {
+            machine: "BatchTest".to_string(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: true,
+            batch_data: vec![
+                data_entry(vec![("name", Value::Text("valid".into()))]),
+                data_entry(vec![("priority", Value::Int(5))]), // missing required name
+                data_entry(vec![("name", Value::Text("also-valid".into()))]),
+            ],
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.batch_spawn(&cmd).await.unwrap();
+        assert_eq!(result.created.len(), 2);
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].index, 1);
+    }
+
+    #[tokio::test]
+    async fn batch_spawn_empty() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "BatchTest".to_string(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: true,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.batch_spawn(&cmd).await.unwrap();
+        assert_eq!(result.created.len(), 0);
+        assert_eq!(result.failures.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn batch_spawn_with_defaults() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "BatchTest".to_string(),
+            data: Vec::new(),
+            then_transition: None,
+            batch: true,
+            batch_data: vec![
+                data_entry(vec![("name", Value::Text("a".into())), ("priority", Value::Int(10))]),
+                data_entry(vec![("name", Value::Text("b".into()))]), // uses default priority
+            ],
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.batch_spawn(&cmd).await.unwrap();
+        assert_eq!(result.created.len(), 2);
+
+        let inst_a = result.created.iter().find(|i| i.data.get("name") == Some(&Value::Text("a".into()))).unwrap();
+        let inst_b = result.created.iter().find(|i| i.data.get("name") == Some(&Value::Text("b".into()))).unwrap();
+        assert_eq!(inst_a.data.get("priority"), Some(&Value::Int(10)));
+        assert_eq!(inst_b.data.get("priority"), Some(&Value::Int(0)));
+    }
+}
+
+// ─── Instance TTL Tests ─────────────────────────────────────────────────────
+
+mod ttl_tests {
+    use crate::Engine;
+    use crate::query::QueryResult;
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::command::SpawnCommand;
+    use smql_ast::query::{GetQuery, FindQuery, Query};
+    use smql_ast::value::{SmqlDuration, Value};
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn register_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("TtlTest".into(), "active".into());
+        m.states = vec![
+            StateDefinition::new("active".into()),
+            StateDefinition::new("done".into()),
+        ];
+        m.terminal_states = vec!["done".into()];
+        m.data = vec![DataFieldDefinition {
+            name: "label".into(),
+            field_type: TypeDefinition::Text,
+            constraints: vec![Constraint::Required],
+        }];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("active".into()), "done".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    #[tokio::test]
+    async fn spawn_with_ttl_sets_expires_at() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "TtlTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("ephemeral".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: Some(SmqlDuration::from_hours(1)),
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        assert!(result.instance.expires_at.is_some());
+        // expires_at should be ~1 hour from now
+        let expires = result.instance.expires_at.unwrap();
+        let diff = expires - chrono::Utc::now();
+        assert!(diff.num_minutes() >= 59 && diff.num_minutes() <= 61);
+    }
+
+    #[tokio::test]
+    async fn get_expired_instance_returns_error() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Spawn with TTL of 0 seconds (immediately expired)
+        let cmd = SpawnCommand {
+            machine: "TtlTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("expired".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Manually set expires_at to the past: delete + re-store with expired timestamp
+        {
+            let inst = engine.storage.get_instance(&result.instance.id).await.unwrap().unwrap();
+            let mut expired_inst = inst.clone();
+            expired_inst.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(10));
+            engine.storage.delete_instance(&result.instance.id).await.unwrap();
+            engine.storage.store_instance(&expired_inst).await.unwrap();
+        }
+
+        // GET should fail for expired instance
+        let query = Query::Get(GetQuery {
+            machine: "TtlTest".into(),
+            instance_id: inst_id.clone(),
+            as_actor: None,
+        });
+        let result = engine.execute_query(&query).await;
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("expired"), "Error should mention expired: {}", err_msg);
+    }
+
+    #[tokio::test]
+    async fn find_excludes_expired_instances() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Spawn two instances — one normal, one that we'll expire
+        let cmd1 = SpawnCommand {
+            machine: "TtlTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("alive".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        engine.spawn(&cmd1).await.unwrap();
+
+        let cmd2 = SpawnCommand {
+            machine: "TtlTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("will-expire".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result2 = engine.spawn(&cmd2).await.unwrap();
+
+        // Manually expire the second instance: delete + re-store with expired timestamp
+        {
+            let inst = engine.storage.get_instance(&result2.instance.id).await.unwrap().unwrap();
+            let mut expired_inst = inst.clone();
+            expired_inst.expires_at = Some(chrono::Utc::now() - chrono::Duration::seconds(10));
+            engine.storage.delete_instance(&result2.instance.id).await.unwrap();
+            engine.storage.store_instance(&expired_inst).await.unwrap();
+        }
+
+        // FIND should only return the non-expired instance
+        let query = Query::Find(FindQuery {
+            machine: "TtlTest".into(),
+            select: None,
+            filter: None,
+            sort: vec![],
+            limit: None,
+            offset: None,
+            after: None,
+            as_actor: None,
+        });
+        let result = engine.execute_query(&query).await.unwrap();
+        if let QueryResult::Instances(instances) = result {
+            assert_eq!(instances.len(), 1);
+            assert_eq!(instances[0].data.get("label"), Some(&Value::Text("alive".into())));
+        } else {
+            panic!("Expected Instances result");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_spawn_with_ttl() {
+        let stmts = smql_parser::parse(r#"SPAWN TtlTest { label: "test" } TTL 30m"#).unwrap();
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::Spawn(ref cmd)) = stmts[0] {
+            assert_eq!(cmd.machine, "TtlTest");
+            assert!(cmd.ttl.is_some());
+            let ttl = cmd.ttl.as_ref().unwrap();
+            assert_eq!(ttl.seconds, 1800); // 30 minutes
+        } else {
+            panic!("Expected Spawn command");
+        }
+    }
+}
+
+mod watch_tests {
+    use crate::Engine;
+    use smql_ast::command::{SpawnCommand, TransitionCommand, WatchCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::value::{SmqlDuration, Value};
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn register_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("WatchTest".into(), "pending".into());
+        m.states = vec![
+            StateDefinition::new("pending".into()),
+            StateDefinition::new("active".into()),
+            StateDefinition::new("resolved".into()),
+        ];
+        m.terminal_states = vec!["resolved".into()];
+        m.data = vec![DataFieldDefinition {
+            name: "priority".into(),
+            field_type: TypeDefinition::Text,
+            constraints: vec![Constraint::Required],
+        }];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("pending".into()), "active".into()),
+            TransitionDefinition::new(TransitionSource::State("active".into()), "resolved".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    /// Helper: STATE IS <name> expression
+    fn state_is(state: &str) -> Expression {
+        Expression::new(ExpressionKind::StateIs(state.to_string()))
+    }
+
+    #[tokio::test]
+    async fn watch_condition_already_true() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("high".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Instance is in "pending" state — watch for STATE IS pending should resolve immediately
+        let watch_cmd = WatchCommand {
+            machine: "WatchTest".to_string(),
+            instance_id: Some(inst_id.clone()),
+            condition: state_is("pending"),
+            timeout: Some(SmqlDuration::from_seconds(5)),
+            filter: None,
+        };
+        let watch_result = engine.watch(&watch_cmd).await.unwrap();
+        assert_eq!(watch_result.waited_ms, 0);
+        assert_eq!(watch_result.instance.state, "pending");
+    }
+
+    #[tokio::test]
+    async fn watch_resolves_after_transition() {
+        let engine = Arc::new(setup_engine());
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("medium".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Watch for STATE IS active — not true yet (instance is in "pending")
+        let watch_cmd = WatchCommand {
+            machine: "WatchTest".to_string(),
+            instance_id: Some(inst_id.clone()),
+            condition: state_is("active"),
+            timeout: Some(SmqlDuration::from_seconds(5)),
+            filter: None,
+        };
+
+        let engine_clone = engine.clone();
+        let watch_handle = tokio::spawn(async move {
+            engine_clone.watch(&watch_cmd).await
+        });
+
+        // Give the watcher time to register
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Transition the instance to "active"
+        let transition_cmd = TransitionCommand::new(
+            "WatchTest".to_string(),
+            inst_id.clone(),
+            "active".to_string(),
+        );
+        engine.transition(&transition_cmd).await.unwrap();
+
+        // The watcher should now resolve
+        let watch_result = watch_handle.await.unwrap().unwrap();
+        assert_eq!(watch_result.instance.state, "active");
+        assert!(watch_result.waited_ms > 0);
+    }
+
+    #[tokio::test]
+    async fn watch_timeout_returns_error() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        let cmd = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("low".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&cmd).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Watch for STATE IS resolved with a very short timeout
+        let watch_cmd = WatchCommand {
+            machine: "WatchTest".to_string(),
+            instance_id: Some(inst_id.clone()),
+            condition: state_is("resolved"),
+            timeout: Some(SmqlDuration::from_seconds(1)),
+            filter: None,
+        };
+        let result = engine.watch(&watch_cmd).await;
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("timed out"), "Error should mention timeout: {}", err);
+    }
+
+    #[tokio::test]
+    async fn watch_with_where_filter() {
+        let engine = Arc::new(setup_engine());
+        register_machine(&engine);
+
+        // Spawn two instances with different priorities
+        let cmd1 = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("low".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        engine.spawn(&cmd1).await.unwrap();
+
+        let cmd2 = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("high".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result2 = engine.spawn(&cmd2).await.unwrap();
+        let high_id = result2.instance.id.as_str();
+
+        // Watch for any WatchTest instance WHERE priority == "high" UNTIL STATE IS active
+        let watch_cmd = WatchCommand {
+            machine: "WatchTest".to_string(),
+            instance_id: None,
+            condition: state_is("active"),
+            timeout: Some(SmqlDuration::from_seconds(5)),
+            filter: Some(Expression::new(ExpressionKind::BinaryOp {
+                left: Box::new(Expression::new(ExpressionKind::FieldAccess(vec!["priority".into()]))),
+                op: smql_ast::expression::BinaryOperator::Eq,
+                right: Box::new(Expression::new(ExpressionKind::Literal(Value::Text("high".into())))),
+            })),
+        };
+
+        let engine_clone = engine.clone();
+        let watch_handle = tokio::spawn(async move {
+            engine_clone.watch(&watch_cmd).await
+        });
+
+        // Give the watcher time to register
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Transition the high-priority instance to "active"
+        let transition_cmd = TransitionCommand::new(
+            "WatchTest".to_string(),
+            high_id.clone(),
+            "active".to_string(),
+        );
+        engine.transition(&transition_cmd).await.unwrap();
+
+        let watch_result = watch_handle.await.unwrap().unwrap();
+        assert_eq!(watch_result.instance.state, "active");
+        assert_eq!(watch_result.instance.data.get("priority"), Some(&Value::Text("high".into())));
+    }
+
+    #[tokio::test]
+    async fn watch_multiple_watchers_independent() {
+        let engine = Arc::new(setup_engine());
+        register_machine(&engine);
+
+        // Spawn two instances
+        let cmd1 = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("a".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let r1 = engine.spawn(&cmd1).await.unwrap();
+        let id1 = r1.instance.id.as_str();
+
+        let cmd2 = SpawnCommand {
+            machine: "WatchTest".to_string(),
+            data: vec![
+                ("priority".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("b".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let r2 = engine.spawn(&cmd2).await.unwrap();
+        let id2 = r2.instance.id.as_str();
+
+        // Two watchers, one on each instance
+        let watch1 = WatchCommand {
+            machine: "WatchTest".to_string(),
+            instance_id: Some(id1.clone()),
+            condition: state_is("active"),
+            timeout: Some(SmqlDuration::from_seconds(5)),
+            filter: None,
+        };
+        let watch2 = WatchCommand {
+            machine: "WatchTest".to_string(),
+            instance_id: Some(id2.clone()),
+            condition: state_is("active"),
+            timeout: Some(SmqlDuration::from_seconds(5)),
+            filter: None,
+        };
+
+        let e1 = engine.clone();
+        let e2 = engine.clone();
+        let h1 = tokio::spawn(async move { e1.watch(&watch1).await });
+        let h2 = tokio::spawn(async move { e2.watch(&watch2).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Transition only instance 1
+        let t1 = TransitionCommand::new("WatchTest".to_string(), id1.clone(), "active".to_string());
+        engine.transition(&t1).await.unwrap();
+
+        // Watcher 1 should resolve
+        let wr1 = h1.await.unwrap().unwrap();
+        assert_eq!(wr1.instance.state, "active");
+        assert_eq!(wr1.instance.data.get("priority"), Some(&Value::Text("a".into())));
+
+        // Transition instance 2
+        let t2 = TransitionCommand::new("WatchTest".to_string(), id2.clone(), "active".to_string());
+        engine.transition(&t2).await.unwrap();
+
+        // Watcher 2 should resolve
+        let wr2 = h2.await.unwrap().unwrap();
+        assert_eq!(wr2.instance.state, "active");
+        assert_eq!(wr2.instance.data.get("priority"), Some(&Value::Text("b".into())));
+    }
+
+    #[tokio::test]
+    async fn parse_watch_instance_until_timeout() {
+        let stmts = smql_parser::parse(
+            r#"WATCH WatchTest "01ABCDEF" UNTIL STATE IS active TIMEOUT 30s"#
+        ).unwrap();
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::Watch(ref cmd)) = stmts[0] {
+            assert_eq!(cmd.machine, "WatchTest");
+            assert_eq!(cmd.instance_id, Some("01ABCDEF".to_string()));
+            assert!(cmd.timeout.is_some());
+            assert_eq!(cmd.timeout.as_ref().unwrap().seconds, 30);
+            assert!(cmd.filter.is_none());
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_watch_where_until() {
+        let stmts = smql_parser::parse(
+            r#"WATCH WatchTest WHERE priority == "high" UNTIL STATE IS resolved TIMEOUT 1m"#
+        ).unwrap();
+        if let smql_ast::command::Statement::Command(smql_ast::command::Command::Watch(ref cmd)) = stmts[0] {
+            assert_eq!(cmd.machine, "WatchTest");
+            assert!(cmd.instance_id.is_none());
+            assert!(cmd.filter.is_some());
+            assert!(cmd.timeout.is_some());
+            assert_eq!(cmd.timeout.as_ref().unwrap().seconds, 60);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+}
+
+mod transaction_tests {
+    use crate::engine::TransactionStepResult;
+    use crate::Engine;
+    use smql_ast::command::{Command, SpawnCommand, Statement, TransitionCommand};
+    use smql_ast::expression::{Expression, ExpressionKind};
+    use smql_ast::machine::*;
+    use smql_ast::types::*;
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    fn register_machine(engine: &Engine) {
+        let mut m = MachineDefinition::new("TxTest".into(), "open".into());
+        m.states = vec![
+            StateDefinition::new("open".into()),
+            StateDefinition::new("active".into()),
+            StateDefinition::new("closed".into()),
+        ];
+        m.terminal_states = vec!["closed".into()];
+        m.data = vec![DataFieldDefinition {
+            name: "label".into(),
+            field_type: TypeDefinition::Text,
+            constraints: vec![Constraint::Required],
+        }];
+        m.transitions = vec![
+            TransitionDefinition::new(TransitionSource::State("open".into()), "active".into()),
+            TransitionDefinition::new(TransitionSource::State("active".into()), "closed".into()),
+        ];
+        engine.catalog.register(m).unwrap();
+    }
+
+    fn spawn_stmt(label: &str) -> Statement {
+        Statement::Command(Command::Spawn(SpawnCommand {
+            machine: "TxTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text(label.into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        }))
+    }
+
+    fn transition_stmt(instance_id: &str, to_state: &str) -> Statement {
+        Statement::Command(Command::Transition(TransitionCommand::new(
+            "TxTest".to_string(),
+            instance_id.to_string(),
+            to_state.to_string(),
+        )))
+    }
+
+    #[tokio::test]
+    async fn transaction_commit_success() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Transaction: spawn two instances
+        let stmts = vec![spawn_stmt("first"), spawn_stmt("second")];
+        let results = engine.execute_transaction(&stmts).await.unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Both should be Spawned
+        match &results[0] {
+            TransactionStepResult::Spawned { state, .. } => assert_eq!(state, "open"),
+            _ => panic!("Expected Spawned"),
+        }
+        match &results[1] {
+            TransactionStepResult::Spawned { state, .. } => assert_eq!(state, "open"),
+            _ => panic!("Expected Spawned"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transaction_spawn_and_transition() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Spawn first, then transition it in same transaction
+        let spawn = SpawnCommand {
+            machine: "TxTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("tx-item".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&spawn).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Transaction: transition to active then closed
+        let stmts = vec![
+            transition_stmt(&inst_id, "active"),
+            transition_stmt(&inst_id, "closed"),
+        ];
+        let results = engine.execute_transaction(&stmts).await.unwrap();
+        assert_eq!(results.len(), 2);
+        match &results[0] {
+            TransactionStepResult::Transitioned { from_state, to_state, .. } => {
+                assert_eq!(from_state, "open");
+                assert_eq!(to_state, "active");
+            }
+            _ => panic!("Expected Transitioned"),
+        }
+        match &results[1] {
+            TransactionStepResult::Transitioned { from_state, to_state, .. } => {
+                assert_eq!(from_state, "active");
+                assert_eq!(to_state, "closed");
+            }
+            _ => panic!("Expected Transitioned"),
+        }
+    }
+
+    #[tokio::test]
+    async fn transaction_rollback_on_failure() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Pre-spawn an instance
+        let spawn = SpawnCommand {
+            machine: "TxTest".to_string(),
+            data: vec![
+                ("label".to_string(), Expression::new(ExpressionKind::Literal(Value::Text("pre-existing".into())))),
+            ],
+            then_transition: None,
+            batch: false,
+            batch_data: Vec::new(),
+            parent_id: None,
+            parent_machine: None,
+            as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
+        };
+        let result = engine.spawn(&spawn).await.unwrap();
+        let inst_id = result.instance.id.as_str();
+
+        // Transaction: transition to active (valid), then transition to invalid state (fail)
+        // The first step should be rolled back
+        let stmts = vec![
+            transition_stmt(&inst_id, "active"),
+            transition_stmt(&inst_id, "nonexistent"),
+        ];
+        let result = engine.execute_transaction(&stmts).await;
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("Transaction failed"), "Error: {}", err);
+
+        // Verify the instance was rolled back to "open" (not "active")
+        let id = smql_storage::instance::InstanceId::from_string(&inst_id).unwrap();
+        let instance = engine.storage.get_instance(&id).await.unwrap().unwrap();
+        assert_eq!(instance.state, "open", "Instance should have been rolled back to 'open'");
+    }
+
+    #[tokio::test]
+    async fn transaction_rollback_deletes_spawned() {
+        let engine = setup_engine();
+        register_machine(&engine);
+
+        // Transaction: spawn a new instance, then do an invalid transition
+        // The spawned instance should be deleted on rollback
+        let stmts = vec![
+            spawn_stmt("will-be-rolled-back"),
+            // Invalid: reference a nonexistent instance
+            transition_stmt("NONEXISTENT_ID", "active"),
+        ];
+        let result = engine.execute_transaction(&stmts).await;
+        assert!(result.is_err());
+
+        // Verify: no instances should exist (the spawned one was rolled back)
+        let filter = smql_storage::instance::Filter {
+            state: None,
+            states: None,
+            predicate: None,
+            limit: None,
+            offset: None,
+            after_id: None,
+        };
+        let instances = engine.storage.find_instances("TxTest", &filter).await.unwrap();
+        assert_eq!(instances.len(), 0, "Spawned instance should have been deleted on rollback");
+    }
+
+    #[tokio::test]
+    async fn parse_begin_commit() {
+        let stmts = smql_parser::parse(
+            r#"BEGIN
+                SPAWN TxTest { label: "a" }
+                SPAWN TxTest { label: "b" }
+            COMMIT"#
+        ).unwrap();
+        assert_eq!(stmts.len(), 1);
+        if let Statement::Transaction(inner) = &stmts[0] {
+            assert_eq!(inner.len(), 2);
+        } else {
+            panic!("Expected Transaction statement");
+        }
+    }
+}
+
+// ==========================================================================
+// E14: Webhook Response Handling tests
+// ==========================================================================
+
+#[cfg(test)]
+mod webhook_response_tests {
+    use smql_ast::command::Statement;
+    use smql_ast::machine::Action;
+    use smql_hooks::json_to_value;
+    use smql_ast::value::Value;
+    use std::collections::BTreeMap;
+
+    // --- Parser tests ---
+
+    #[test]
+    fn parse_webhook_with_store_clause() {
+        let input = r#"
+DEFINE MACHINE WithWebhookStore (
+    STATES { pending, approved }
+    INITIAL STATE pending
+    TERMINAL STATES { approved }
+    TRANSITIONS {
+        pending -> approved {
+            ACTION : WEBHOOK("https://api.example.com/validate", SELF) STORE api_response
+        }
+    }
+)
+"#;
+        let stmts = smql_parser::parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(smql_ast::command::Command::DefineMachine(m)) => {
+                assert_eq!(m.transitions.len(), 1);
+                assert_eq!(m.transitions[0].actions.len(), 1);
+                match &m.transitions[0].actions[0] {
+                    Action::Webhook { url, payload, response_field, on_failure_state } => {
+                        assert_eq!(url, "https://api.example.com/validate");
+                        assert!(payload.is_some());
+                        assert_eq!(response_field.as_deref(), Some("api_response"));
+                        assert!(on_failure_state.is_none());
+                    }
+                    other => panic!("Expected Webhook, got {:?}", other),
+                }
+            }
+            other => panic!("Expected DefineMachine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_webhook_with_on_failure_clause() {
+        let input = r#"
+DEFINE MACHINE WithWebhookFailure (
+    STATES { pending, approved, failed }
+    INITIAL STATE pending
+    TERMINAL STATES { approved, failed }
+    TRANSITIONS {
+        pending -> approved {
+            ACTION : WEBHOOK("https://api.example.com/approve") ON_FAILURE failed
+        }
+    }
+)
+"#;
+        let stmts = smql_parser::parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(smql_ast::command::Command::DefineMachine(m)) => {
+                match &m.transitions[0].actions[0] {
+                    Action::Webhook { url, payload, response_field, on_failure_state } => {
+                        assert_eq!(url, "https://api.example.com/approve");
+                        assert!(payload.is_none());
+                        assert!(response_field.is_none());
+                        assert_eq!(on_failure_state.as_deref(), Some("failed"));
+                    }
+                    other => panic!("Expected Webhook, got {:?}", other),
+                }
+            }
+            other => panic!("Expected DefineMachine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_webhook_with_store_and_on_failure() {
+        let input = r#"
+DEFINE MACHINE WithBothClauses (
+    STATES { pending, approved, error }
+    INITIAL STATE pending
+    TERMINAL STATES { approved, error }
+    TRANSITIONS {
+        pending -> approved {
+            ACTION : WEBHOOK("https://api.example.com/check", SELF) STORE result ON_FAILURE error
+        }
+    }
+)
+"#;
+        let stmts = smql_parser::parse(input).unwrap();
+        match &stmts[0] {
+            Statement::Command(smql_ast::command::Command::DefineMachine(m)) => {
+                match &m.transitions[0].actions[0] {
+                    Action::Webhook { url, response_field, on_failure_state, .. } => {
+                        assert_eq!(url, "https://api.example.com/check");
+                        assert_eq!(response_field.as_deref(), Some("result"));
+                        assert_eq!(on_failure_state.as_deref(), Some("error"));
+                    }
+                    other => panic!("Expected Webhook, got {:?}", other),
+                }
+            }
+            other => panic!("Expected DefineMachine, got {:?}", other),
+        }
+    }
+
+    // --- json_to_value tests ---
+
+    #[test]
+    fn json_to_value_null() {
+        assert_eq!(json_to_value(&serde_json::Value::Null), Value::Null);
+    }
+
+    #[test]
+    fn json_to_value_bool() {
+        assert_eq!(json_to_value(&serde_json::json!(true)), Value::Bool(true));
+        assert_eq!(json_to_value(&serde_json::json!(false)), Value::Bool(false));
+    }
+
+    #[test]
+    fn json_to_value_number() {
+        assert_eq!(json_to_value(&serde_json::json!(42)), Value::Int(42));
+        assert_eq!(json_to_value(&serde_json::json!(3.14)), Value::Float(3.14));
+    }
+
+    #[test]
+    fn json_to_value_string() {
+        assert_eq!(json_to_value(&serde_json::json!("hello")), Value::Text("hello".to_string()));
+    }
+
+    #[test]
+    fn json_to_value_array() {
+        let json = serde_json::json!([1, "two", true]);
+        let val = json_to_value(&json);
+        assert_eq!(val, Value::List(vec![
+            Value::Int(1),
+            Value::Text("two".to_string()),
+            Value::Bool(true),
+        ]));
+    }
+
+    #[test]
+    fn json_to_value_object() {
+        let json = serde_json::json!({"name": "test", "count": 5});
+        let val = json_to_value(&json);
+        let mut expected = BTreeMap::new();
+        expected.insert("count".to_string(), Value::Int(5));
+        expected.insert("name".to_string(), Value::Text("test".to_string()));
+        assert_eq!(val, Value::Map(expected));
+    }
+
+    #[test]
+    fn json_to_value_nested() {
+        let json = serde_json::json!({"data": {"items": [1, 2]}});
+        let val = json_to_value(&json);
+        let mut inner = BTreeMap::new();
+        inner.insert("items".to_string(), Value::List(vec![Value::Int(1), Value::Int(2)]));
+        let mut outer = BTreeMap::new();
+        outer.insert("data".to_string(), Value::Map(inner));
+        assert_eq!(val, Value::Map(outer));
+    }
+}
+
+// ==========================================================================
+// E16: Machine Templates / Inheritance tests
+// ==========================================================================
+
+#[cfg(test)]
+mod template_tests {
+    use crate::Engine;
+    use smql_ast::command::{Command, Statement};
+    use smql_ast::value::Value;
+    use smql_catalog::MachineCatalog;
+    use smql_storage::MemoryStorage;
+    use std::sync::Arc;
+
+    fn setup_engine() -> Engine {
+        let catalog = Arc::new(MachineCatalog::new());
+        let storage = Arc::new(MemoryStorage::new());
+        Engine::new(catalog, storage)
+    }
+
+    #[test]
+    fn parse_define_template() {
+        let input = r#"
+DEFINE TEMPLATE BaseTicket (
+    STATES { open, closed }
+    INITIAL STATE open
+    TERMINAL STATES { closed }
+    DATA {
+        title : TEXT
+        priority : INT
+    }
+    TRANSITIONS {
+        open -> closed {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(input).unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Statement::Command(Command::DefineTemplate(def)) => {
+                assert_eq!(def.name, "BaseTicket");
+                assert_eq!(def.states.len(), 2);
+                assert_eq!(def.data.len(), 2);
+                assert_eq!(def.initial_state, "open");
+                assert_eq!(def.terminal_states, vec!["closed"]);
+                assert_eq!(def.transitions.len(), 1);
+            }
+            other => panic!("Expected DefineTemplate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_define_machine_extends() {
+        let input = r#"
+DEFINE MACHINE SupportTicket EXTENDS BaseTicket (
+    STATES { escalated }
+    TRANSITIONS {
+        open -> escalated {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(input).unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Statement::Command(Command::DefineMachine(def)) => {
+                assert_eq!(def.name, "SupportTicket");
+                assert_eq!(def.extends.as_deref(), Some("BaseTicket"));
+                // Only the machine-specific states (escalated), not the inherited ones yet
+                assert_eq!(def.states.len(), 1);
+                assert_eq!(def.states[0].name, "escalated");
+            }
+            other => panic!("Expected DefineMachine, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn template_inheritance_merges_states_and_data() {
+        let engine = setup_engine();
+
+        // Define template
+        let template_smql = r#"
+DEFINE TEMPLATE BaseWorkflow (
+    STATES { draft, active, done }
+    INITIAL STATE draft
+    TERMINAL STATES { done }
+    DATA {
+        created_by : TEXT
+        notes : TEXT
+    }
+    TRANSITIONS {
+        draft -> active {}
+        active -> done {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(template_smql).unwrap();
+        if let Statement::Command(Command::DefineTemplate(def)) = &stmts[0] {
+            engine.catalog.register_template(def.clone());
+        }
+
+        // Define machine extending the template, adding extra state and data
+        let machine_smql = r#"
+DEFINE MACHINE ReviewProcess EXTENDS BaseWorkflow (
+    STATES { review }
+    DATA {
+        reviewer : TEXT
+    }
+    TRANSITIONS {
+        active -> review {}
+        review -> done {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(machine_smql).unwrap();
+        if let Statement::Command(Command::DefineMachine(def)) = &stmts[0] {
+            engine.catalog.register(def.clone()).unwrap();
+        }
+
+        // The registered machine should have merged states and data
+        let machine = engine.catalog.get("ReviewProcess").unwrap();
+        let state_names: Vec<&str> = machine.states.iter().map(|s| s.name.as_str()).collect();
+        assert!(state_names.contains(&"draft"), "Should inherit draft from template");
+        assert!(state_names.contains(&"active"), "Should inherit active from template");
+        assert!(state_names.contains(&"done"), "Should inherit done from template");
+        assert!(state_names.contains(&"review"), "Should have own review state");
+
+        let field_names: Vec<&str> = machine.data.iter().map(|f| f.name.as_str()).collect();
+        assert!(field_names.contains(&"created_by"), "Should inherit created_by from template");
+        assert!(field_names.contains(&"notes"), "Should inherit notes from template");
+        assert!(field_names.contains(&"reviewer"), "Should have own reviewer field");
+
+        // Should inherit initial state from template
+        assert_eq!(machine.initial_state, "draft");
+        assert!(machine.terminal_states.contains(&"done".to_string()));
+
+        // Transitions: 2 from template (draft->active, active->done) + 2 from machine (active->review, review->done)
+        // But active->done is in both template and machine, so machine's takes precedence
+        assert!(machine.transitions.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn template_override_preserves_machine_specifics() {
+        let engine = setup_engine();
+
+        // Define template
+        let template_smql = r#"
+DEFINE TEMPLATE BaseTask (
+    STATES { new, doing, done }
+    INITIAL STATE new
+    TERMINAL STATES { done }
+    DATA {
+        title : TEXT
+    }
+    TRANSITIONS {
+        new -> doing {}
+        doing -> done {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(template_smql).unwrap();
+        if let Statement::Command(Command::DefineTemplate(def)) = &stmts[0] {
+            engine.catalog.register_template(def.clone());
+        }
+
+        // Machine with its own initial state (overrides template)
+        let machine_smql = r#"
+DEFINE MACHINE SpecialTask EXTENDS BaseTask (
+    STATES { pending }
+    INITIAL STATE pending
+    TRANSITIONS {
+        pending -> new {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(machine_smql).unwrap();
+        if let Statement::Command(Command::DefineMachine(def)) = &stmts[0] {
+            engine.catalog.register(def.clone()).unwrap();
+        }
+
+        let machine = engine.catalog.get("SpecialTask").unwrap();
+        // Machine's own initial state overrides template's
+        assert_eq!(machine.initial_state, "pending");
+        // Should still have template states
+        let state_names: Vec<&str> = machine.states.iter().map(|s| s.name.as_str()).collect();
+        assert!(state_names.contains(&"pending"));
+        assert!(state_names.contains(&"new"));
+        assert!(state_names.contains(&"doing"));
+        assert!(state_names.contains(&"done"));
+    }
+
+    #[tokio::test]
+    async fn extended_machine_can_spawn_and_transition() {
+        let engine = setup_engine();
+
+        // Define template
+        let template_smql = r#"
+DEFINE TEMPLATE SimpleBase (
+    STATES { open, closed }
+    INITIAL STATE open
+    TERMINAL STATES { closed }
+    DATA {
+        label : TEXT
+    }
+    TRANSITIONS {
+        open -> closed {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(template_smql).unwrap();
+        if let Statement::Command(Command::DefineTemplate(def)) = &stmts[0] {
+            engine.catalog.register_template(def.clone());
+        }
+
+        // Machine extending template, adding one more state
+        let machine_smql = r#"
+DEFINE MACHINE ExtendedTask EXTENDS SimpleBase (
+    STATES { in_progress }
+    TRANSITIONS {
+        open -> in_progress {}
+        in_progress -> closed {}
+    }
+)
+"#;
+        let stmts = smql_parser::parse(machine_smql).unwrap();
+        if let Statement::Command(Command::DefineMachine(def)) = &stmts[0] {
+            engine.catalog.register(def.clone()).unwrap();
+        }
+
+        // Spawn an instance
+        let spawn_cmd = smql_ast::command::SpawnCommand::new(
+            "ExtendedTask".to_string(),
+            vec![("label".to_string(), smql_ast::expression::Expression::new(
+                smql_ast::expression::ExpressionKind::Literal(Value::Text("test".to_string())),
+            ))],
+        );
+        let result = engine.spawn(&spawn_cmd).await.unwrap();
+        assert_eq!(result.instance.state, "open");
+        assert_eq!(result.instance.data.get("label"), Some(&Value::Text("test".to_string())));
+
+        // Transition to in_progress (added by machine)
+        let t_cmd = smql_ast::command::TransitionCommand::new(
+            "ExtendedTask".to_string(),
+            result.instance.id.as_str(),
+            "in_progress".to_string(),
+        );
+        let t_result = engine.try_transition(&t_cmd).await.unwrap().unwrap();
+        assert_eq!(t_result.instance.state, "in_progress");
+
+        // Transition to closed (inherited from template)
+        let t_cmd2 = smql_ast::command::TransitionCommand::new(
+            "ExtendedTask".to_string(),
+            result.instance.id.as_str(),
+            "closed".to_string(),
+        );
+        let t_result2 = engine.try_transition(&t_cmd2).await.unwrap().unwrap();
+        assert_eq!(t_result2.instance.state, "closed");
+    }
+
+    #[test]
+    fn template_not_found_returns_error() {
+        let engine = setup_engine();
+
+        let machine_smql = r#"
+DEFINE MACHINE BadExtends EXTENDS NonExistent (
+    STATES { a }
+    INITIAL STATE a
+    TERMINAL STATES { a }
+)
+"#;
+        let stmts = smql_parser::parse(machine_smql).unwrap();
+        if let Statement::Command(Command::DefineMachine(def)) = &stmts[0] {
+            let result = engine.catalog.register(def.clone());
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("NonExistent"), "Error should mention the missing template: {}", err);
+        }
     }
 }

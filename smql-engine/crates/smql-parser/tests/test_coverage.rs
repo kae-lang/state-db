@@ -335,7 +335,7 @@ DEFINE MACHINE WithWebhook (
     let m = parse_one_machine(input);
     assert_eq!(m.transitions[0].actions.len(), 1);
     match &m.transitions[0].actions[0] {
-        Action::Webhook { url, payload } => {
+        Action::Webhook { url, payload, .. } => {
             assert_eq!(url, "https://example.com/hook");
             assert!(payload.is_none());
         }
@@ -360,7 +360,7 @@ DEFINE MACHINE WithWebhook (
     let m = parse_one_machine(input);
     assert_eq!(m.transitions[0].actions.len(), 1);
     match &m.transitions[0].actions[0] {
-        Action::Webhook { url, payload } => {
+        Action::Webhook { url, payload, .. } => {
             assert_eq!(url, "https://example.com/data");
             assert!(payload.is_some());
         }

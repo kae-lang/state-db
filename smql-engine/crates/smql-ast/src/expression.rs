@@ -86,6 +86,11 @@ pub enum ExpressionKind {
         expr: Box<Expression>,
         values: Vec<Expression>,
     },
+    /// expr IN collection_expr — dynamic list membership (e.g., "approve" IN ACTOR.capabilities)
+    InCollection {
+        expr: Box<Expression>,
+        collection: Box<Expression>,
+    },
 
     // Collection predicates
     /// ALL(collection, predicate)
@@ -111,6 +116,26 @@ pub enum ExpressionKind {
     // Pattern matching
     /// PATTERN(regex_string)
     Pattern(String),
+
+    // Query-level predicates (used in FIND WHERE)
+    /// Instance is in a non-terminal state (alive).
+    Alive,
+    /// Instance is in a terminal state (terminated).
+    Terminated,
+    /// Instance has been in the given state longer than the specified duration.
+    StuckIn {
+        state: String,
+        duration: SmqlDuration,
+    },
+    /// Instance trail includes the given state.
+    HasVisited(String),
+    /// Instance trail does NOT include the given state.
+    NeverVisited(String),
+    /// TAG "key" == "value" — match against instance tags.
+    TagEq {
+        key: String,
+        value: String,
+    },
 }
 
 /// Binary operators.
@@ -199,6 +224,9 @@ impl fmt::Display for Expression {
                 let val_strs: Vec<String> = values.iter().map(|v| v.to_string()).collect();
                 write!(f, "{} IN ({})", expr, val_strs.join(", "))
             }
+            ExpressionKind::InCollection { expr, collection } => {
+                write!(f, "{} IN {}", expr, collection)
+            }
             ExpressionKind::All {
                 collection,
                 predicate,
@@ -215,6 +243,16 @@ impl fmt::Display for Expression {
                 write!(f, "SIGNAL FROM {} WHERE {}", machine, condition)
             }
             ExpressionKind::Pattern(regex) => write!(f, "PATTERN({})", regex),
+            ExpressionKind::Alive => write!(f, "ALIVE"),
+            ExpressionKind::Terminated => write!(f, "TERMINATED"),
+            ExpressionKind::StuckIn { state, duration } => {
+                write!(f, "STUCK_IN(\"{}\", {})", state, duration)
+            }
+            ExpressionKind::HasVisited(state) => write!(f, "HAS_VISITED(\"{}\")", state),
+            ExpressionKind::NeverVisited(state) => write!(f, "NEVER_VISITED(\"{}\")", state),
+            ExpressionKind::TagEq { key, value } => {
+                write!(f, "TAG \"{}\" == \"{}\"", key, value)
+            }
         }
     }
 }

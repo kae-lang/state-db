@@ -65,6 +65,14 @@ pub enum SmqlError {
 
     #[error("Internal error: {message}")]
     Internal { message: String },
+
+    #[error("Transaction failed at step {step}: {message}")]
+    TransactionFailed {
+        message: String,
+        step: usize,
+        #[source]
+        original_error: Box<SmqlError>,
+    },
 }
 
 impl SmqlError {
@@ -109,6 +117,13 @@ impl SmqlError {
     pub fn internal(message: impl Into<String>) -> Self {
         SmqlError::Internal {
             message: message.into(),
+        }
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        SmqlError::Conflict {
+            message: message.into(),
+            hint: None,
         }
     }
 }

@@ -184,6 +184,8 @@ mod tests {
             with_data: vec![("count".to_string(), serde_json::json!(10))],
             memo: Some("bump count".to_string()),
             as_actor: None,
+            as_role: None,
+            idempotency_key: None,
         };
         let s = format_transition("Machine", "id1", "next", &opts);
         assert!(s.contains("TRANSITION Machine"));
@@ -308,6 +310,8 @@ mod tests {
             with_data: vec![],
             memo: None,
             as_actor: Some("admin@example.com".to_string()),
+            as_role: None,
+            idempotency_key: None,
         };
         let s = format_transition("Machine", "id1", "next", &opts);
         assert_eq!(
@@ -325,6 +329,8 @@ mod tests {
             ],
             memo: Some("full options".to_string()),
             as_actor: Some("user1".to_string()),
+            as_role: None,
+            idempotency_key: None,
         };
         let s = format_transition("M", "id", "done", &opts);
         assert!(s.contains("WITH { count: 10, label: \"test\" }"));
@@ -345,6 +351,8 @@ mod tests {
             with_data: vec![("x".to_string(), serde_json::json!(1))],
             memo: Some("try it".to_string()),
             as_actor: Some("bot".to_string()),
+            as_role: None,
+            idempotency_key: None,
         };
         let s = format_try_transition("M", "id", "done", &opts);
         assert!(s.starts_with("TRY TRANSITION M"));

@@ -130,6 +130,31 @@ async fn execute_smql(engine: &Engine, smql: &str) -> Result<String, String> {
                 engine.catalog.register_saga(saga);
                 Ok("saga_defined".to_string())
             }
+            Command::DefineTemplate(def) => {
+                engine.catalog.register_template(def);
+                Ok("template_defined".to_string())
+            }
+            Command::Claim(claim_cmd) => {
+                let result = engine
+                    .execute_claim(&claim_cmd)
+                    .await
+                    .map_err(|e| format!("Claim error: {}", e))?;
+                Ok(format!("claimed:{}", result.instance.id.as_str()))
+            }
+            Command::Release(release_cmd) => {
+                let result = engine
+                    .execute_release(&release_cmd)
+                    .await
+                    .map_err(|e| format!("Release error: {}", e))?;
+                Ok(format!("released:{}", result.instance_id))
+            }
+            Command::Watch(watch_cmd) => {
+                let result = engine
+                    .watch(&watch_cmd)
+                    .await
+                    .map_err(|e| format!("Watch error: {}", e))?;
+                Ok(format!("watched:{},waited_ms:{}", result.instance.id.as_str(), result.waited_ms))
+            }
         },
         Statement::Query(query) => {
             let result = engine
@@ -137,6 +162,13 @@ async fn execute_smql(engine: &Engine, smql: &str) -> Result<String, String> {
                 .await
                 .map_err(|e| format!("Query error: {}", e))?;
             Ok(format!("{:?}", result))
+        }
+        Statement::Transaction(stmts) => {
+            let results = engine
+                .execute_transaction(&stmts)
+                .await
+                .map_err(|e| format!("Transaction error: {}", e))?;
+            Ok(format!("transaction:{} steps", results.len()))
         }
     }
 }

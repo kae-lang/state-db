@@ -1,5 +1,6 @@
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
+    Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Opts, Registry,
+    TextEncoder,
 };
 
 /// All Prometheus metrics for the SMQL server.
@@ -13,6 +14,7 @@ pub struct SmqlMetrics {
     pub timeout_fires_total: IntCounterVec,
     pub query_duration_seconds: HistogramVec,
     pub spawns_total: IntCounterVec,
+    pub events_dropped_total: IntCounter,
 }
 
 impl SmqlMetrics {
@@ -94,7 +96,16 @@ impl SmqlMetrics {
         registry
             .register(Box::new(query_duration_seconds.clone()))
             .unwrap();
+        let events_dropped_total = IntCounter::with_opts(Opts::new(
+            "smql_events_dropped_total",
+            "Total events dropped (no subscribers or subscriber lag)",
+        ))
+        .unwrap();
+
         registry.register(Box::new(spawns_total.clone())).unwrap();
+        registry
+            .register(Box::new(events_dropped_total.clone()))
+            .unwrap();
 
         Self {
             registry,
@@ -105,6 +116,7 @@ impl SmqlMetrics {
             timeout_fires_total,
             query_duration_seconds,
             spawns_total,
+            events_dropped_total,
         }
     }
 

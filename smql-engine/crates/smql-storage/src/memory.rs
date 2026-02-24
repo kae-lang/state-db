@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use crate::instance::{
-    Filter, Instance, InstanceId, Mutation, StoredTimer, TrailEntry, TrailFilter,
+    Filter, Instance, InstanceId, Mutation, StoredEvent, StoredTimer, TrailEntry, TrailFilter,
 };
 use crate::traits::Storage;
 
@@ -25,6 +25,10 @@ pub struct MemoryStorage {
     parent_index: DashMap<String, HashSet<String>>,
     /// Timer persistence: "{instance_id}:{state}" -> StoredTimer
     timers: DashMap<String, StoredTimer>,
+    /// Idempotency key store: key -> (serialized response, expiry timestamp)
+    idempotency: DashMap<String, (Vec<u8>, chrono::DateTime<Utc>)>,
+    /// Durable event log: append-only, sorted by ULID
+    events: RwLock<Vec<StoredEvent>>,
 }
 
 impl MemoryStorage {
@@ -36,6 +40,8 @@ impl MemoryStorage {
             trails: DashMap::new(),
             parent_index: DashMap::new(),
             timers: DashMap::new(),
+            idempotency: DashMap::new(),
+            events: RwLock::new(Vec::new()),
         }
     }
 
@@ -89,6 +95,9 @@ impl MemoryStorage {
                     if let Some(smql_ast::value::Value::List(list)) = instance.data.get_mut(field) {
                         list.push(value.clone());
                     }
+                }
+                Mutation::SetTag(key, value) => {
+                    instance.tags.insert(key.clone(), value.clone());
                 }
             }
         }
@@ -541,5 +550,198 @@ impl Storage for MemoryStorage {
             .iter()
             .map(|entry| entry.value().clone())
             .collect())
+    }
+
+    async fn store_idempotency(
+        &self,
+        key: &str,
+        response: &[u8],
+        expires_at: chrono::DateTime<Utc>,
+    ) -> SmqlResult<bool> {
+        // Check if key already exists and is not expired
+        if let Some(existing) = self.idempotency.get(key) {
+            if existing.1 > Utc::now() {
+                return Ok(false); // Key exists and not expired
+            }
+            // Expired — drop ref, then overwrite below
+            drop(existing);
+        }
+        self.idempotency
+            .insert(key.to_string(), (response.to_vec(), expires_at));
+        Ok(true)
+    }
+
+    async fn get_idempotency(&self, key: &str) -> SmqlResult<Option<Vec<u8>>> {
+        if let Some(entry) = self.idempotency.get(key) {
+            if entry.1 > Utc::now() {
+                return Ok(Some(entry.0.clone()));
+            }
+            // Expired — clean up
+            drop(entry);
+            self.idempotency.remove(key);
+        }
+        Ok(None)
+    }
+
+    async fn cleanup_expired_idempotency(&self) -> SmqlResult<usize> {
+        let now = Utc::now();
+        let expired_keys: Vec<String> = self
+            .idempotency
+            .iter()
+            .filter(|e| e.value().1 <= now)
+            .map(|e| e.key().clone())
+            .collect();
+        let count = expired_keys.len();
+        for key in expired_keys {
+            self.idempotency.remove(&key);
+        }
+        Ok(count)
+    }
+
+    async fn claim_instance(
+        &self,
+        id: &InstanceId,
+        agent_id: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> SmqlResult<()> {
+        let id_str = id.as_str();
+        let mut entry = self
+            .instances
+            .get_mut(&id_str)
+            .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+        let inst = entry.value_mut();
+        let now = Utc::now();
+        // Allow claim if: unclaimed, expired, or same agent re-claiming
+        if let Some(ref holder) = inst.claimed_by {
+            if holder != agent_id {
+                if let Some(exp) = inst.claim_expires_at {
+                    if exp > now {
+                        return Err(SmqlError::conflict(&format!(
+                            "Instance already claimed by '{}'",
+                            holder
+                        )));
+                    }
+                }
+            }
+        }
+        inst.claimed_by = Some(agent_id.to_string());
+        inst.claim_expires_at = Some(expires_at);
+        inst.updated_at = now;
+        Ok(())
+    }
+
+    async fn release_claim(&self, id: &InstanceId, agent_id: &str) -> SmqlResult<()> {
+        let id_str = id.as_str();
+        let mut entry = self
+            .instances
+            .get_mut(&id_str)
+            .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
+        let inst = entry.value_mut();
+        if let Some(ref holder) = inst.claimed_by {
+            if holder != agent_id {
+                return Err(SmqlError::conflict(&format!(
+                    "Instance claimed by '{}', not '{}'",
+                    holder, agent_id
+                )));
+            }
+        }
+        inst.claimed_by = None;
+        inst.claim_expires_at = None;
+        inst.updated_at = Utc::now();
+        Ok(())
+    }
+
+    async fn find_and_claim(
+        &self,
+        machine: &str,
+        filter: &Filter,
+        agent_id: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> SmqlResult<Option<Instance>> {
+        let now = Utc::now();
+        // Find candidates matching the filter
+        let candidates = self.find_instances(machine, filter).await?;
+        // Iterate and try to claim the first unclaimed one
+        for candidate in candidates {
+            let id_str = candidate.id.as_str();
+            if let Some(mut entry) = self.instances.get_mut(&id_str) {
+                let inst = entry.value_mut();
+                // Skip if claimed by another agent and not expired
+                if let Some(ref holder) = inst.claimed_by {
+                    if holder != agent_id {
+                        if let Some(exp) = inst.claim_expires_at {
+                            if exp > now {
+                                continue; // still claimed
+                            }
+                        }
+                    }
+                }
+                // Claim it
+                inst.claimed_by = Some(agent_id.to_string());
+                inst.claim_expires_at = Some(expires_at);
+                inst.updated_at = now;
+                return Ok(Some(inst.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn store_event(&self, event: &StoredEvent) -> SmqlResult<()> {
+        let mut events = self.events.write().unwrap();
+        events.push(event.clone());
+        Ok(())
+    }
+
+    async fn get_events_after(
+        &self,
+        after_id: Option<&str>,
+        machine: Option<&str>,
+        event_name: Option<&str>,
+        limit: usize,
+    ) -> SmqlResult<Vec<StoredEvent>> {
+        let events = self.events.read().unwrap();
+
+        // Find the starting position (events are sorted by ULID/timestamp)
+        let start = if let Some(after) = after_id {
+            // Find the event with this ID and start after it
+            events
+                .iter()
+                .position(|e| e.id == after)
+                .map(|pos| pos + 1)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let result: Vec<StoredEvent> = events[start..]
+            .iter()
+            .filter(|e| {
+                if let Some(m) = machine {
+                    if e.machine != m {
+                        return false;
+                    }
+                }
+                if let Some(name) = event_name {
+                    if e.event_name != name {
+                        return false;
+                    }
+                }
+                true
+            })
+            .take(limit)
+            .cloned()
+            .collect();
+
+        Ok(result)
+    }
+
+    async fn cleanup_events_before(
+        &self,
+        before: chrono::DateTime<Utc>,
+    ) -> SmqlResult<usize> {
+        let mut events = self.events.write().unwrap();
+        let original_len = events.len();
+        events.retain(|e| e.timestamp >= before);
+        Ok(original_len - events.len())
     }
 }

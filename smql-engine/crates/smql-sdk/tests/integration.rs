@@ -661,7 +661,7 @@ async fn test_execute_transition_denied() {
         .transition("gated", &inst.id, "closed", TransitionOptions::default())
         .await;
     assert!(
-        matches!(err, Err(SdkError::TransitionDenied(_))),
+        matches!(err, Err(SdkError::TransitionDenied { .. })),
         "Expected TransitionDenied, got: {:?}",
         err
     );
@@ -793,6 +793,8 @@ async fn test_transition_with_actor() {
         with_data: vec![],
         memo: None,
         as_actor: Some("admin@example.com".to_string()),
+        as_role: None,
+        idempotency_key: None,
     };
     let tr = client
         .transition("counter", &inst.id, "running", opts)
@@ -973,6 +975,9 @@ DEFINE MACHINE SigChild (
             parent_id: None,
             parent_machine: None,
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         })
         .await
         .unwrap();
@@ -999,6 +1004,9 @@ DEFINE MACHINE SigChild (
             parent_id: Some(parent_id.clone()),
             parent_machine: Some("SigParent".into()),
             as_actor: None,
+            idempotency_key: None,
+            tags: Vec::new(),
+            ttl: None,
         })
         .await
         .unwrap();

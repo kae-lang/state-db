@@ -68,6 +68,9 @@ async fn spawn_task(engine: &Engine, category: &str, priority: &str) -> String {
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     engine.spawn(&cmd).await.expect("spawn task").instance.id.as_str()
 }
@@ -521,6 +524,9 @@ DEFINE MACHINE GuardedTask (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let cmd2 = smql_ast::command::SpawnCommand {
         machine: "GuardedTask".to_string(),
@@ -531,6 +537,9 @@ DEFINE MACHINE GuardedTask (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     engine.spawn(&cmd1).await.unwrap();
     engine.spawn(&cmd2).await.unwrap();
@@ -794,6 +803,8 @@ async fn transition_machine_mismatch() {
         through: Vec::new(),
         or_stay: false,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     let result = engine.transition(&cmd).await;
     assert!(result.is_err(), "should fail with machine mismatch");
@@ -822,6 +833,8 @@ async fn transition_empty_machine_name_succeeds() {
         through: Vec::new(),
         or_stay: false,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     let result = engine.transition(&cmd).await;
     assert!(result.is_ok(), "empty machine name should pass validation");
@@ -957,6 +970,9 @@ DEFINE MACHINE Approval (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let spawn_result = engine.spawn(&cmd).await.expect("spawn");
     let id = spawn_result.instance.id.as_str();
@@ -972,6 +988,8 @@ DEFINE MACHINE Approval (
         through: Vec::new(),
         or_stay: true,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     let result = engine.transition(&t_cmd).await.expect("or_stay should succeed");
     // Instance stays in pending (from == to)
@@ -1022,6 +1040,9 @@ DEFINE MACHINE Approval2 (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let spawn_result = engine.spawn(&cmd).await.expect("spawn");
     let id = spawn_result.instance.id.as_str();
@@ -1039,6 +1060,8 @@ DEFINE MACHINE Approval2 (
         through: Vec::new(),
         or_stay: true,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     let result = engine.transition(&t_cmd).await.expect("or_stay should succeed");
     assert_eq!(result.from_state, "pending");
@@ -1071,6 +1094,8 @@ async fn transition_through_empty_steps() {
         through: Vec::new(), // Empty — normal transition
         or_stay: false,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     let result = engine.transition(&cmd).await.expect("transition");
     assert_eq!(result.from_state, "open");
@@ -1093,6 +1118,8 @@ async fn transition_through_single_hop() {
         through: vec!["in_progress".to_string()],
         or_stay: false,
         cascade: false,
+        idempotency_key: None,
+        tags: Vec::new(),
     };
     let result = engine.transition(&cmd).await.expect("through transition");
     assert_eq!(result.to_state, "done");
@@ -1140,6 +1167,9 @@ DEFINE MACHINE SetDefaults (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("tags"), Some(&Value::Set(Vec::new())));
@@ -1181,6 +1211,9 @@ DEFINE MACHINE ListDefaults (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("items"), Some(&Value::List(Vec::new())));
@@ -1222,6 +1255,9 @@ DEFINE MACHINE NullDefaults (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("description"), Some(&Value::Null));
@@ -1265,6 +1301,9 @@ DEFINE MACHINE NumericDefaults (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(result.instance.data.get("count"), Some(&Value::Int(42)));
@@ -1309,6 +1348,9 @@ DEFINE MACHINE StringDefaults (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     assert_eq!(
@@ -1355,6 +1397,9 @@ DEFINE MACHINE MapDefaults (
         parent_id: None,
         parent_machine: None,
         as_actor: None,
+        idempotency_key: None,
+        tags: Vec::new(),
+        ttl: None,
     };
     let result = engine.spawn(&cmd).await.expect("spawn");
     // EmptyMap or EmptySet — both parse as DEFAULT({}).
