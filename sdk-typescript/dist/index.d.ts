@@ -104,6 +104,55 @@ interface ComparePathsResult {
     segment_by: string;
     segments: ComparePathsSegment[];
 }
+interface ExplainedTransition {
+    from_state: string;
+    to_state: string;
+    guards: string[];
+    guards_met: boolean;
+    blocking_guards: string[];
+    recovery_options: RecoveryOption[];
+    requires_data: string[];
+    requires_role: string | null;
+}
+interface ExplainTransitionsResult {
+    machine: string;
+    current_state?: string;
+    instance_id?: string;
+    transitions: ExplainedTransition[];
+}
+interface StoredEvent {
+    id: string;
+    timestamp: string;
+    machine: string;
+    event_name: string;
+    instance_id?: string;
+    payload?: unknown;
+    actor?: string;
+}
+interface EventsResult {
+    count: number;
+    events: StoredEvent[];
+    next_cursor?: string;
+}
+/**
+ * Action types for AI agent recovery from errors.
+ */
+type RecoveryAction = "SET_FIELD" | "CHANGE_ACTOR" | "ESCALATE" | "RETRY" | "WAIT";
+/**
+ * An actionable recovery option for AI agents.
+ */
+interface RecoveryOption {
+    /** The type of recovery action. */
+    action: RecoveryAction;
+    /** The field to set (for SET_FIELD action). */
+    field?: string;
+    /** A suggested value or description of what to provide. */
+    suggested_value?: string;
+    /** Why this option would help resolve the error. */
+    reason: string;
+    /** An example SMQL command showing how to apply this recovery. */
+    example?: string;
+}
 interface HealthResponse {
     status: string;
 }
@@ -181,13 +230,13 @@ type Constraint = "REQUIRED" | "OPTIONAL" | "UNIQUE" | {
     expr: string;
 };
 
-type RunFn$h = (smql: string) => Promise<Instance>;
+type RunFn$j = (smql: string) => Promise<Instance>;
 declare class SpawnBuilder {
     private machine;
     private data;
     private thenTransition?;
     private run;
-    constructor(machine: string, run: RunFn$h);
+    constructor(machine: string, run: RunFn$j);
     set(data: Record<string, SmqlValue>): this;
     set(key: string, value: SmqlValue): this;
     thenTransitionTo(state: string): this;
@@ -195,7 +244,7 @@ declare class SpawnBuilder {
     execute(): Promise<Instance>;
 }
 
-type RunFn$g<T> = (smql: string) => Promise<T>;
+type RunFn$i<T> = (smql: string) => Promise<T>;
 declare class TransitionBuilder<T = TransitionResult> {
     private machine;
     private instanceId;
@@ -208,7 +257,7 @@ declare class TransitionBuilder<T = TransitionResult> {
     private orStayFlag;
     private cascadeFlag;
     private run;
-    constructor(machine: string, instanceId: string, toState: string, isTry: boolean, run: RunFn$g<T>);
+    constructor(machine: string, instanceId: string, toState: string, isTry: boolean, run: RunFn$i<T>);
     with(data: Record<string, SmqlValue>): this;
     memo(text: string): this;
     asActor(actor: string): this;
@@ -219,7 +268,7 @@ declare class TransitionBuilder<T = TransitionResult> {
     execute(): Promise<T>;
 }
 
-type RunFn$f = (smql: string) => Promise<BatchTransitionResult>;
+type RunFn$h = (smql: string) => Promise<BatchTransitionResult>;
 declare class BatchTransitionBuilder {
     private machine;
     private filterExpr?;
@@ -228,7 +277,7 @@ declare class BatchTransitionBuilder {
     private memoText?;
     private actor?;
     private run;
-    constructor(machine: string, run: RunFn$f);
+    constructor(machine: string, run: RunFn$h);
     where(expr: string): this;
     to(state: string): this;
     with(data: Record<string, SmqlValue>): this;
@@ -238,21 +287,22 @@ declare class BatchTransitionBuilder {
     execute(): Promise<BatchTransitionResult>;
 }
 
-type RunFn$e = (smql: string) => Promise<Instance>;
+type RunFn$g = (smql: string) => Promise<Instance>;
 declare class GetBuilder {
     private machine;
     private instanceId;
     private actorRole?;
     private run;
-    constructor(machine: string, instanceId: string, run: RunFn$e);
+    constructor(machine: string, instanceId: string, run: RunFn$g);
     asActor(role: string): this;
     toSmql(): string;
     execute(): Promise<Instance>;
 }
 
-type RunFn$d = (smql: string) => Promise<FindResult>;
+type RunFn$f = (smql: string) => Promise<FindResult>;
 declare class FindBuilder {
     private machine;
+    private selectFields;
     private filterExpr?;
     private sorts;
     private limitVal?;
@@ -260,7 +310,8 @@ declare class FindBuilder {
     private afterId?;
     private actorRole?;
     private run;
-    constructor(machine: string, run: RunFn$d);
+    constructor(machine: string, run: RunFn$f);
+    select(...fields: string[]): this;
     where(expr: string): this;
     inState(state: string): this;
     stuckIn(state: string, duration: string): this;
@@ -275,20 +326,21 @@ declare class FindBuilder {
     count(): Promise<number>;
 }
 
-type RunFn$c = (smql: string) => Promise<AggregateResult>;
+type RunFn$e = (smql: string) => Promise<AggregateResult>;
 declare class AggregateBuilder {
     private machine;
     private measures;
     private filterExpr?;
     private groupByClauses;
     private run;
-    constructor(machine: string, run: RunFn$c);
+    constructor(machine: string, run: RunFn$e);
     measure(func: string, field?: string, alias?: string): this;
     count(alias?: string): this;
     sum(field: string, alias?: string): this;
     avg(field: string, alias?: string): this;
     min(field: string, alias?: string): this;
     max(field: string, alias?: string): this;
+    percentile(field: string, alias?: string): this;
     where(expr: string): this;
     groupByState(): this;
     groupBy(field: string): this;
@@ -296,61 +348,65 @@ declare class AggregateBuilder {
     execute(): Promise<AggregateResult>;
 }
 
-type RunFn$b = (smql: string) => Promise<TrailResult>;
+type RunFn$d = (smql: string) => Promise<TrailResult>;
 declare class TrailBuilder {
     private instanceId;
     private actorFilter?;
     private fromStateFilter?;
     private toStateFilter?;
+    private sinceExpr?;
+    private untilExpr?;
     private run;
-    constructor(instanceId: string, run: RunFn$b);
+    constructor(instanceId: string, run: RunFn$d);
     byActor(actor: string): this;
     fromState(state: string): this;
     toState(state: string): this;
+    since(expr: string): this;
+    until(expr: string): this;
     toSmql(): string;
     execute(): Promise<TrailResult>;
 }
 
-type RunFn$a = (smql: string) => Promise<PathsResult>;
+type RunFn$c = (smql: string) => Promise<PathsResult>;
 declare class PathsBuilder {
     private machine;
     private filterExpr?;
     private limitVal?;
     private run;
-    constructor(machine: string, run: RunFn$a);
+    constructor(machine: string, run: RunFn$c);
     where(expr: string): this;
     limit(n: number): this;
     toSmql(): string;
     execute(): Promise<PathsResult>;
 }
 
-type RunFn$9 = (smql: string) => Promise<FunnelResult>;
+type RunFn$b = (smql: string) => Promise<FunnelResult>;
 declare class FunnelBuilder {
     private machine;
     private states;
     private filterExpr?;
     private run;
-    constructor(machine: string, run: RunFn$9);
+    constructor(machine: string, run: RunFn$b);
     through(states: string[]): this;
     where(expr: string): this;
     toSmql(): string;
     execute(): Promise<FunnelResult>;
 }
 
-type RunFn$8 = (smql: string) => Promise<ComparePathsResult>;
+type RunFn$a = (smql: string) => Promise<ComparePathsResult>;
 declare class ComparePathsBuilder {
     private machine;
     private segmentField?;
     private filterExpr?;
     private run;
-    constructor(machine: string, run: RunFn$8);
+    constructor(machine: string, run: RunFn$a);
     segmentBy(field: string): this;
     where(expr: string): this;
     toSmql(): string;
     execute(): Promise<ComparePathsResult>;
 }
 
-type RunFn$7 = (smql: string) => Promise<DefineResult>;
+type RunFn$9 = (smql: string) => Promise<DefineResult>;
 declare class DefineMachineBuilder {
     private name;
     private dataFields;
@@ -363,7 +419,7 @@ declare class DefineMachineBuilder {
     private hooks;
     private roles;
     private run;
-    constructor(name: string, run: RunFn$7);
+    constructor(name: string, run: RunFn$9);
     data(name: string, type: DataType, ...constraints: Constraint[]): this;
     states(...names: string[]): this;
     initialState(state: string): this;
@@ -435,18 +491,18 @@ declare class RoleDefBuilder {
     end(): DefineMachineBuilder;
 }
 
-type RunFn$6 = (smql: string) => Promise<DefineResult>;
+type RunFn$8 = (smql: string) => Promise<DefineResult>;
 declare class DefinePolicyBuilder {
     private name;
     private guards;
     private run;
-    constructor(name: string, run: RunFn$6);
+    constructor(name: string, run: RunFn$8);
     guard(expr: string): this;
     toSmql(): string;
     execute(): Promise<DefineResult>;
 }
 
-type RunFn$5 = (smql: string) => Promise<DefineResult>;
+type RunFn$7 = (smql: string) => Promise<DefineResult>;
 declare class DefineViewBuilder {
     private name;
     private machineName?;
@@ -455,7 +511,7 @@ declare class DefineViewBuilder {
     private limitVal?;
     private offsetVal?;
     private run;
-    constructor(name: string, run: RunFn$5);
+    constructor(name: string, run: RunFn$7);
     find(machine: string): this;
     where(expr: string): this;
     sortBy(field: string, direction?: SortDirection): this;
@@ -465,7 +521,7 @@ declare class DefineViewBuilder {
     execute(): Promise<DefineResult>;
 }
 
-type RunFn$4 = (smql: string) => Promise<DefineResult>;
+type RunFn$6 = (smql: string) => Promise<DefineResult>;
 declare class DefineProjectionBuilder {
     private name;
     private machineName?;
@@ -474,7 +530,7 @@ declare class DefineProjectionBuilder {
     private groupByClauses;
     private refreshPolicy?;
     private run;
-    constructor(name: string, run: RunFn$4);
+    constructor(name: string, run: RunFn$6);
     aggregate(machine: string): this;
     measure(func: string, field?: string, alias?: string): this;
     count(alias?: string): this;
@@ -490,14 +546,14 @@ declare class DefineProjectionBuilder {
     execute(): Promise<DefineResult>;
 }
 
-type RunFn$3 = (smql: string) => Promise<DefineResult>;
+type RunFn$5 = (smql: string) => Promise<DefineResult>;
 declare class DefineRuleBuilder {
     private name;
     private triggerClause?;
     private invariantExpr?;
     private messageText?;
     private run;
-    constructor(name: string, run: RunFn$3);
+    constructor(name: string, run: RunFn$5);
     beforeTransition(machine: string): this;
     beforeSpawn(machine: string): this;
     beforeAnyTransition(): this;
@@ -507,13 +563,13 @@ declare class DefineRuleBuilder {
     execute(): Promise<DefineResult>;
 }
 
-type RunFn$2 = (smql: string) => Promise<DefineResult>;
+type RunFn$4 = (smql: string) => Promise<DefineResult>;
 declare class DefineSubscriptionBuilder {
     private name;
     private eventClause?;
     private actions;
     private run;
-    constructor(name: string, run: RunFn$2);
+    constructor(name: string, run: RunFn$4);
     onEnter(state: string, machine: string): this;
     onExit(state: string, machine: string): this;
     onSpawn(machine: string): this;
@@ -524,7 +580,7 @@ declare class DefineSubscriptionBuilder {
     execute(): Promise<DefineResult>;
 }
 
-type RunFn$1 = (smql: string) => Promise<DefineResult>;
+type RunFn$3 = (smql: string) => Promise<DefineResult>;
 interface SagaStepDef {
     name: string;
     transition: string;
@@ -538,7 +594,7 @@ declare class DefineSagaBuilder {
     private onCompleteActions;
     private onFailureActions;
     private run;
-    constructor(name: string, run: RunFn$1);
+    constructor(name: string, run: RunFn$3);
     triggerOnEnter(state: string, machine: string): this;
     triggerOnSpawn(machine: string): this;
     triggerManual(): this;
@@ -563,12 +619,12 @@ declare class SagaStepBuilder {
     end(): DefineSagaBuilder;
 }
 
-type RunFn = (smql: string) => Promise<AlterMachineResult>;
+type RunFn$2 = (smql: string) => Promise<AlterMachineResult>;
 declare class AlterMachineBuilder {
     private machine;
     private operations;
     private run;
-    constructor(machine: string, run: RunFn);
+    constructor(machine: string, run: RunFn$2);
     addState(name: string): this;
     removeState(state: string, migrateTo: string): this;
     addTransition(from: string, to: string): this;
@@ -578,6 +634,32 @@ declare class AlterMachineBuilder {
     backfill(field: string, expr: string): this;
     toSmql(): string;
     execute(): Promise<AlterMachineResult>;
+}
+
+type RunFn$1 = (smql: string) => Promise<ExplainTransitionsResult>;
+declare class ExplainTransitionsBuilder {
+    private machine;
+    private instanceId?;
+    private actor?;
+    private run;
+    constructor(machine: string, run: RunFn$1);
+    instance(id: string): this;
+    asActor(actor: string): this;
+    toSmql(): string;
+    execute(): Promise<ExplainTransitionsResult>;
+}
+
+type RunFn = (smql: string) => Promise<EventsResult>;
+declare class GetEventsBuilder {
+    private machine?;
+    private afterId?;
+    private limitVal?;
+    private run;
+    constructor(run: RunFn, machine?: string);
+    after(id: string): this;
+    limit(n: number): this;
+    toSmql(): string;
+    execute(): Promise<EventsResult>;
 }
 
 type EventHandler = (event: SubscriptionEvent) => void;
@@ -625,6 +707,9 @@ declare class SmqlClient {
     paths(machine: string): PathsBuilder;
     funnel(machine: string): FunnelBuilder;
     comparePaths(machine: string): ComparePathsBuilder;
+    explainTransitions(machine: string): ExplainTransitionsBuilder;
+    getEvents(machine?: string): GetEventsBuilder;
+    getTransitions(id: string, actor?: string): Promise<ExplainTransitionsResult>;
     defineMachine(name: string): DefineMachineBuilder;
     definePolicy(name: string): DefinePolicyBuilder;
     defineView(name: string): DefineViewBuilder;
@@ -690,6 +775,27 @@ declare class Expr {
     static isSet(field: string): Expr;
     static isNotSet(field: string): Expr;
     static raw(expr: string): Expr;
+    static alive(): Expr;
+    static terminated(): Expr;
+    static stuckIn(state: string, duration: string): Expr;
+    static hasVisited(state: string): Expr;
+    static neverVisited(state: string): Expr;
+    static tag(key: string, value: string): Expr;
+    static parentState(): Expr;
+    static parentField(field: string): Expr;
+    static signalFrom(machine: string, condition: string): Expr;
+    static all(collection: string, predicate: string): Expr;
+    static any(collection: string, predicate: string): Expr;
+    static countOf(collection: string): Expr;
+    static elapsed(): Expr;
+    static elapsedSince(state: string): Expr;
+    static now(): Expr;
+    static today(): Expr;
+    static timeoutRemaining(): Expr;
+    static len(expr: string): Expr;
+    static lower(expr: string): Expr;
+    static upper(expr: string): Expr;
+    static pattern(regex: string): Expr;
     eq(other: Expr | SmqlValue): Expr;
     neq(other: Expr | SmqlValue): Expr;
     gt(other: Expr | SmqlValue): Expr;
@@ -699,10 +805,15 @@ declare class Expr {
     and(other: Expr): Expr;
     or(other: Expr): Expr;
     not(): Expr;
+    add(other: Expr | SmqlValue): Expr;
+    sub(other: Expr | SmqlValue): Expr;
+    mul(other: Expr | SmqlValue): Expr;
+    div(other: Expr | SmqlValue): Expr;
+    dot(field: string): Expr;
     in(...values: SmqlValue[]): Expr;
 }
 
 declare function escapeString(s: string): string;
 declare function valueToSmql(val: SmqlValue): string;
 
-export { AggregateBuilder, type AggregateResult, type AggregateRow, AlterMachineBuilder, type AlterMachineResult, BadRequestError, BatchTransitionBuilder, type BatchTransitionResult, ComparePathsBuilder, type ComparePathsResult, type ComparePathsSegment, ConflictError, type Constraint, type DataType, DefineMachineBuilder, DefinePolicyBuilder, DefineProjectionBuilder, type DefineResult, DefineRuleBuilder, DefineSagaBuilder, DefineSubscriptionBuilder, DefineViewBuilder, type DeleteInstanceResult, type ExecuteResponse, Expr, FindBuilder, type FindResult, FunnelBuilder, type FunnelResult, type FunnelStage, GetBuilder, type HealthResponse, HookDefBuilder, type Instance, type MachineInfo, type MachinesListResponse, NetworkError, NotFoundError, type PathEntry, PathsBuilder, type PathsResult, RoleDefBuilder, SagaStepBuilder, SmqlClient, type SmqlClientConfig, SmqlError, SmqlErrorCode, SmqlSubscription, type SmqlValue, type SortClause, type SortDirection, SpawnBuilder, type SpawnResult, type SubscribeOptions, SubscriptionError, type SubscriptionEvent, TimeoutError, TrailBuilder, type TrailEntry, type TrailResult, TransitionBuilder, TransitionDefBuilder, TransitionDeniedError, type TransitionResult, type TryTransitionResult, UnauthorizedError, escapeString, valueToSmql };
+export { AggregateBuilder, type AggregateResult, type AggregateRow, AlterMachineBuilder, type AlterMachineResult, BadRequestError, BatchTransitionBuilder, type BatchTransitionResult, ComparePathsBuilder, type ComparePathsResult, type ComparePathsSegment, ConflictError, type Constraint, type DataType, DefineMachineBuilder, DefinePolicyBuilder, DefineProjectionBuilder, type DefineResult, DefineRuleBuilder, DefineSagaBuilder, DefineSubscriptionBuilder, DefineViewBuilder, type DeleteInstanceResult, type EventsResult, type ExecuteResponse, ExplainTransitionsBuilder, type ExplainTransitionsResult, type ExplainedTransition, Expr, FindBuilder, type FindResult, FunnelBuilder, type FunnelResult, type FunnelStage, GetBuilder, GetEventsBuilder, type HealthResponse, HookDefBuilder, type Instance, type MachineInfo, type MachinesListResponse, NetworkError, NotFoundError, type PathEntry, PathsBuilder, type PathsResult, RoleDefBuilder, SagaStepBuilder, SmqlClient, type SmqlClientConfig, SmqlError, SmqlErrorCode, SmqlSubscription, type SmqlValue, type SortClause, type SortDirection, SpawnBuilder, type SpawnResult, type StoredEvent, type SubscribeOptions, SubscriptionError, type SubscriptionEvent, TimeoutError, TrailBuilder, type TrailEntry, type TrailResult, TransitionBuilder, TransitionDefBuilder, TransitionDeniedError, type TransitionResult, type TryTransitionResult, UnauthorizedError, escapeString, valueToSmql };

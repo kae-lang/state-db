@@ -126,6 +126,44 @@ export interface ComparePathsResult {
   segments: ComparePathsSegment[];
 }
 
+// --- Explain transitions ---
+
+export interface ExplainedTransition {
+  from_state: string;
+  to_state: string;
+  guards: string[];
+  guards_met: boolean;
+  blocking_guards: string[];
+  recovery_options: RecoveryOption[];
+  requires_data: string[];
+  requires_role: string | null;
+}
+
+export interface ExplainTransitionsResult {
+  machine: string;
+  current_state?: string;
+  instance_id?: string;
+  transitions: ExplainedTransition[];
+}
+
+// --- Events ---
+
+export interface StoredEvent {
+  id: string;
+  timestamp: string;
+  machine: string;
+  event_name: string;
+  instance_id?: string;
+  payload?: unknown;
+  actor?: string;
+}
+
+export interface EventsResult {
+  count: number;
+  events: StoredEvent[];
+  next_cursor?: string;
+}
+
 // --- Error types for AI agents ---
 
 /**

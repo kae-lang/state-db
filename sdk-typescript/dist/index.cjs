@@ -33,10 +33,12 @@ __export(index_exports, {
   DefineSagaBuilder: () => DefineSagaBuilder,
   DefineSubscriptionBuilder: () => DefineSubscriptionBuilder,
   DefineViewBuilder: () => DefineViewBuilder,
+  ExplainTransitionsBuilder: () => ExplainTransitionsBuilder,
   Expr: () => Expr,
   FindBuilder: () => FindBuilder,
   FunnelBuilder: () => FunnelBuilder,
   GetBuilder: () => GetBuilder,
+  GetEventsBuilder: () => GetEventsBuilder,
   HookDefBuilder: () => HookDefBuilder,
   NetworkError: () => NetworkError,
   NotFoundError: () => NotFoundError,
@@ -362,6 +364,7 @@ var GetBuilder = class {
 // src/builder/find.ts
 var FindBuilder = class {
   machine;
+  selectFields = [];
   filterExpr;
   sorts = [];
   limitVal;
@@ -372,6 +375,10 @@ var FindBuilder = class {
   constructor(machine, run) {
     this.machine = machine;
     this.run = run;
+  }
+  select(...fields) {
+    this.selectFields.push(...fields);
+    return this;
   }
   where(expr) {
     this.filterExpr = expr;
@@ -407,6 +414,9 @@ var FindBuilder = class {
   }
   toSmql() {
     let s = `FIND ${this.machine}`;
+    if (this.selectFields.length > 0) {
+      s += ` SELECT ${this.selectFields.join(", ")}`;
+    }
     if (this.filterExpr) {
       s += ` WHERE ${this.filterExpr}`;
     }
@@ -474,6 +484,9 @@ var AggregateBuilder = class {
   max(field, alias) {
     return this.measure("MAX", field, alias);
   }
+  percentile(field, alias) {
+    return this.measure("PERCENTILE", field, alias);
+  }
   where(expr) {
     this.filterExpr = expr;
     return this;
@@ -515,6 +528,8 @@ var TrailBuilder = class {
   actorFilter;
   fromStateFilter;
   toStateFilter;
+  sinceExpr;
+  untilExpr;
   run;
   constructor(instanceId, run) {
     this.instanceId = instanceId;
@@ -532,12 +547,22 @@ var TrailBuilder = class {
     this.toStateFilter = state;
     return this;
   }
+  since(expr) {
+    this.sinceExpr = expr;
+    return this;
+  }
+  until(expr) {
+    this.untilExpr = expr;
+    return this;
+  }
   toSmql() {
     let s = `TRAIL OF "${escapeString(this.instanceId)}"`;
     const filters = [];
     if (this.actorFilter) filters.push(`ACTOR ${this.actorFilter}`);
     if (this.fromStateFilter) filters.push(`FROM ${this.fromStateFilter}`);
     if (this.toStateFilter) filters.push(`TO ${this.toStateFilter}`);
+    if (this.sinceExpr) filters.push(`SINCE ${this.sinceExpr}`);
+    if (this.untilExpr) filters.push(`UNTIL ${this.untilExpr}`);
     if (filters.length > 0) {
       s += ` WHERE ${filters.join(", ")}`;
     }
@@ -1393,6 +1418,75 @@ function formatConstraint2(c) {
   }
 }
 
+// src/builder/explain-transitions.ts
+var ExplainTransitionsBuilder = class {
+  machine;
+  instanceId;
+  actor;
+  run;
+  constructor(machine, run) {
+    this.machine = machine;
+    this.run = run;
+  }
+  instance(id) {
+    this.instanceId = id;
+    return this;
+  }
+  asActor(actor) {
+    this.actor = actor;
+    return this;
+  }
+  toSmql() {
+    let s = `EXPLAIN TRANSITIONS FOR ${this.machine}`;
+    if (this.instanceId) {
+      s += ` "${escapeString(this.instanceId)}"`;
+    }
+    if (this.actor) {
+      s += ` AS ${this.actor}`;
+    }
+    return s;
+  }
+  execute() {
+    return this.run(this.toSmql());
+  }
+};
+
+// src/builder/get-events.ts
+var GetEventsBuilder = class {
+  machine;
+  afterId;
+  limitVal;
+  run;
+  constructor(run, machine) {
+    this.machine = machine;
+    this.run = run;
+  }
+  after(id) {
+    this.afterId = id;
+    return this;
+  }
+  limit(n) {
+    this.limitVal = n;
+    return this;
+  }
+  toSmql() {
+    let s = "GET EVENTS";
+    if (this.machine) {
+      s += ` ${this.machine}`;
+    }
+    if (this.afterId) {
+      s += ` AFTER "${escapeString(this.afterId)}"`;
+    }
+    if (this.limitVal !== void 0) {
+      s += ` LIMIT ${this.limitVal}`;
+    }
+    return s;
+  }
+  execute() {
+    return this.run(this.toSmql());
+  }
+};
+
 // src/subscription.ts
 var SmqlSubscription = class {
   url;
@@ -1723,6 +1817,25 @@ var SmqlClient = class {
       (smql) => this.executeAs(smql)
     );
   }
+  explainTransitions(machine) {
+    return new ExplainTransitionsBuilder(
+      machine,
+      (smql) => this.executeAs(smql)
+    );
+  }
+  getEvents(machine) {
+    return new GetEventsBuilder(
+      (smql) => this.executeAs(smql),
+      machine
+    );
+  }
+  async getTransitions(id, actor) {
+    let path = `/instances/${encodeURIComponent(id)}/transitions`;
+    if (actor) {
+      path += `?as=${encodeURIComponent(actor)}`;
+    }
+    return this.request("GET", path);
+  }
   defineMachine(name) {
     return new DefineMachineBuilder(
       name,
@@ -1816,6 +1929,72 @@ var Expr = class _Expr {
   static raw(expr) {
     return new _Expr(expr);
   }
+  // --- Query predicates ---
+  static alive() {
+    return new _Expr("ALIVE");
+  }
+  static terminated() {
+    return new _Expr("TERMINATED");
+  }
+  static stuckIn(state, duration) {
+    return new _Expr(`STUCK_IN("${state}", ${duration})`);
+  }
+  static hasVisited(state) {
+    return new _Expr(`HAS_VISITED("${state}")`);
+  }
+  static neverVisited(state) {
+    return new _Expr(`NEVER_VISITED("${state}")`);
+  }
+  static tag(key, value) {
+    return new _Expr(`TAG "${key}" == "${value}"`);
+  }
+  // --- Composition predicates ---
+  static parentState() {
+    return new _Expr("PARENT.STATE");
+  }
+  static parentField(field) {
+    return new _Expr(`PARENT.${field}`);
+  }
+  static signalFrom(machine, condition) {
+    return new _Expr(`SIGNAL FROM ${machine} WHERE ${condition}`);
+  }
+  static all(collection, predicate) {
+    return new _Expr(`ALL(${collection}, ${predicate})`);
+  }
+  static any(collection, predicate) {
+    return new _Expr(`ANY(${collection}, ${predicate})`);
+  }
+  static countOf(collection) {
+    return new _Expr(`COUNT(${collection})`);
+  }
+  // --- Built-in functions ---
+  static elapsed() {
+    return new _Expr("elapsed()");
+  }
+  static elapsedSince(state) {
+    return new _Expr(`elapsed_since("${state}")`);
+  }
+  static now() {
+    return new _Expr("NOW()");
+  }
+  static today() {
+    return new _Expr("TODAY()");
+  }
+  static timeoutRemaining() {
+    return new _Expr("timeout_remaining()");
+  }
+  static len(expr) {
+    return new _Expr(`len(${expr})`);
+  }
+  static lower(expr) {
+    return new _Expr(`lower(${expr})`);
+  }
+  static upper(expr) {
+    return new _Expr(`upper(${expr})`);
+  }
+  static pattern(regex) {
+    return new _Expr(`PATTERN("${regex}")`);
+  }
   // --- Comparisons ---
   eq(other) {
     return new _Expr(`${this.expr} == ${toExprStr(other)}`);
@@ -1845,6 +2024,23 @@ var Expr = class _Expr {
   not() {
     return new _Expr(`NOT (${this.expr})`);
   }
+  // --- Arithmetic ---
+  add(other) {
+    return new _Expr(`${this.expr} + ${toExprStr(other)}`);
+  }
+  sub(other) {
+    return new _Expr(`${this.expr} - ${toExprStr(other)}`);
+  }
+  mul(other) {
+    return new _Expr(`${this.expr} * ${toExprStr(other)}`);
+  }
+  div(other) {
+    return new _Expr(`${this.expr} / ${toExprStr(other)}`);
+  }
+  // --- Field access ---
+  dot(field) {
+    return new _Expr(`${this.expr}.${field}`);
+  }
   // --- Set membership ---
   in(...values) {
     const items = values.map(valueToSmql);
@@ -1870,10 +2066,12 @@ function toExprStr(v) {
   DefineSagaBuilder,
   DefineSubscriptionBuilder,
   DefineViewBuilder,
+  ExplainTransitionsBuilder,
   Expr,
   FindBuilder,
   FunnelBuilder,
   GetBuilder,
+  GetEventsBuilder,
   HookDefBuilder,
   NetworkError,
   NotFoundError,

@@ -23,6 +23,7 @@ for (const ticket of results.instances) {
 
 | Method | Description |
 |--------|-------------|
+| `.select(...fields)` | Field projection -- only return these data fields |
 | `.where(expr)` | Raw WHERE expression |
 | `.inState(state)` | Shorthand for `WHERE STATE IS state` |
 | `.stuckIn(state, duration)` | Shorthand for `WHERE STUCK IN state FOR duration` |
@@ -70,6 +71,12 @@ if (page1.next_cursor) {
 
 // Stuck instances
 const stale = await client.find("Order").stuckIn("pending", "24h").execute();
+
+// Field projection -- only return subject and priority
+const projected = await client.find("Ticket")
+  .select("subject", "priority")
+  .inState("open")
+  .execute();
 ```
 
 ## AggregateBuilder
@@ -98,6 +105,7 @@ for (const row of stats.rows) {
 | `.avg(field, alias?)` | AVG(field) |
 | `.min(field, alias?)` | MIN(field) |
 | `.max(field, alias?)` | MAX(field) |
+| `.percentile(field, alias?)` | PERCENTILE(field) |
 | `.where(expr)` | Filter before aggregating |
 | `.groupByState()` | Group by current state |
 | `.groupBy(field)` | Group by a data field |
@@ -132,6 +140,8 @@ for (const entry of trail.entries) {
 | `.byActor(actor)` | Filter by actor |
 | `.fromState(state)` | Filter by source state |
 | `.toState(state)` | Filter by target state |
+| `.since(expr)` | Keep entries at or after this timestamp |
+| `.until(expr)` | Keep entries at or before this timestamp |
 | `.execute()` | Returns `Promise<TrailResult>` |
 
 ### TrailResult
@@ -221,6 +231,120 @@ for (const segment of result.segments) {
 | `.segmentBy(field)` | Required dimension to segment by |
 | `.where(expr)` | Filter instances |
 | `.execute()` | Returns `Promise<ComparePathsResult>` |
+
+## ExplainTransitionsBuilder
+
+Introspect which transitions are available for a machine or specific instance, including guard evaluation.
+
+```typescript
+// Schema-level: list all transitions defined on the machine
+const schema = await client.explainTransitions("Order").execute();
+
+for (const t of schema.transitions) {
+  console.log(`${t.from_state} -> ${t.to_state} (guards: ${t.guards.join(", ")})`);
+}
+
+// Instance-level: evaluate guards against actual instance data
+const available = await client.explainTransitions("Order")
+  .instance("01HQXYZ...")
+  .asActor("admin")
+  .execute();
+
+for (const t of available.transitions) {
+  if (t.guards_met) {
+    console.log(`Can transition to ${t.to_state}`);
+  } else {
+    console.log(`Blocked: ${t.blocking_guards.join(", ")}`);
+  }
+}
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `.instance(id)` | Evaluate against a specific instance |
+| `.asActor(actor)` | Set the actor for guard evaluation |
+| `.execute()` | Returns `Promise<ExplainTransitionsResult>` |
+
+### REST Shortcut
+
+```typescript
+// Equivalent to EXPLAIN TRANSITIONS FOR Machine "id" AS actor
+const result = await client.getTransitions("01HQXYZ...", "admin");
+```
+
+### ExplainTransitionsResult
+
+```typescript
+interface ExplainTransitionsResult {
+  machine: string;
+  current_state?: string;
+  instance_id?: string;
+  transitions: ExplainedTransition[];
+}
+
+interface ExplainedTransition {
+  from_state: string;
+  to_state: string;
+  guards: string[];
+  guards_met: boolean;
+  blocking_guards: string[];
+  recovery_options: RecoveryOption[];
+  requires_data: string[];
+  requires_role: string | null;
+}
+```
+
+## GetEventsBuilder
+
+Retrieve the durable event log with cursor-based pagination.
+
+```typescript
+// Get all events
+const events = await client.getEvents().limit(100).execute();
+
+for (const e of events.events) {
+  console.log(`[${e.event_name}] ${e.machine} ${e.instance_id} at ${e.timestamp}`);
+}
+
+// Get events for a specific machine with pagination
+const page1 = await client.getEvents("Order").limit(50).execute();
+if (page1.next_cursor) {
+  const page2 = await client.getEvents("Order")
+    .after(page1.next_cursor)
+    .limit(50)
+    .execute();
+}
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `.after(id)` | Cursor-based pagination (return events after this event ID) |
+| `.limit(n)` | Maximum events to return |
+| `.execute()` | Returns `Promise<EventsResult>` |
+
+### EventsResult
+
+```typescript
+interface EventsResult {
+  count: number;
+  events: StoredEvent[];
+  next_cursor?: string;
+}
+
+interface StoredEvent {
+  id: string;
+  timestamp: string;
+  machine: string;
+  event_name: string;
+  instance_id?: string;
+  payload?: unknown;
+  actor?: string;
+}
+```
 
 ## Inspecting Generated SMQL
 

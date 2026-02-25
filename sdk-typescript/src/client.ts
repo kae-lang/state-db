@@ -13,6 +13,8 @@ import type {
   PathsResult,
   FunnelResult,
   ComparePathsResult,
+  ExplainTransitionsResult,
+  EventsResult,
   HealthResponse,
   MachinesListResponse,
   MachineInfo,
@@ -48,6 +50,8 @@ import { DefineRuleBuilder } from "./builder/define-rule.js";
 import { DefineSubscriptionBuilder } from "./builder/define-subscription.js";
 import { DefineSagaBuilder } from "./builder/define-saga.js";
 import { AlterMachineBuilder } from "./builder/alter-machine.js";
+import { ExplainTransitionsBuilder } from "./builder/explain-transitions.js";
+import { GetEventsBuilder } from "./builder/get-events.js";
 import { SmqlSubscription } from "./subscription.js";
 
 export class SmqlClient {
@@ -333,6 +337,27 @@ export class SmqlClient {
     return new ComparePathsBuilder(machine, (smql) =>
       this.executeAs<ComparePathsResult>(smql),
     );
+  }
+
+  explainTransitions(machine: string): ExplainTransitionsBuilder {
+    return new ExplainTransitionsBuilder(machine, (smql) =>
+      this.executeAs<ExplainTransitionsResult>(smql),
+    );
+  }
+
+  getEvents(machine?: string): GetEventsBuilder {
+    return new GetEventsBuilder(
+      (smql) => this.executeAs<EventsResult>(smql),
+      machine,
+    );
+  }
+
+  async getTransitions(id: string, actor?: string): Promise<ExplainTransitionsResult> {
+    let path = `/instances/${encodeURIComponent(id)}/transitions`;
+    if (actor) {
+      path += `?as=${encodeURIComponent(actor)}`;
+    }
+    return this.request<ExplainTransitionsResult>("GET", path);
   }
 
   defineMachine(name: string): DefineMachineBuilder {

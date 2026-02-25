@@ -43,6 +43,61 @@ Expr.isNotSet("phone")         // phone IS NOT SET
 Expr.raw("STUCK IN open FOR 24h")
 ```
 
+### Query Predicates
+
+Used in FIND WHERE clauses to filter by lifecycle state, visit history, and tags.
+
+```typescript
+// Lifecycle predicates
+Expr.alive()                              // ALIVE (non-terminal state)
+Expr.terminated()                         // TERMINATED (terminal state)
+Expr.stuckIn("pending", "24h")            // STUCK_IN("pending", 24h)
+
+// Visit history
+Expr.hasVisited("reviewed")               // HAS_VISITED("reviewed")
+Expr.neverVisited("rejected")             // NEVER_VISITED("rejected")
+
+// Tag matching
+Expr.tag("env", "production")             // TAG "env" == "production"
+```
+
+### Composition Predicates
+
+For machines with parent-child relationships.
+
+```typescript
+// Parent access
+Expr.parentState()                        // PARENT.STATE
+Expr.parentField("priority")              // PARENT.priority
+
+// Child collection predicates
+Expr.all("items", "STATE IS shipped")     // ALL(items, STATE IS shipped)
+Expr.any("items", "STATE IS failed")      // ANY(items, STATE IS failed)
+Expr.countOf("items")                     // COUNT(items)
+
+// Cross-machine signals
+Expr.signalFrom("Child", "STATE IS done") // SIGNAL FROM Child WHERE STATE IS done
+```
+
+### Built-in Functions
+
+```typescript
+// Time functions
+Expr.elapsed()                            // elapsed() -- duration in current state
+Expr.elapsedSince("pending")              // elapsed_since("pending")
+Expr.now()                                // NOW() -- current UTC DateTime
+Expr.today()                              // TODAY() -- current UTC date
+Expr.timeoutRemaining()                   // timeout_remaining()
+
+// String/collection functions
+Expr.len("tags")                          // len(tags)
+Expr.lower("name")                        // lower(name)
+Expr.upper("name")                        // upper(name)
+
+// Pattern matching
+Expr.pattern("^[A-Z]{3}$")               // PATTERN("^[A-Z]{3}$")
+```
+
 ### Comparisons
 
 ```typescript
@@ -73,6 +128,22 @@ isAdult.not()             // NOT (age >= 18)
 ```typescript
 Expr.field("status").in("open", "pending", "review")
 // status IN { "open", "pending", "review" }
+```
+
+### Arithmetic
+
+```typescript
+Expr.field("price").add(Expr.field("tax"))   // price + tax
+Expr.field("total").sub(Expr.field("paid"))  // total - paid
+Expr.field("qty").mul(Expr.field("price"))   // qty * price
+Expr.field("total").div(Expr.field("count")) // total / count
+```
+
+### Dot Access (Nested Fields)
+
+```typescript
+Expr.field("address").dot("city")                   // address.city
+Expr.field("order").dot("shipping").dot("country")  // order.shipping.country
 ```
 
 ### Using with Builders

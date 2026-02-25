@@ -26,6 +26,10 @@ export type {
   FunnelResult,
   ComparePathsSegment,
   ComparePathsResult,
+  ExplainedTransition,
+  ExplainTransitionsResult,
+  StoredEvent,
+  EventsResult,
   HealthResponse,
   MachinesListResponse,
   MachineInfo,
@@ -80,6 +84,8 @@ export {
   DefineSagaBuilder,
   SagaStepBuilder,
   AlterMachineBuilder,
+  ExplainTransitionsBuilder,
+  GetEventsBuilder,
 } from "./builder/index.js";
 
 // Value serialization utilities

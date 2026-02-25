@@ -45,6 +45,10 @@ export class AggregateBuilder {
     return this.measure("MAX", field, alias);
   }
 
+  percentile(field: string, alias?: string): this {
+    return this.measure("PERCENTILE", field, alias);
+  }
+
   where(expr: string): this {
     this.filterExpr = expr;
     return this;

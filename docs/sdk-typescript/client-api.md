@@ -285,6 +285,57 @@ const funnel = await client.funnel("Order").through(["pending", "confirmed", "sh
 const compared = await client.comparePaths("Order").segmentBy("region").execute();
 ```
 
+### `explainTransitions`
+
+Returns an `ExplainTransitionsBuilder`. Introspect available transitions for a machine or instance.
+
+```typescript
+// Schema-level
+const schema = await client.explainTransitions("Order").execute();
+
+// Instance-level with guard evaluation
+const available = await client.explainTransitions("Order")
+  .instance("01HQXYZ...")
+  .asActor("admin")
+  .execute();
+
+for (const t of available.transitions) {
+  console.log(`${t.from_state} -> ${t.to_state}: ${t.guards_met ? "allowed" : "blocked"}`);
+}
+```
+
+### `getTransitions`
+
+REST shortcut for explain transitions on a specific instance.
+
+```typescript
+const result = await client.getTransitions("01HQXYZ...", "admin");
+```
+
+**Signature:** `getTransitions(id: string, actor?: string): Promise<ExplainTransitionsResult>`
+
+### `getEvents`
+
+Returns a `GetEventsBuilder` for the durable event log.
+
+```typescript
+const events = await client.getEvents("Order").limit(100).execute();
+
+for (const e of events.events) {
+  console.log(`[${e.event_name}] ${e.instance_id}`);
+}
+
+// Paginate
+if (events.next_cursor) {
+  const more = await client.getEvents("Order")
+    .after(events.next_cursor)
+    .limit(100)
+    .execute();
+}
+```
+
+**Signature:** `getEvents(machine?: string): GetEventsBuilder`
+
 ## Definition Builders
 
 ### `definePolicy` / `defineView` / `defineProjection` / `defineRule` / `defineSubscription` / `defineSaga`

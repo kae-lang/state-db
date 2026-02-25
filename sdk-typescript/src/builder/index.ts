@@ -23,3 +23,5 @@ export { DefineRuleBuilder } from "./define-rule.js";
 export { DefineSubscriptionBuilder } from "./define-subscription.js";
 export { DefineSagaBuilder, SagaStepBuilder } from "./define-saga.js";
 export { AlterMachineBuilder } from "./alter-machine.js";
+export { ExplainTransitionsBuilder } from "./explain-transitions.js";
+export { GetEventsBuilder } from "./get-events.js";

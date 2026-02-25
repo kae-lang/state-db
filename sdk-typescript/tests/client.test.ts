@@ -263,5 +263,66 @@ describe("SmqlClient", () => {
       const builder = client.trail("abc");
       expect(builder.toSmql()).toBe('TRAIL OF "abc"');
     });
+
+    it("explainTransitions returns a builder", () => {
+      const client = new SmqlClient({ url: "http://localhost:4200" });
+      const builder = client.explainTransitions("Order");
+      expect(builder.toSmql()).toBe("EXPLAIN TRANSITIONS FOR Order");
+    });
+
+    it("explainTransitions with instance returns a builder", () => {
+      const client = new SmqlClient({ url: "http://localhost:4200" });
+      const builder = client.explainTransitions("Order").instance("abc123");
+      expect(builder.toSmql()).toBe(
+        'EXPLAIN TRANSITIONS FOR Order "abc123"',
+      );
+    });
+
+    it("getEvents returns a builder", () => {
+      const client = new SmqlClient({ url: "http://localhost:4200" });
+      const builder = client.getEvents("Order");
+      expect(builder.toSmql()).toBe("GET EVENTS Order");
+    });
+
+    it("getEvents without machine returns a builder", () => {
+      const client = new SmqlClient({ url: "http://localhost:4200" });
+      const builder = client.getEvents();
+      expect(builder.toSmql()).toBe("GET EVENTS");
+    });
+  });
+
+  describe("REST shortcuts", () => {
+    it("getTransitions calls REST endpoint", async () => {
+      const client = new SmqlClient({ url: "http://localhost:4200" });
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          machine: "Order",
+          current_state: "pending",
+          instance_id: "abc",
+          transitions: [],
+        }),
+      );
+      const result = await client.getTransitions("abc");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://localhost:4200/instances/abc/transitions",
+        expect.any(Object),
+      );
+      expect(result.machine).toBe("Order");
+    });
+
+    it("getTransitions with actor passes query param", async () => {
+      const client = new SmqlClient({ url: "http://localhost:4200" });
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({
+          machine: "Order",
+          transitions: [],
+        }),
+      );
+      await client.getTransitions("abc", "admin");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://localhost:4200/instances/abc/transitions?as=admin",
+        expect.any(Object),
+      );
+    });
   });
 });

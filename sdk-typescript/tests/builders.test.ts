@@ -17,6 +17,8 @@ import { DefineRuleBuilder } from "../src/builder/define-rule.js";
 import { DefineSubscriptionBuilder } from "../src/builder/define-subscription.js";
 import { DefineSagaBuilder } from "../src/builder/define-saga.js";
 import { AlterMachineBuilder } from "../src/builder/alter-machine.js";
+import { ExplainTransitionsBuilder } from "../src/builder/explain-transitions.js";
+import { GetEventsBuilder } from "../src/builder/get-events.js";
 
 const noop = () => Promise.resolve(null as any);
 
@@ -466,5 +468,131 @@ describe("AlterMachineBuilder", () => {
     expect(smql).toContain("ADD DATA priority : INT -> REQUIRED BACKFILL 0");
     expect(smql).toContain("REMOVE DATA legacy_field");
     expect(smql).toContain("BACKFILL priority = 1");
+  });
+});
+
+describe("FindBuilder - select", () => {
+  it("generates find with select fields", () => {
+    const b = new FindBuilder("ticket", noop);
+    b.select("subject", "priority").where("STATE IS open");
+    expect(b.toSmql()).toBe(
+      "FIND ticket SELECT subject, priority WHERE STATE IS open",
+    );
+  });
+
+  it("generates find with select only", () => {
+    const b = new FindBuilder("ticket", noop);
+    b.select("id", "state");
+    expect(b.toSmql()).toBe("FIND ticket SELECT id, state");
+  });
+});
+
+describe("AggregateBuilder - percentile", () => {
+  it("generates percentile measure", () => {
+    const b = new AggregateBuilder("ticket", noop);
+    b.percentile("resolution_time", "p50");
+    expect(b.toSmql()).toBe(
+      "AGGREGATE ticket MEASURE PERCENTILE(resolution_time) AS p50",
+    );
+  });
+
+  it("generates percentile without alias", () => {
+    const b = new AggregateBuilder("ticket", noop);
+    b.percentile("duration");
+    expect(b.toSmql()).toBe(
+      "AGGREGATE ticket MEASURE PERCENTILE(duration)",
+    );
+  });
+});
+
+describe("TrailBuilder - since/until", () => {
+  it("generates trail with since", () => {
+    const b = new TrailBuilder("abc", noop);
+    b.since('"2026-01-01T00:00:00Z"');
+    expect(b.toSmql()).toBe(
+      'TRAIL OF "abc" WHERE SINCE "2026-01-01T00:00:00Z"',
+    );
+  });
+
+  it("generates trail with until", () => {
+    const b = new TrailBuilder("abc", noop);
+    b.until('"2026-02-01T00:00:00Z"');
+    expect(b.toSmql()).toBe(
+      'TRAIL OF "abc" WHERE UNTIL "2026-02-01T00:00:00Z"',
+    );
+  });
+
+  it("generates trail with since and until", () => {
+    const b = new TrailBuilder("abc", noop);
+    b.since('"2026-01-01"').until('"2026-02-01"');
+    expect(b.toSmql()).toBe(
+      'TRAIL OF "abc" WHERE SINCE "2026-01-01", UNTIL "2026-02-01"',
+    );
+  });
+
+  it("generates trail with all filters including since/until", () => {
+    const b = new TrailBuilder("abc", noop);
+    b.byActor("admin").fromState("open").toState("closed")
+      .since('"2026-01-01"').until('"2026-02-01"');
+    expect(b.toSmql()).toBe(
+      'TRAIL OF "abc" WHERE ACTOR admin, FROM open, TO closed, SINCE "2026-01-01", UNTIL "2026-02-01"',
+    );
+  });
+});
+
+describe("ExplainTransitionsBuilder", () => {
+  it("generates schema-level explain", () => {
+    const b = new ExplainTransitionsBuilder("Order", noop);
+    expect(b.toSmql()).toBe("EXPLAIN TRANSITIONS FOR Order");
+  });
+
+  it("generates instance-level explain", () => {
+    const b = new ExplainTransitionsBuilder("Order", noop);
+    b.instance("abc123");
+    expect(b.toSmql()).toBe('EXPLAIN TRANSITIONS FOR Order "abc123"');
+  });
+
+  it("generates explain with actor", () => {
+    const b = new ExplainTransitionsBuilder("Order", noop);
+    b.instance("abc123").asActor("admin");
+    expect(b.toSmql()).toBe(
+      'EXPLAIN TRANSITIONS FOR Order "abc123" AS admin',
+    );
+  });
+
+  it("generates schema-level explain with actor", () => {
+    const b = new ExplainTransitionsBuilder("Order", noop);
+    b.asActor("viewer");
+    expect(b.toSmql()).toBe("EXPLAIN TRANSITIONS FOR Order AS viewer");
+  });
+});
+
+describe("GetEventsBuilder", () => {
+  it("generates get all events", () => {
+    const b = new GetEventsBuilder(noop);
+    expect(b.toSmql()).toBe("GET EVENTS");
+  });
+
+  it("generates get events for machine", () => {
+    const b = new GetEventsBuilder(noop, "Order");
+    expect(b.toSmql()).toBe("GET EVENTS Order");
+  });
+
+  it("generates get events with after cursor", () => {
+    const b = new GetEventsBuilder(noop, "Order");
+    b.after("01HQXYZ");
+    expect(b.toSmql()).toBe('GET EVENTS Order AFTER "01HQXYZ"');
+  });
+
+  it("generates get events with limit", () => {
+    const b = new GetEventsBuilder(noop);
+    b.limit(50);
+    expect(b.toSmql()).toBe("GET EVENTS LIMIT 50");
+  });
+
+  it("generates get events with all options", () => {
+    const b = new GetEventsBuilder(noop, "Order");
+    b.after("01HQXYZ").limit(25);
+    expect(b.toSmql()).toBe('GET EVENTS Order AFTER "01HQXYZ" LIMIT 25');
   });
 });

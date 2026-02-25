@@ -5,6 +5,7 @@ type RunFn = (smql: string) => Promise<FindResult>;
 
 export class FindBuilder {
   private machine: string;
+  private selectFields: string[] = [];
   private filterExpr?: string;
   private sorts: { field: string; direction: SortDirection }[] = [];
   private limitVal?: number;
@@ -16,6 +17,11 @@ export class FindBuilder {
   constructor(machine: string, run: RunFn) {
     this.machine = machine;
     this.run = run;
+  }
+
+  select(...fields: string[]): this {
+    this.selectFields.push(...fields);
+    return this;
   }
 
   where(expr: string): this {
@@ -60,6 +66,10 @@ export class FindBuilder {
 
   toSmql(): string {
     let s = `FIND ${this.machine}`;
+
+    if (this.selectFields.length > 0) {
+      s += ` SELECT ${this.selectFields.join(", ")}`;
+    }
 
     if (this.filterExpr) {
       s += ` WHERE ${this.filterExpr}`;

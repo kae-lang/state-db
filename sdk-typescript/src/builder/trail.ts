@@ -8,6 +8,8 @@ export class TrailBuilder {
   private actorFilter?: string;
   private fromStateFilter?: string;
   private toStateFilter?: string;
+  private sinceExpr?: string;
+  private untilExpr?: string;
   private run: RunFn;
 
   constructor(instanceId: string, run: RunFn) {
@@ -30,6 +32,16 @@ export class TrailBuilder {
     return this;
   }
 
+  since(expr: string): this {
+    this.sinceExpr = expr;
+    return this;
+  }
+
+  until(expr: string): this {
+    this.untilExpr = expr;
+    return this;
+  }
+
   toSmql(): string {
     let s = `TRAIL OF "${escapeString(this.instanceId)}"`;
 
@@ -37,6 +49,8 @@ export class TrailBuilder {
     if (this.actorFilter) filters.push(`ACTOR ${this.actorFilter}`);
     if (this.fromStateFilter) filters.push(`FROM ${this.fromStateFilter}`);
     if (this.toStateFilter) filters.push(`TO ${this.toStateFilter}`);
+    if (this.sinceExpr) filters.push(`SINCE ${this.sinceExpr}`);
+    if (this.untilExpr) filters.push(`UNTIL ${this.untilExpr}`);
 
     if (filters.length > 0) {
       s += ` WHERE ${filters.join(", ")}`;
