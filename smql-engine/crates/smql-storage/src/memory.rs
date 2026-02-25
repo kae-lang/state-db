@@ -241,7 +241,7 @@ impl Storage for MemoryStorage {
         new_state: &str,
         mutations: &[Mutation],
         trail_entry: TrailEntry,
-    ) -> SmqlResult<()> {
+    ) -> SmqlResult<Instance> {
         let id_str = id.as_str();
 
         let mut entry = self
@@ -271,6 +271,9 @@ impl Storage for MemoryStorage {
         entry.version += 1;
         entry.trail_length += 1;
 
+        // Clone the fully-mutated instance before dropping the mutable reference
+        let updated = entry.clone();
+
         // Drop the mutable reference before updating indices
         drop(entry);
 
@@ -286,7 +289,7 @@ impl Storage for MemoryStorage {
                 .push(trail_entry);
         }
 
-        Ok(())
+        Ok(updated)
     }
 
     async fn delete_instance(&self, id: &InstanceId) -> SmqlResult<()> {
@@ -325,11 +328,15 @@ impl Storage for MemoryStorage {
 
     async fn count_by_state(&self, machine: &str) -> SmqlResult<HashMap<String, usize>> {
         let mut counts: HashMap<String, usize> = HashMap::new();
+        let prefix = format!("{}:", machine);
 
-        if let Some(ids) = self.machine_index.get(machine) {
-            for id in ids.iter() {
-                if let Some(inst) = self.instances.get(id) {
-                    *counts.entry(inst.state.clone()).or_insert(0) += 1;
+        // O(S) scan of state_index instead of O(N) instance lookups.
+        // state_index keys are "{machine}:{state}" → set of instance IDs.
+        for entry in self.state_index.iter() {
+            if let Some(state) = entry.key().strip_prefix(&prefix) {
+                let count = entry.value().len();
+                if count > 0 {
+                    counts.insert(state.to_string(), count);
                 }
             }
         }
@@ -365,6 +372,26 @@ impl Storage for MemoryStorage {
             .read()
             .map(|entries| entries.clone())
             .map_err(|e| SmqlError::internal(format!("Trail lock poisoned: {}", e)))
+    }
+
+    async fn get_trails_batch(
+        &self,
+        ids: &[InstanceId],
+    ) -> SmqlResult<HashMap<String, Vec<TrailEntry>>> {
+        let mut result = HashMap::with_capacity(ids.len());
+        for id in ids {
+            let id_str = id.as_str();
+            if let Some(trail) = self.trails.get(&id_str) {
+                let entries = trail
+                    .read()
+                    .map(|e| e.clone())
+                    .map_err(|e| SmqlError::internal(format!("Trail lock poisoned: {}", e)))?;
+                result.insert(id_str, entries);
+            } else {
+                result.insert(id_str, Vec::new());
+            }
+        }
+        Ok(result)
     }
 
     async fn query_trails(

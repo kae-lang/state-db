@@ -314,6 +314,37 @@ impl Engine {
 
     /// AGGREGATE Machine MEASURE ... GROUP BY ...
     async fn execute_aggregate(&self, query: &AggregateQuery) -> SmqlResult<QueryResult> {
+        // Fast path: GROUP BY STATE with no filter and only COUNT measures (or no measures).
+        // Uses count_by_state() which is O(S) instead of O(N) — avoids loading any instances.
+        if query.filter.is_none()
+            && query.group_by == [GroupByClause::State]
+            && (query.measures.is_empty()
+                || query.measures.iter().all(|m| {
+                    matches!(m.function, AggregateFunction::Count) && m.field.is_none()
+                }))
+        {
+            let counts = self.storage.count_by_state(&query.machine).await?;
+            let mut rows = Vec::with_capacity(counts.len());
+            for (state, count) in counts {
+                let mut group_key = BTreeMap::new();
+                group_key.insert("state".to_string(), Value::Text(state));
+                let mut measures = BTreeMap::new();
+                if query.measures.is_empty() {
+                    measures.insert("count".to_string(), Value::Int(count as i64));
+                } else {
+                    for measure in &query.measures {
+                        let alias = measure
+                            .alias
+                            .clone()
+                            .unwrap_or_else(|| format!("{}", measure.function));
+                        measures.insert(alias, Value::Int(count as i64));
+                    }
+                }
+                rows.push(AggregateRow { group_key, measures });
+            }
+            return Ok(QueryResult::Aggregate(rows));
+        }
+
         let filter = Filter { limit: Some(MAX_QUERY_INSTANCES), ..Default::default() };
         let mut instances = self.storage.find_instances(&query.machine, &filter).await?;
 
@@ -404,17 +435,24 @@ impl Engine {
             });
         }
 
+        // Batch-load all trails at once instead of N+1 individual calls
+        let ids: Vec<_> = instances.iter().map(|i| i.id.clone()).collect();
+        let trails_map = self.storage.get_trails_batch(&ids).await?;
+
         let mut path_counts: HashMap<Vec<String>, usize> = HashMap::new();
 
         for inst in &instances {
-            let trail = self.storage.get_trail(&inst.id).await?;
+            let trail = match trails_map.get(&inst.id.as_str()) {
+                Some(t) => t,
+                None => continue,
+            };
             if trail.is_empty() {
                 continue;
             }
 
             let path: Vec<String> = {
                 let mut p = vec![trail[0].from_state.clone()];
-                for entry in &trail {
+                for entry in trail {
                     if !entry.to_state.is_empty() {
                         p.push(entry.to_state.clone());
                     }
@@ -451,11 +489,15 @@ impl Engine {
             });
         }
 
+        // Batch-load all trails at once for funnel counting
+        let ids: Vec<_> = instances.iter().map(|i| i.id.clone()).collect();
+        let trails_map = self.storage.get_trails_batch(&ids).await?;
+
         let total = instances.len();
         let mut stages = Vec::new();
 
         for state in &query.states {
-            let count = count_instances_that_visited_state(&instances, state, &self.storage).await;
+            let count = count_instances_that_visited_state_batch(&instances, state, &trails_map);
             let rate = if total > 0 {
                 count as f64 / total as f64
             } else {
@@ -485,6 +527,10 @@ impl Engine {
             });
         }
 
+        // Batch-load all trails at once
+        let ids: Vec<_> = instances.iter().map(|i| i.id.clone()).collect();
+        let trails_map = self.storage.get_trails_batch(&ids).await?;
+
         // Group instances by segment_by field value, then count paths within each segment
         let mut segment_map: HashMap<String, (Value, HashMap<Vec<String>, usize>)> = HashMap::new();
 
@@ -496,14 +542,17 @@ impl Engine {
                 .unwrap_or(Value::Null);
             let segment_key = format!("{}", segment_val);
 
-            let trail = self.storage.get_trail(&inst.id).await?;
+            let trail = match trails_map.get(&inst.id.as_str()) {
+                Some(t) => t,
+                None => continue,
+            };
             if trail.is_empty() {
                 continue;
             }
 
             let path: Vec<String> = {
                 let mut p = vec![trail[0].from_state.clone()];
-                for entry in &trail {
+                for entry in trail {
                     if !entry.to_state.is_empty() {
                         p.push(entry.to_state.clone());
                     }
@@ -1083,11 +1132,11 @@ fn compare_values_for_sort(a: &Value, b: &Value) -> std::cmp::Ordering {
     }
 }
 
-/// Count how many instances have visited a given state (based on trail or current state).
-async fn count_instances_that_visited_state(
+/// Count how many instances have visited a given state using pre-loaded trails.
+fn count_instances_that_visited_state_batch(
     instances: &[Instance],
     state: &str,
-    storage: &std::sync::Arc<dyn smql_storage::Storage>,
+    trails_map: &HashMap<String, Vec<TrailEntry>>,
 ) -> usize {
     let mut count = 0;
     for inst in instances {
@@ -1095,8 +1144,8 @@ async fn count_instances_that_visited_state(
             count += 1;
             continue;
         }
-        // Check trail
-        if let Ok(trail) = storage.get_trail(&inst.id).await {
+        // Check pre-loaded trail
+        if let Some(trail) = trails_map.get(&inst.id.as_str()) {
             if trail.iter().any(|e| e.to_state == state) {
                 count += 1;
             }

@@ -1050,7 +1050,8 @@ impl Engine {
         };
 
         // --- 4. Atomic storage write ---
-        self.storage
+        let transitioned_instance = self
+            .storage
             .transition_instance(
                 &id,
                 instance.version,
@@ -1076,6 +1077,7 @@ impl Engine {
         let _ = self.storage.store_event(&transition_event).await;
 
         // --- 4b. Execute deferred SPAWN commands (after version check succeeded) ---
+        let has_deferred_spawns = !deferred_spawns.is_empty();
         for (field, child_cmd) in deferred_spawns {
             match self.spawn(&child_cmd).await {
                 Ok(result) => {
@@ -1227,11 +1229,16 @@ impl Engine {
             self.cascade_children(&id, &instance.machine).await;
         }
 
-        let updated = self
-            .storage
-            .get_instance(&id)
-            .await?
-            .ok_or_else(|| SmqlError::not_found("Instance", &cmd.instance_id))?;
+        // Use the returned instance directly; only re-fetch if deferred spawns
+        // mutated the stored instance further via update_instance.
+        let updated = if has_deferred_spawns {
+            self.storage
+                .get_instance(&id)
+                .await?
+                .ok_or_else(|| SmqlError::not_found("Instance", &cmd.instance_id))?
+        } else {
+            transitioned_instance
+        };
 
         tracing::info!(from = %instance.state, to = %cmd.to_state, "transition complete");
         let result = TransitionResult {
@@ -1640,7 +1647,7 @@ impl Engine {
             .await;
 
         // Now propagate the transition error (if any)
-        transition_result?;
+        let transitioned_instance = transition_result?;
 
         // --- Fire hooks for timeout transition ---
         if let Ok(machine_def) = self.catalog.get(&instance.machine) {
@@ -1765,11 +1772,8 @@ impl Engine {
             }
         }
 
-        let updated = self
-            .storage
-            .get_instance(&id)
-            .await?
-            .ok_or_else(|| SmqlError::not_found("Instance", instance_id))?;
+        // No deferred spawns in timeout path — use returned instance directly
+        let updated = transitioned_instance;
 
         tracing::info!("timeout transition fired");
         Ok(Some(TransitionResult {

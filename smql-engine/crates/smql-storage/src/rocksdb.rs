@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use rocksdb::{
-    ColumnFamilyDescriptor, DBWithThreadMode, IteratorMode, MultiThreaded, Options, ReadOptions,
-    WriteBatchWithTransaction,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBCompressionType, DBWithThreadMode,
+    IteratorMode, MultiThreaded, Options, ReadOptions, WriteBatchWithTransaction,
 };
 use smql_ast::value::Value;
 use smql_ast::{SmqlError, SmqlResult};
@@ -50,23 +50,34 @@ impl RocksDBStorage {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
+        db_opts.increase_parallelism(4);
+        db_opts.set_max_background_jobs(4);
 
-        let cf_names = [
-            CF_INSTANCES,
-            CF_STATE_INDEX,
-            CF_MACHINE_INDEX,
-            CF_TRAILS,
-            CF_PARENT_INDEX,
-            CF_ID_INDEX,
-            CF_TIMERS,
-            CF_IDEMPOTENCY,
-            CF_EVENTS,
+        // Shared 128MB LRU block cache across all column families
+        let cache = Cache::new_lru_cache(128 * 1024 * 1024);
+
+        // Helper to create CF options with bloom filter + shared cache
+        let make_cf_opts = |compression: DBCompressionType| -> Options {
+            let mut cf_opts = Options::default();
+            let mut block_opts = BlockBasedOptions::default();
+            block_opts.set_bloom_filter(10.0, false);
+            block_opts.set_block_cache(&cache);
+            cf_opts.set_block_based_table_factory(&block_opts);
+            cf_opts.set_compression_type(compression);
+            cf_opts
+        };
+
+        let cf_descriptors = vec![
+            ColumnFamilyDescriptor::new(CF_INSTANCES, make_cf_opts(DBCompressionType::Lz4)),
+            ColumnFamilyDescriptor::new(CF_STATE_INDEX, make_cf_opts(DBCompressionType::None)),
+            ColumnFamilyDescriptor::new(CF_MACHINE_INDEX, make_cf_opts(DBCompressionType::None)),
+            ColumnFamilyDescriptor::new(CF_TRAILS, make_cf_opts(DBCompressionType::Zstd)),
+            ColumnFamilyDescriptor::new(CF_PARENT_INDEX, make_cf_opts(DBCompressionType::None)),
+            ColumnFamilyDescriptor::new(CF_ID_INDEX, make_cf_opts(DBCompressionType::None)),
+            ColumnFamilyDescriptor::new(CF_TIMERS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_IDEMPOTENCY, Options::default()),
+            ColumnFamilyDescriptor::new(CF_EVENTS, make_cf_opts(DBCompressionType::Zstd)),
         ];
-
-        let cf_descriptors: Vec<ColumnFamilyDescriptor> = cf_names
-            .iter()
-            .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()))
-            .collect();
 
         let db = DB::open_cf_descriptors(&db_opts, path.as_ref(), cf_descriptors)
             .map_err(|e| SmqlError::storage(format!("Failed to open RocksDB: {}", e)))?;
@@ -185,6 +196,7 @@ impl RocksDBStorage {
         let upper_bound = Self::prefix_upper_bound(prefix);
 
         let mut read_opts = ReadOptions::default();
+        read_opts.fill_cache(false);
         if let Some(ref ub) = upper_bound {
             read_opts.set_iterate_upper_bound(ub.clone());
         }
@@ -442,7 +454,7 @@ impl Storage for RocksDBStorage {
         new_state: &str,
         mutations: &[Mutation],
         trail_entry: TrailEntry,
-    ) -> SmqlResult<()> {
+    ) -> SmqlResult<Instance> {
         let id_str = id.as_str();
         let mut instance = self
             .load_instance(&id_str)?
@@ -500,7 +512,7 @@ impl Storage for RocksDBStorage {
             .write(batch)
             .map_err(|e| SmqlError::storage(e.to_string()))?;
 
-        Ok(())
+        Ok(instance)
     }
 
     async fn delete_instance(&self, id: &InstanceId) -> SmqlResult<()> {
@@ -617,6 +629,41 @@ impl Storage for RocksDBStorage {
         }
 
         Ok(entries)
+    }
+
+    async fn get_trails_batch(
+        &self,
+        ids: &[InstanceId],
+    ) -> SmqlResult<HashMap<String, Vec<TrailEntry>>> {
+        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let mut result = HashMap::with_capacity(ids.len());
+
+        for id in ids {
+            let id_str = id.as_str();
+            // Look up machine from id_index
+            let machine = match self
+                .db
+                .get_cf(&cf_id, id_str.as_bytes())
+                .map_err(|e| SmqlError::storage(e.to_string()))?
+            {
+                Some(bytes) => String::from_utf8(bytes.to_vec())
+                    .map_err(|e| SmqlError::storage(format!("Invalid UTF-8: {}", e)))?,
+                None => {
+                    result.insert(id_str, Vec::new());
+                    continue;
+                }
+            };
+
+            let prefix = Self::prefix_key(&[machine.as_bytes(), id_str.as_bytes()]);
+            let pairs = self.scan_prefix(CF_TRAILS, &prefix)?;
+            let mut entries = Vec::with_capacity(pairs.len());
+            for (_, value) in pairs {
+                entries.push(Self::deserialize_trail_entry(&value)?);
+            }
+            result.insert(id_str, entries);
+        }
+
+        Ok(result)
     }
 
     async fn query_trails(

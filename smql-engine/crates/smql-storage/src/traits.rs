@@ -32,6 +32,7 @@ pub trait Storage: Send + Sync {
 
     /// Transition an instance to a new state atomically.
     /// Updates state, state_entered_at, version, and appends a trail entry.
+    /// Returns the fully-mutated instance to avoid a post-transition re-fetch.
     async fn transition_instance(
         &self,
         id: &InstanceId,
@@ -39,7 +40,7 @@ pub trait Storage: Send + Sync {
         new_state: &str,
         mutations: &[Mutation],
         trail_entry: TrailEntry,
-    ) -> SmqlResult<()>;
+    ) -> SmqlResult<Instance>;
 
     /// Delete an instance.
     async fn delete_instance(&self, id: &InstanceId) -> SmqlResult<()>;
@@ -61,6 +62,27 @@ pub trait Storage: Send + Sync {
         machine: &str,
         filter: &TrailFilter,
     ) -> SmqlResult<Vec<TrailEntry>>;
+
+    /// Batch-load trails for multiple instances at once.
+    /// Default implementation falls back to sequential get_trail calls.
+    async fn get_trails_batch(
+        &self,
+        ids: &[InstanceId],
+    ) -> SmqlResult<HashMap<String, Vec<TrailEntry>>> {
+        let mut result = HashMap::new();
+        for id in ids {
+            match self.get_trail(id).await {
+                Ok(trail) => {
+                    result.insert(id.as_str(), trail);
+                }
+                Err(_) => {
+                    // Instance may have been deleted between listing and trail fetch
+                    result.insert(id.as_str(), Vec::new());
+                }
+            }
+        }
+        Ok(result)
+    }
 
     // --- Parent-child composition operations ---
 

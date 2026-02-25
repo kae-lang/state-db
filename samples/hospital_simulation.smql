@@ -1,0 +1,2562 @@
+-- ============================================================================
+-- Hospital System Simulation — SMQL
+-- ============================================================================
+-- A comprehensive hospital simulation demonstrating 10 state machines,
+-- 4 real-world clinical scenarios, ~43 spawned instances, and analytics.
+--
+-- Run: cd smql-engine && cargo build --release -p smql-cli
+--      ./target/release/smql run ../samples/hospital_simulation.smql --storage memory
+-- ============================================================================
+
+
+-- ============================================================================
+-- MACHINE 1: Patient
+-- Tracks a patient through their hospital journey.
+-- ============================================================================
+DEFINE MACHINE Patient (
+  DATA {
+    name              : TEXT -> REQUIRED
+    date_of_birth     : TEXT -> REQUIRED
+    gender            : ENUM(male, female, other) -> REQUIRED
+    blood_type        : ENUM(A_pos, A_neg, B_pos, B_neg, AB_pos, AB_neg, O_pos, O_neg) -> OPTIONAL
+    insurance_id      : TEXT -> OPTIONAL
+    allergies         : TEXT -> OPTIONAL
+    assigned_doctor   : TEXT -> OPTIONAL
+    assigned_nurse    : TEXT -> OPTIONAL
+    assigned_bed      : TEXT -> OPTIONAL
+    primary_diagnosis : TEXT -> OPTIONAL
+    admission_type    : ENUM(emergency, elective, outpatient) -> OPTIONAL
+    notes             : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    registered
+    triaged
+    admitted
+    in_treatment
+    in_surgery
+    recovering
+    ready_for_discharge
+    discharged
+    deceased
+  }
+  INITIAL STATE registered
+  TERMINAL STATES { discharged, deceased }
+
+  TRANSITIONS {
+    registered -> triaged {
+      GUARD : assigned_nurse IS SET
+    }
+
+    triaged -> admitted {
+      GUARD : assigned_doctor IS SET
+      GUARD : assigned_bed IS SET
+    }
+
+    triaged -> discharged {}
+
+    admitted -> in_treatment {
+      GUARD : primary_diagnosis IS SET
+    }
+
+    in_treatment -> in_surgery {}
+
+    in_treatment -> recovering {}
+
+    in_surgery -> recovering {}
+
+    recovering -> ready_for_discharge {}
+
+    ready_for_discharge -> discharged {}
+
+    ANY -> deceased {
+      EXCEPT FROM { discharged, deceased }
+    }
+  }
+
+  HOOKS {
+    ON SPAWN {
+      EMIT("patient.registered")
+    }
+    ON ENTER admitted {
+      EMIT("patient.admitted")
+    }
+    ON ENTER discharged {
+      EMIT("patient.discharged")
+    }
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 2: Doctor
+-- Cyclic machine — doctors rotate through availability states.
+-- ============================================================================
+DEFINE MACHINE Doctor (
+  DATA {
+    name            : TEXT -> REQUIRED
+    specialty       : ENUM(cardiology, emergency, general, orthopedics, anesthesiology, radiology) -> REQUIRED
+    license_number  : TEXT -> REQUIRED
+    current_patient : TEXT -> OPTIONAL
+  }
+
+  STATES { off_duty, available, in_consultation, in_surgery, on_break }
+  INITIAL STATE off_duty
+
+  TRANSITIONS {
+    off_duty -> available {}
+
+    available -> in_consultation {
+      GUARD : current_patient IS SET
+    }
+
+    available -> in_surgery {
+      GUARD : current_patient IS SET
+    }
+
+    available -> on_break {}
+
+    in_consultation -> available {
+      MUTATE : current_patient = NULL
+    }
+
+    in_surgery -> available {
+      MUTATE : current_patient = NULL
+    }
+
+    on_break -> available {}
+
+    available -> off_duty {}
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 3: Nurse
+-- Cyclic machine — nurses rotate through shifts and assignments.
+-- ============================================================================
+DEFINE MACHINE Nurse (
+  DATA {
+    name            : TEXT -> REQUIRED
+    department      : ENUM(emergency, icu, surgical, general, pediatrics) -> REQUIRED
+    certification   : TEXT -> OPTIONAL
+    current_patient : TEXT -> OPTIONAL
+    patient_count   : INT -> DEFAULT(0)
+  }
+
+  STATES { off_duty, available, assigned, on_break }
+  INITIAL STATE off_duty
+
+  TRANSITIONS {
+    off_duty -> available {}
+
+    available -> assigned {
+      GUARD : current_patient IS SET
+    }
+
+    assigned -> available {
+      MUTATE : current_patient = NULL
+    }
+
+    available -> on_break {}
+
+    on_break -> available {}
+
+    available -> off_duty {}
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 4: Bed
+-- Cyclic machine — beds rotate through occupancy and cleaning.
+-- ============================================================================
+DEFINE MACHINE Bed (
+  DATA {
+    ward        : ENUM(emergency, icu, surgical, general, pediatrics, maternity) -> REQUIRED
+    room_number : TEXT -> REQUIRED
+    bed_number  : TEXT -> REQUIRED
+    bed_type    : ENUM(standard, icu, surgical, bariatric) -> DEFAULT(standard)
+    occupant_id : TEXT -> OPTIONAL
+  }
+
+  STATES { available, reserved, occupied, cleaning, maintenance }
+  INITIAL STATE available
+
+  TRANSITIONS {
+    available -> reserved {}
+
+    reserved -> occupied {
+      GUARD : occupant_id IS SET
+    }
+
+    occupied -> cleaning {
+      MUTATE : occupant_id = NULL
+      TIMEOUT : 2h -> available
+    }
+
+    cleaning -> available {}
+
+    available -> maintenance {}
+
+    maintenance -> available {}
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 5: EmergencyVisit
+-- Full ER visit workflow with triage, examination, testing, and disposition.
+-- ============================================================================
+DEFINE MACHINE EmergencyVisit (
+  DATA {
+    patient_name    : TEXT -> REQUIRED
+    patient_ref     : TEXT -> REQUIRED
+    arrival_method  : ENUM(ambulance, walk_in, transfer) -> DEFAULT(walk_in)
+    chief_complaint : TEXT -> REQUIRED
+    blood_pressure  : TEXT -> OPTIONAL
+    heart_rate      : INT -> OPTIONAL
+    temperature     : TEXT -> OPTIONAL
+    spo2            : INT -> OPTIONAL
+    triage_level    : ENUM(immediate, emergent, urgent, less_urgent, non_urgent) -> OPTIONAL
+    triage_nurse    : TEXT -> OPTIONAL
+    attending_doctor: TEXT -> OPTIONAL
+    diagnosis       : TEXT -> OPTIONAL
+    disposition     : ENUM(admitted, discharged, transferred) -> OPTIONAL
+    assigned_bed    : TEXT -> OPTIONAL
+    notes           : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    arrived
+    triage_assessment
+    waiting
+    in_examination
+    undergoing_tests
+    treatment
+    observation
+    admitted
+    discharged
+    transferred
+  }
+  INITIAL STATE arrived
+  TERMINAL STATES { admitted, discharged, transferred }
+
+  TRANSITIONS {
+    arrived -> triage_assessment {
+      GUARD : triage_nurse IS SET
+    }
+
+    triage_assessment -> waiting {}
+
+    triage_assessment -> in_examination {
+      GUARD : attending_doctor IS SET
+    }
+
+    waiting -> in_examination {
+      GUARD : attending_doctor IS SET
+      TIMEOUT : 4h -> discharged
+    }
+
+    in_examination -> undergoing_tests {}
+
+    in_examination -> treatment {
+      GUARD : diagnosis IS SET
+    }
+
+    undergoing_tests -> treatment {
+      GUARD : diagnosis IS SET
+    }
+
+    treatment -> observation {
+      TIMEOUT : 6h -> discharged
+    }
+
+    treatment -> discharged {}
+
+    treatment -> admitted {
+      GUARD : assigned_bed IS SET
+    }
+
+    observation -> discharged {}
+
+    observation -> admitted {
+      GUARD : assigned_bed IS SET
+    }
+
+    ANY -> transferred {
+      EXCEPT FROM { discharged, admitted, transferred }
+    }
+  }
+
+  HOOKS {
+    ON SPAWN {
+      EMIT("er.visit.arrived")
+    }
+    ON ENTER triage_assessment {
+      EMIT("er.triage.started")
+    }
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 6: Appointment
+-- Scheduled outpatient visits with no-show handling.
+-- ============================================================================
+DEFINE MACHINE Appointment (
+  DATA {
+    patient_name  : TEXT -> REQUIRED
+    patient_ref   : TEXT -> OPTIONAL
+    doctor_name   : TEXT -> REQUIRED
+    doctor_ref    : TEXT -> OPTIONAL
+    appointment_type : ENUM(consultation, follow_up, annual_physical, pre_op, post_op) -> REQUIRED
+    visit_notes   : TEXT -> OPTIONAL
+    prescriptions : TEXT -> OPTIONAL
+    lab_orders    : TEXT -> OPTIONAL
+    follow_up     : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    scheduled
+    confirmed
+    checked_in
+    in_consultation
+    post_visit
+    completed
+    no_show
+    cancelled
+  }
+  INITIAL STATE scheduled
+  TERMINAL STATES { completed, no_show, cancelled }
+
+  TRANSITIONS {
+    scheduled -> confirmed {}
+
+    scheduled -> cancelled {}
+
+    confirmed -> checked_in {}
+
+    confirmed -> no_show {
+      TIMEOUT : 30m -> no_show
+    }
+
+    checked_in -> in_consultation {}
+
+    in_consultation -> post_visit {
+      GUARD : visit_notes IS SET
+    }
+
+    post_visit -> completed {}
+
+    ANY -> cancelled {
+      EXCEPT FROM { completed, no_show, cancelled, in_consultation, post_visit }
+    }
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 7: LabOrder
+-- Laboratory test lifecycle from ordering through results review.
+-- ============================================================================
+DEFINE MACHINE LabOrder (
+  DATA {
+    patient_name   : TEXT -> REQUIRED
+    patient_ref    : TEXT -> OPTIONAL
+    ordering_doctor: TEXT -> REQUIRED
+    doctor_ref     : TEXT -> OPTIONAL
+    test_type      : ENUM(cbc, cmp, troponin, cardiac_panel, lipid_panel, urinalysis, xray, ct_scan, mri, pre_op_panel) -> REQUIRED
+    priority       : ENUM(routine, urgent, stat) -> DEFAULT(routine)
+    specimen_type  : TEXT -> OPTIONAL
+    results        : TEXT -> OPTIONAL
+    result_flag    : ENUM(normal, abnormal, critical) -> OPTIONAL
+    reviewed_by    : TEXT -> OPTIONAL
+    notes          : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    ordered
+    specimen_collected
+    processing
+    resulted
+    reviewed
+    cancelled
+  }
+  INITIAL STATE ordered
+  TERMINAL STATES { reviewed, cancelled }
+
+  TRANSITIONS {
+    ordered -> specimen_collected {}
+
+    ordered -> cancelled {}
+
+    specimen_collected -> processing {
+      TIMEOUT : 24h -> resulted
+    }
+
+    processing -> resulted {
+      GUARD : results IS SET
+    }
+
+    resulted -> reviewed {
+      GUARD : reviewed_by IS SET
+    }
+
+    ANY -> cancelled {
+      EXCEPT FROM { resulted, reviewed, cancelled }
+    }
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 8: Prescription
+-- Medication lifecycle from prescribing through completion.
+-- ============================================================================
+DEFINE MACHINE Prescription (
+  DATA {
+    patient_name : TEXT -> REQUIRED
+    patient_ref  : TEXT -> OPTIONAL
+    doctor_name  : TEXT -> REQUIRED
+    doctor_ref   : TEXT -> OPTIONAL
+    medication   : TEXT -> REQUIRED
+    dosage       : TEXT -> REQUIRED
+    frequency    : TEXT -> REQUIRED
+    route        : ENUM(oral, iv, im, subq, topical, inhaled) -> DEFAULT(oral)
+    duration     : TEXT -> OPTIONAL
+    dispensed_by : TEXT -> OPTIONAL
+    notes        : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    prescribed
+    verified
+    dispensing
+    dispensed
+    active
+    completed
+    discontinued
+  }
+  INITIAL STATE prescribed
+  TERMINAL STATES { completed, discontinued }
+
+  TRANSITIONS {
+    prescribed -> verified {}
+
+    verified -> dispensing {}
+
+    dispensing -> dispensed {
+      GUARD : dispensed_by IS SET
+    }
+
+    dispensed -> active {}
+
+    active -> completed {}
+
+    ANY -> discontinued {
+      EXCEPT FROM { completed, discontinued }
+    }
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 9: Surgery
+-- Full surgical workflow from request through post-op recovery.
+-- ============================================================================
+DEFINE MACHINE Surgery (
+  DATA {
+    patient_name      : TEXT -> REQUIRED
+    patient_ref       : TEXT -> OPTIONAL
+    surgeon_name      : TEXT -> REQUIRED
+    surgeon_ref       : TEXT -> OPTIONAL
+    procedure_name    : TEXT -> REQUIRED
+    or_room           : TEXT -> OPTIONAL
+    anesthesiologist  : TEXT -> OPTIONAL
+    pre_op_notes      : TEXT -> OPTIONAL
+    op_notes          : TEXT -> OPTIONAL
+    post_op_notes     : TEXT -> OPTIONAL
+    complications     : TEXT -> OPTIONAL
+    estimated_duration: TEXT -> OPTIONAL
+    blood_type_needed : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    requested
+    pre_op_assessment
+    pre_op_cleared
+    scheduled_for_or
+    in_holding
+    under_anesthesia
+    in_operation
+    in_recovery_room
+    post_op_ward
+    surgery_completed
+    surgery_cancelled
+  }
+  INITIAL STATE requested
+  TERMINAL STATES { surgery_completed, surgery_cancelled }
+
+  TRANSITIONS {
+    requested -> pre_op_assessment {}
+
+    pre_op_assessment -> pre_op_cleared {
+      GUARD : pre_op_notes IS SET
+    }
+
+    pre_op_cleared -> scheduled_for_or {
+      GUARD : or_room IS SET
+      GUARD : anesthesiologist IS SET
+    }
+
+    scheduled_for_or -> in_holding {}
+
+    in_holding -> under_anesthesia {}
+
+    under_anesthesia -> in_operation {}
+
+    in_operation -> in_recovery_room {
+      GUARD : op_notes IS SET
+    }
+
+    in_recovery_room -> post_op_ward {
+      TIMEOUT : 4h -> post_op_ward
+    }
+
+    post_op_ward -> surgery_completed {}
+
+    ANY -> surgery_cancelled {
+      EXCEPT FROM { in_operation, in_recovery_room, post_op_ward, surgery_completed, surgery_cancelled }
+    }
+  }
+
+  HOOKS {
+    ON ENTER in_operation {
+      EMIT("surgery.started")
+    }
+    ON ENTER surgery_completed {
+      EMIT("surgery.completed")
+    }
+  }
+)
+
+
+-- ============================================================================
+-- MACHINE 10: BillingCase
+-- Insurance billing workflow from charge capture through payment.
+-- ============================================================================
+DEFINE MACHINE BillingCase (
+  DATA {
+    patient_name      : TEXT -> REQUIRED
+    patient_ref       : TEXT -> OPTIONAL
+    insurance_provider: TEXT -> OPTIONAL
+    insurance_id      : TEXT -> OPTIONAL
+    total_charges     : INT -> OPTIONAL
+    insurance_paid    : INT -> OPTIONAL
+    patient_balance   : INT -> OPTIONAL
+    coding_specialist : TEXT -> OPTIONAL
+    claim_number      : TEXT -> OPTIONAL
+    payment_method    : TEXT -> OPTIONAL
+    notes             : TEXT -> OPTIONAL
+  }
+
+  STATES {
+    charges_pending
+    coded
+    claim_submitted
+    adjudicated
+    patient_billed
+    payment_received
+    in_collections
+    closed
+    written_off
+  }
+  INITIAL STATE charges_pending
+  TERMINAL STATES { closed, written_off }
+
+  TRANSITIONS {
+    charges_pending -> coded {
+      GUARD : total_charges IS SET
+    }
+
+    coded -> claim_submitted {
+      GUARD : insurance_provider IS SET
+      GUARD : insurance_id IS SET
+    }
+
+    coded -> patient_billed {
+      GUARD : patient_balance IS SET
+    }
+
+    claim_submitted -> adjudicated {
+      TIMEOUT : 30d -> adjudicated
+    }
+
+    adjudicated -> patient_billed {
+      GUARD : patient_balance IS SET
+    }
+
+    adjudicated -> closed {}
+
+    patient_billed -> payment_received {}
+
+    patient_billed -> in_collections {
+      TIMEOUT : 90d -> in_collections
+    }
+
+    payment_received -> closed {}
+
+    in_collections -> payment_received {}
+
+    in_collections -> written_off {}
+  }
+)
+
+
+-- ============================================================================
+-- SCENARIO 1: Emergency Cardiac Event — Marcus Williams
+-- ============================================================================
+-- 58-year-old male arrives by ambulance with acute chest pain.
+-- Triaged as emergent, cardiac workup reveals STEMI, emergency PCI
+-- performed, 4-day recovery, discharged with cardiac medications.
+-- ============================================================================
+
+-- $1: Dr. Sarah Chen — Interventional Cardiologist
+SPAWN Doctor { name: "Dr. Sarah Chen", specialty: cardiology, license_number: "MD-2019-44821" }
+
+-- $2: Dr. James Rivera — Emergency Medicine
+SPAWN Doctor { name: "Dr. James Rivera", specialty: emergency, license_number: "MD-2017-33156" }
+
+-- $3: Nurse Grace Okonkwo — ER
+SPAWN Nurse { name: "Grace Okonkwo", department: emergency, certification: "CEN" }
+
+-- $4: Nurse David Kim — ICU
+SPAWN Nurse { name: "David Kim", department: icu, certification: "CCRN" }
+
+-- $5: ER Bed 101-A
+SPAWN Bed { ward: emergency, room_number: "101", bed_number: "A", bed_type: standard }
+
+-- $6: ICU Bed 204-A
+SPAWN Bed { ward: icu, room_number: "204", bed_number: "A", bed_type: icu }
+
+-- Activate staff
+TRANSITION Doctor "$1" TO available
+TRANSITION Doctor "$2" TO available
+TRANSITION Nurse "$3" TO available
+TRANSITION Nurse "$4" TO available
+
+-- $7: Marcus Williams — Patient
+SPAWN Patient {
+  name: "Marcus Williams",
+  date_of_birth: "1968-03-15",
+  gender: male,
+  blood_type: O_pos,
+  insurance_id: "BCBS-MW-449821",
+  allergies: "Penicillin",
+  admission_type: emergency
+}
+
+-- $8: Marcus ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  arrival_method: ambulance,
+  chief_complaint: "Acute chest pain radiating to left arm, onset 45 minutes ago",
+  blood_pressure: "168/95",
+  heart_rate: 112,
+  temperature: "98.6F",
+  spo2: 94
+}
+
+-- Nurse Okonkwo triages Marcus
+TRANSITION Nurse "$3" TO assigned WITH { current_patient: "Marcus Williams" }
+TRANSITION EmergencyVisit "$8" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: emergent }
+
+-- Dr. Rivera examines Marcus
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Marcus Williams" }
+TRANSITION EmergencyVisit "$8" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+
+-- Order cardiac labs
+-- $9: Troponin test (STAT)
+SPAWN LabOrder {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: troponin,
+  priority: stat,
+  specimen_type: "Blood"
+}
+
+-- $10: Full cardiac panel
+SPAWN LabOrder {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: cardiac_panel,
+  priority: stat,
+  specimen_type: "Blood"
+}
+
+-- Process labs
+TRANSITION LabOrder "$9" TO specimen_collected
+TRANSITION LabOrder "$9" TO processing
+TRANSITION LabOrder "$9" TO resulted WITH { results: "Troponin I: 4.2 ng/mL (CRITICAL HIGH)", result_flag: critical }
+TRANSITION LabOrder "$10" TO specimen_collected
+TRANSITION LabOrder "$10" TO processing
+TRANSITION LabOrder "$10" TO resulted WITH { results: "CK-MB: 45 U/L (HIGH), BNP: 890 pg/mL (HIGH), D-dimer: 0.8 mg/L", result_flag: abnormal }
+
+-- Dr. Rivera reviews troponin, confirms STEMI
+TRANSITION LabOrder "$9" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+TRANSITION LabOrder "$10" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+-- ER visit moves to tests then treatment
+TRANSITION EmergencyVisit "$8" TO undergoing_tests
+TRANSITION EmergencyVisit "$8" TO treatment WITH { diagnosis: "ST-Elevation Myocardial Infarction (STEMI)" }
+
+-- Assign nurse, update patient with diagnosis and admit
+TRANSITION Patient "$7" TO triaged WITH { assigned_nurse: "Grace Okonkwo" }
+TRANSITION Bed "$6" TO reserved
+TRANSITION Bed "$6" TO occupied WITH { occupant_id: "$7" }
+TRANSITION Patient "$7" TO admitted WITH { assigned_doctor: "Dr. Sarah Chen", assigned_bed: "ICU-204-A", primary_diagnosis: "STEMI - Acute Myocardial Infarction" }
+
+-- ER visit disposition: admitted
+TRANSITION EmergencyVisit "$8" TO admitted WITH { assigned_bed: "ICU-204-A", disposition: admitted }
+
+-- Nurse Okonkwo returns to available, Dr. Rivera done
+TRANSITION Nurse "$3" TO available
+TRANSITION Doctor "$2" TO available
+
+-- $11: Emergency PCI Surgery
+SPAWN Surgery {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  surgeon_name: "Dr. Sarah Chen",
+  surgeon_ref: "$1",
+  procedure_name: "Percutaneous Coronary Intervention (PCI) with stent placement",
+  estimated_duration: "90 minutes",
+  blood_type_needed: "O+"
+}
+
+-- Dr. Chen enters surgery
+TRANSITION Doctor "$1" TO in_surgery WITH { current_patient: "Marcus Williams" }
+
+-- Surgery workflow: pre-op → cleared → scheduled → holding → anesthesia → operation → recovery
+TRANSITION Surgery "$11" TO pre_op_assessment
+TRANSITION Surgery "$11" TO pre_op_cleared WITH { pre_op_notes: "ECG confirms STEMI in leads II, III, aVF. Patient consented. NPO confirmed. IV access established." }
+TRANSITION Surgery "$11" TO scheduled_for_or WITH { or_room: "Cath Lab 2", anesthesiologist: "Dr. Linda Park" }
+TRANSITION Surgery "$11" TO in_holding
+TRANSITION Surgery "$11" TO under_anesthesia
+TRANSITION Surgery "$11" TO in_operation
+TRANSITION Patient "$7" TO in_treatment
+TRANSITION Patient "$7" TO in_surgery
+TRANSITION Surgery "$11" TO in_recovery_room WITH { op_notes: "Successful PCI with drug-eluting stent to LAD. Door-to-balloon: 58 min. Good distal flow restored. No complications." }
+TRANSITION Surgery "$11" TO post_op_ward WITH { post_op_notes: "Patient stable. Transferred to ICU for monitoring. Vitals within normal limits." }
+TRANSITION Surgery "$11" TO surgery_completed
+
+-- Dr. Chen finishes
+TRANSITION Doctor "$1" TO available
+
+-- Nurse Kim assigned for ICU recovery
+TRANSITION Nurse "$4" TO assigned WITH { current_patient: "Marcus Williams" }
+
+-- Patient recovers
+TRANSITION Patient "$7" TO recovering WITH { notes: "Post-PCI day 1: Hemodynamically stable, stent placement successful" }
+
+-- Prescribe cardiac medications
+-- $12: Aspirin
+SPAWN Prescription {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  doctor_name: "Dr. Sarah Chen",
+  doctor_ref: "$1",
+  medication: "Aspirin",
+  dosage: "81mg",
+  frequency: "Once daily",
+  route: oral,
+  duration: "Indefinite"
+}
+
+-- $13: Ticagrelor
+SPAWN Prescription {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  doctor_name: "Dr. Sarah Chen",
+  doctor_ref: "$1",
+  medication: "Ticagrelor",
+  dosage: "90mg",
+  frequency: "Twice daily",
+  route: oral,
+  duration: "12 months"
+}
+
+-- $14: Atorvastatin
+SPAWN Prescription {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  doctor_name: "Dr. Sarah Chen",
+  doctor_ref: "$1",
+  medication: "Atorvastatin",
+  dosage: "80mg",
+  frequency: "Once daily at bedtime",
+  route: oral,
+  duration: "Indefinite"
+}
+
+-- $15: Metoprolol
+SPAWN Prescription {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  doctor_name: "Dr. Sarah Chen",
+  doctor_ref: "$1",
+  medication: "Metoprolol Succinate",
+  dosage: "25mg",
+  frequency: "Once daily",
+  route: oral,
+  duration: "Indefinite"
+}
+
+-- Process all prescriptions through dispensing
+TRANSITION Prescription "$12" TO verified
+TRANSITION Prescription "$12" TO dispensing
+TRANSITION Prescription "$12" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$12" TO active
+
+TRANSITION Prescription "$13" TO verified
+TRANSITION Prescription "$13" TO dispensing
+TRANSITION Prescription "$13" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$13" TO active
+
+TRANSITION Prescription "$14" TO verified
+TRANSITION Prescription "$14" TO dispensing
+TRANSITION Prescription "$14" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$14" TO active
+
+TRANSITION Prescription "$15" TO verified
+TRANSITION Prescription "$15" TO dispensing
+TRANSITION Prescription "$15" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$15" TO active
+
+-- Patient ready for discharge after 4-day recovery
+TRANSITION Patient "$7" TO ready_for_discharge WITH { notes: "Post-PCI day 4: Stable, ambulating, tolerating diet. Discharge with cardiac rehab referral." }
+TRANSITION Patient "$7" TO discharged
+
+-- Clean up: nurse done, bed cleaning
+TRANSITION Nurse "$4" TO available
+TRANSITION Bed "$6" TO cleaning
+
+-- $16: Marcus billing
+SPAWN BillingCase {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  insurance_provider: "Blue Cross Blue Shield",
+  insurance_id: "BCBS-MW-449821",
+  total_charges: 87500,
+  notes: "Emergency PCI with stent, 4-day ICU stay, cardiac medications"
+}
+
+TRANSITION BillingCase "$16" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 87500 }
+TRANSITION BillingCase "$16" TO claim_submitted WITH { claim_number: "CLM-2024-88921" }
+TRANSITION BillingCase "$16" TO adjudicated WITH { insurance_paid: 72000, patient_balance: 15500 }
+TRANSITION BillingCase "$16" TO patient_billed WITH { patient_balance: 15500 }
+
+
+-- ============================================================================
+-- SCENARIO 2: Routine Annual Physical — Elena Vasquez
+-- ============================================================================
+-- 42-year-old female scheduled for annual physical. Labs ordered,
+-- elevated cholesterol discovered, statin prescribed, follow-up scheduled.
+-- ============================================================================
+
+-- $17: Elena Vasquez — Patient
+SPAWN Patient {
+  name: "Elena Vasquez",
+  date_of_birth: "1984-07-22",
+  gender: female,
+  blood_type: A_pos,
+  insurance_id: "AETNA-EV-221847",
+  admission_type: outpatient
+}
+
+-- $18: Dr. Michael Thompson — General Practice
+SPAWN Doctor { name: "Dr. Michael Thompson", specialty: general, license_number: "MD-2012-19834" }
+TRANSITION Doctor "$18" TO available
+
+-- $19: Elena's annual physical appointment
+SPAWN Appointment {
+  patient_name: "Elena Vasquez",
+  patient_ref: "$17",
+  doctor_name: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  appointment_type: annual_physical
+}
+
+-- Appointment workflow: confirm → check-in → consultation
+TRANSITION Appointment "$19" TO confirmed
+TRANSITION Appointment "$19" TO checked_in
+TRANSITION Doctor "$18" TO in_consultation WITH { current_patient: "Elena Vasquez" }
+TRANSITION Appointment "$19" TO in_consultation
+
+-- Order labs during visit
+-- $20: Comprehensive Metabolic Panel
+SPAWN LabOrder {
+  patient_name: "Elena Vasquez",
+  patient_ref: "$17",
+  ordering_doctor: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  test_type: cmp,
+  priority: routine,
+  specimen_type: "Blood"
+}
+
+-- $21: Urinalysis
+SPAWN LabOrder {
+  patient_name: "Elena Vasquez",
+  patient_ref: "$17",
+  ordering_doctor: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  test_type: urinalysis,
+  priority: routine,
+  specimen_type: "Urine"
+}
+
+-- Process labs
+TRANSITION LabOrder "$20" TO specimen_collected
+TRANSITION LabOrder "$20" TO processing
+TRANSITION LabOrder "$20" TO resulted WITH { results: "Glucose: 95 mg/dL, Total Cholesterol: 268 mg/dL (HIGH), LDL: 178 mg/dL (HIGH), HDL: 52 mg/dL, Triglycerides: 190 mg/dL (HIGH)", result_flag: abnormal }
+TRANSITION LabOrder "$20" TO reviewed WITH { reviewed_by: "Dr. Michael Thompson" }
+
+TRANSITION LabOrder "$21" TO specimen_collected
+TRANSITION LabOrder "$21" TO processing
+TRANSITION LabOrder "$21" TO resulted WITH { results: "Color: Yellow, Clarity: Clear, pH: 6.0, Specific Gravity: 1.020, all within normal limits", result_flag: normal }
+TRANSITION LabOrder "$21" TO reviewed WITH { reviewed_by: "Dr. Michael Thompson" }
+
+-- Doctor completes consultation with notes
+TRANSITION Appointment "$19" TO post_visit WITH { visit_notes: "Annual physical complete. Elevated cholesterol noted: Total 268, LDL 178. Starting rosuvastatin. Diet and exercise counseling provided. Follow-up lipid panel in 3 months.", lab_orders: "CMP, Urinalysis", follow_up: "3 months - lipid recheck" }
+TRANSITION Appointment "$19" TO completed
+TRANSITION Doctor "$18" TO available
+
+-- $22: Rosuvastatin prescription
+SPAWN Prescription {
+  patient_name: "Elena Vasquez",
+  patient_ref: "$17",
+  doctor_name: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  medication: "Rosuvastatin",
+  dosage: "10mg",
+  frequency: "Once daily",
+  route: oral,
+  duration: "Ongoing, recheck in 3 months"
+}
+
+TRANSITION Prescription "$22" TO verified
+TRANSITION Prescription "$22" TO dispensing
+TRANSITION Prescription "$22" TO dispensed WITH { dispensed_by: "PharmTech Williams" }
+TRANSITION Prescription "$22" TO active
+
+-- Triage and discharge (outpatient — just registered then discharged)
+TRANSITION Patient "$17" TO triaged WITH { assigned_nurse: "Front Desk RN" }
+TRANSITION Patient "$17" TO discharged WITH { notes: "Outpatient annual physical complete. Follow-up in 3 months." }
+
+-- $23: Elena billing
+SPAWN BillingCase {
+  patient_name: "Elena Vasquez",
+  patient_ref: "$17",
+  insurance_provider: "Aetna",
+  insurance_id: "AETNA-EV-221847",
+  total_charges: 850,
+  notes: "Annual physical exam with lab work"
+}
+
+TRANSITION BillingCase "$23" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 850 }
+TRANSITION BillingCase "$23" TO claim_submitted WITH { claim_number: "CLM-2024-89102" }
+TRANSITION BillingCase "$23" TO adjudicated WITH { insurance_paid: 850, patient_balance: 0 }
+TRANSITION BillingCase "$23" TO closed
+
+
+-- ============================================================================
+-- SCENARIO 3: Elective Hip Replacement — Robert Nakamura
+-- ============================================================================
+-- 67-year-old male with severe osteoarthritis. Pre-op workup, total hip
+-- arthroplasty, post-op pain management with DVT prophylaxis, 3-day
+-- recovery, discharged to rehab.
+-- ============================================================================
+
+-- $24: Dr. Patricia Morrison — Orthopedic Surgeon
+SPAWN Doctor { name: "Dr. Patricia Morrison", specialty: orthopedics, license_number: "MD-2008-27543" }
+TRANSITION Doctor "$24" TO available
+
+-- $25: Nurse Thomas Chen — Surgical
+SPAWN Nurse { name: "Thomas Chen", department: surgical, certification: "CNOR" }
+TRANSITION Nurse "$25" TO available
+
+-- $26: Surgical Bed 312-A
+SPAWN Bed { ward: surgical, room_number: "312", bed_number: "A", bed_type: surgical }
+
+-- $27: Robert Nakamura — Patient
+SPAWN Patient {
+  name: "Robert Nakamura",
+  date_of_birth: "1959-11-03",
+  gender: male,
+  blood_type: B_pos,
+  insurance_id: "MEDICARE-RN-556723",
+  allergies: "None known",
+  admission_type: elective
+}
+
+-- $28: Pre-operative appointment
+SPAWN Appointment {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  doctor_name: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  appointment_type: pre_op
+}
+
+TRANSITION Appointment "$28" TO confirmed
+TRANSITION Appointment "$28" TO checked_in
+TRANSITION Doctor "$24" TO in_consultation WITH { current_patient: "Robert Nakamura" }
+TRANSITION Appointment "$28" TO in_consultation
+
+-- Pre-op labs
+-- $29: Pre-op panel
+SPAWN LabOrder {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  ordering_doctor: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  test_type: pre_op_panel,
+  priority: routine,
+  specimen_type: "Blood"
+}
+
+-- $30: Hip X-ray
+SPAWN LabOrder {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  ordering_doctor: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  test_type: xray,
+  priority: routine,
+  specimen_type: "Imaging",
+  notes: "AP and lateral views of right hip"
+}
+
+-- Process pre-op labs
+TRANSITION LabOrder "$29" TO specimen_collected
+TRANSITION LabOrder "$29" TO processing
+TRANSITION LabOrder "$29" TO resulted WITH { results: "CBC: WNL, BMP: WNL, PT/INR: 1.0, Type & Screen: B+", result_flag: normal }
+TRANSITION LabOrder "$29" TO reviewed WITH { reviewed_by: "Dr. Patricia Morrison" }
+
+TRANSITION LabOrder "$30" TO specimen_collected
+TRANSITION LabOrder "$30" TO processing
+TRANSITION LabOrder "$30" TO resulted WITH { results: "Severe degenerative changes right hip joint. Joint space narrowing, osteophyte formation, subchondral sclerosis.", result_flag: abnormal }
+TRANSITION LabOrder "$30" TO reviewed WITH { reviewed_by: "Dr. Patricia Morrison" }
+
+-- Complete pre-op appointment
+TRANSITION Appointment "$28" TO post_visit WITH { visit_notes: "Pre-op assessment complete. Patient cleared for right total hip arthroplasty. Labs WNL. Imaging confirms severe OA. Risks discussed, consent obtained.", lab_orders: "Pre-op panel, Hip X-ray" }
+TRANSITION Appointment "$28" TO completed
+TRANSITION Doctor "$24" TO available
+
+-- Admit patient for surgery
+TRANSITION Patient "$27" TO triaged WITH { assigned_nurse: "Thomas Chen" }
+TRANSITION Nurse "$25" TO assigned WITH { current_patient: "Robert Nakamura" }
+TRANSITION Bed "$26" TO reserved
+TRANSITION Bed "$26" TO occupied WITH { occupant_id: "$27" }
+TRANSITION Patient "$27" TO admitted WITH { assigned_doctor: "Dr. Patricia Morrison", assigned_bed: "SURG-312-A", primary_diagnosis: "Severe osteoarthritis right hip - scheduled total hip arthroplasty" }
+
+-- $31: Hip arthroplasty surgery
+SPAWN Surgery {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  surgeon_name: "Dr. Patricia Morrison",
+  surgeon_ref: "$24",
+  procedure_name: "Total Hip Arthroplasty (Right)",
+  estimated_duration: "120 minutes",
+  blood_type_needed: "B+"
+}
+
+-- Surgery workflow
+TRANSITION Doctor "$24" TO in_surgery WITH { current_patient: "Robert Nakamura" }
+TRANSITION Surgery "$31" TO pre_op_assessment
+TRANSITION Surgery "$31" TO pre_op_cleared WITH { pre_op_notes: "Pre-op labs WNL. Patient NPO since midnight. Surgical site marked. Antibiotics administered. Consent verified." }
+TRANSITION Surgery "$31" TO scheduled_for_or WITH { or_room: "OR-3", anesthesiologist: "Dr. Richard Hayes" }
+TRANSITION Surgery "$31" TO in_holding
+TRANSITION Surgery "$31" TO under_anesthesia
+TRANSITION Surgery "$31" TO in_operation
+
+TRANSITION Patient "$27" TO in_treatment
+TRANSITION Patient "$27" TO in_surgery
+
+TRANSITION Surgery "$31" TO in_recovery_room WITH { op_notes: "Posterior approach. Ceramic-on-polyethylene bearing. Components well-seated on intra-op imaging. EBL 350mL. No complications." }
+TRANSITION Surgery "$31" TO post_op_ward WITH { post_op_notes: "Patient recovering well. Weight bearing as tolerated with walker. PT consult ordered." }
+TRANSITION Surgery "$31" TO surgery_completed
+
+TRANSITION Doctor "$24" TO available
+
+-- Post-op recovery
+TRANSITION Patient "$27" TO recovering WITH { notes: "Post-op day 1: Ambulating with PT, pain well controlled, wound clean and dry" }
+
+-- Post-op prescriptions
+-- $32: Hydromorphone (pain management)
+SPAWN Prescription {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  doctor_name: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  medication: "Hydromorphone",
+  dosage: "2mg",
+  frequency: "Every 4-6 hours as needed",
+  route: oral,
+  duration: "5 days"
+}
+
+-- $33: Enoxaparin (DVT prophylaxis)
+SPAWN Prescription {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  doctor_name: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  medication: "Enoxaparin",
+  dosage: "40mg",
+  frequency: "Once daily",
+  route: subq,
+  duration: "14 days"
+}
+
+-- $34: Cefazolin (surgical prophylaxis)
+SPAWN Prescription {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  doctor_name: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  medication: "Cefazolin",
+  dosage: "2g",
+  frequency: "Every 8 hours",
+  route: iv,
+  duration: "24 hours"
+}
+
+-- Dispense medications
+TRANSITION Prescription "$32" TO verified
+TRANSITION Prescription "$32" TO dispensing
+TRANSITION Prescription "$32" TO dispensed WITH { dispensed_by: "PharmTech Kim" }
+TRANSITION Prescription "$32" TO active
+
+TRANSITION Prescription "$33" TO verified
+TRANSITION Prescription "$33" TO dispensing
+TRANSITION Prescription "$33" TO dispensed WITH { dispensed_by: "PharmTech Kim" }
+TRANSITION Prescription "$33" TO active
+
+TRANSITION Prescription "$34" TO verified
+TRANSITION Prescription "$34" TO dispensing
+TRANSITION Prescription "$34" TO dispensed WITH { dispensed_by: "PharmTech Kim" }
+TRANSITION Prescription "$34" TO active
+
+-- Cefazolin completed (24h course done)
+TRANSITION Prescription "$34" TO completed
+
+-- Discharge after 3-day recovery
+TRANSITION Patient "$27" TO ready_for_discharge WITH { notes: "Post-op day 3: Independent ambulation with walker, wound healing well, pain controlled on oral meds. Discharge to rehab facility." }
+TRANSITION Patient "$27" TO discharged
+
+-- Clean up bed and nurse
+TRANSITION Nurse "$25" TO available
+TRANSITION Bed "$26" TO cleaning
+
+-- $35: Robert billing
+SPAWN BillingCase {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  insurance_provider: "Medicare",
+  insurance_id: "MEDICARE-RN-556723",
+  total_charges: 52000,
+  notes: "Total hip arthroplasty, 3-day surgical stay, PT, medications"
+}
+
+TRANSITION BillingCase "$35" TO coded WITH { coding_specialist: "Michael Park", total_charges: 52000 }
+TRANSITION BillingCase "$35" TO claim_submitted WITH { claim_number: "CLM-2024-89245" }
+TRANSITION BillingCase "$35" TO adjudicated WITH { insurance_paid: 48000, patient_balance: 4000 }
+TRANSITION BillingCase "$35" TO patient_billed WITH { patient_balance: 4000 }
+TRANSITION BillingCase "$35" TO payment_received WITH { payment_method: "Check" }
+TRANSITION BillingCase "$35" TO closed
+
+
+-- ============================================================================
+-- SCENARIO 4: Concurrent ER + No-Show
+-- ============================================================================
+-- Aisha Patel: 28F walk-in with broken wrist (splinted and discharged)
+-- James O'Brien: 45M misses his scheduled appointment (no-show)
+-- ============================================================================
+
+-- $36: Aisha Patel — Patient
+SPAWN Patient {
+  name: "Aisha Patel",
+  date_of_birth: "1998-02-14",
+  gender: female,
+  blood_type: AB_pos,
+  insurance_id: "UHC-AP-334512",
+  admission_type: emergency
+}
+
+-- $37: Aisha ER visit
+SPAWN EmergencyVisit {
+  patient_name: "Aisha Patel",
+  patient_ref: "$36",
+  arrival_method: walk_in,
+  chief_complaint: "Right wrist pain and swelling after fall, possible fracture",
+  blood_pressure: "128/78",
+  heart_rate: 88,
+  temperature: "98.4F",
+  spo2: 99
+}
+
+-- Triage and examination
+TRANSITION EmergencyVisit "$37" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: urgent }
+TRANSITION EmergencyVisit "$37" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Aisha Patel" }
+
+-- $38: Wrist X-ray
+SPAWN LabOrder {
+  patient_name: "Aisha Patel",
+  patient_ref: "$36",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: xray,
+  priority: urgent,
+  specimen_type: "Imaging",
+  notes: "AP and lateral right wrist"
+}
+
+TRANSITION LabOrder "$38" TO specimen_collected
+TRANSITION LabOrder "$38" TO processing
+TRANSITION LabOrder "$38" TO resulted WITH { results: "Distal radius fracture (Colles fracture), no displacement, no ulnar involvement", result_flag: abnormal }
+TRANSITION LabOrder "$38" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+-- Treatment and discharge
+TRANSITION EmergencyVisit "$37" TO undergoing_tests
+TRANSITION EmergencyVisit "$37" TO treatment WITH { diagnosis: "Colles fracture, right distal radius, non-displaced" }
+TRANSITION EmergencyVisit "$37" TO discharged WITH { disposition: discharged, notes: "Splinted in ER. Orthopedic follow-up in 1 week." }
+
+TRANSITION Doctor "$2" TO available
+TRANSITION Patient "$36" TO triaged WITH { assigned_nurse: "Grace Okonkwo", primary_diagnosis: "Colles fracture right wrist" }
+TRANSITION Patient "$36" TO discharged WITH { notes: "Discharged from ER with splint. Follow up with orthopedics in 1 week." }
+
+-- Aisha's prescriptions
+-- $39: Ibuprofen
+SPAWN Prescription {
+  patient_name: "Aisha Patel",
+  patient_ref: "$36",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Ibuprofen",
+  dosage: "600mg",
+  frequency: "Every 6 hours as needed",
+  route: oral,
+  duration: "10 days"
+}
+
+-- $40: Acetaminophen
+SPAWN Prescription {
+  patient_name: "Aisha Patel",
+  patient_ref: "$36",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Acetaminophen",
+  dosage: "500mg",
+  frequency: "Every 6 hours as needed, alternate with ibuprofen",
+  route: oral,
+  duration: "10 days"
+}
+
+TRANSITION Prescription "$39" TO verified
+TRANSITION Prescription "$39" TO dispensing
+TRANSITION Prescription "$39" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$39" TO active
+
+TRANSITION Prescription "$40" TO verified
+TRANSITION Prescription "$40" TO dispensing
+TRANSITION Prescription "$40" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$40" TO active
+
+-- $41: Aisha billing
+SPAWN BillingCase {
+  patient_name: "Aisha Patel",
+  patient_ref: "$36",
+  insurance_provider: "UnitedHealthcare",
+  insurance_id: "UHC-AP-334512",
+  total_charges: 2800,
+  notes: "ER visit, wrist X-ray, splinting, prescriptions"
+}
+
+TRANSITION BillingCase "$41" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 2800 }
+TRANSITION BillingCase "$41" TO claim_submitted WITH { claim_number: "CLM-2024-89301" }
+
+-- $42: James O'Brien — Patient (no-show)
+SPAWN Patient {
+  name: "James O'Brien",
+  date_of_birth: "1981-09-28",
+  gender: male,
+  insurance_id: "CIGNA-JO-778234",
+  admission_type: outpatient
+}
+
+-- $43: James's missed appointment
+SPAWN Appointment {
+  patient_name: "James O'Brien",
+  patient_ref: "$42",
+  doctor_name: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  appointment_type: follow_up
+}
+
+TRANSITION Appointment "$43" TO confirmed
+TRANSITION Appointment "$43" TO no_show
+
+
+-- ============================================================================
+-- SCENARIO 5: Pediatric Asthma Emergency — Lily Chen
+-- ============================================================================
+-- 6-year-old female brought by parents with severe asthma exacerbation.
+-- Nebulizer treatment in ER, steroids, observation, discharged home.
+-- ============================================================================
+
+-- $44: Lily Chen — Patient
+SPAWN Patient {
+  name: "Lily Chen",
+  date_of_birth: "2020-05-08",
+  gender: female,
+  blood_type: A_pos,
+  insurance_id: "BCBS-LC-887234",
+  allergies: "None known",
+  admission_type: emergency
+}
+
+-- $45: Lily ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Lily Chen",
+  patient_ref: "$44",
+  arrival_method: walk_in,
+  chief_complaint: "Severe wheezing and difficulty breathing for 2 hours despite home nebulizer",
+  blood_pressure: "95/60",
+  heart_rate: 140,
+  temperature: "99.1F",
+  spo2: 88
+}
+
+TRANSITION EmergencyVisit "$45" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: emergent }
+TRANSITION EmergencyVisit "$45" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Lily Chen" }
+
+-- $46: Chest X-ray
+SPAWN LabOrder {
+  patient_name: "Lily Chen",
+  patient_ref: "$44",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: xray,
+  priority: urgent,
+  specimen_type: "Imaging",
+  notes: "PA chest pediatric - rule out pneumonia"
+}
+
+TRANSITION LabOrder "$46" TO specimen_collected
+TRANSITION LabOrder "$46" TO processing
+TRANSITION LabOrder "$46" TO resulted WITH { results: "Hyperinflation bilateral. No consolidation or pneumothorax. Consistent with acute asthma exacerbation.", result_flag: normal }
+TRANSITION LabOrder "$46" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION EmergencyVisit "$45" TO undergoing_tests
+TRANSITION EmergencyVisit "$45" TO treatment WITH { diagnosis: "Acute severe asthma exacerbation (Status Asthmaticus)" }
+
+-- $47: Albuterol nebulizer
+SPAWN Prescription {
+  patient_name: "Lily Chen",
+  patient_ref: "$44",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Albuterol",
+  dosage: "2.5mg/3mL nebulizer",
+  frequency: "Every 20 min x3 then every 4 hours",
+  route: inhaled,
+  duration: "ER then 5 days home"
+}
+
+-- $48: Prednisolone oral
+SPAWN Prescription {
+  patient_name: "Lily Chen",
+  patient_ref: "$44",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Prednisolone",
+  dosage: "15mg",
+  frequency: "Once daily",
+  route: oral,
+  duration: "5 days"
+}
+
+TRANSITION Prescription "$47" TO verified
+TRANSITION Prescription "$47" TO dispensing
+TRANSITION Prescription "$47" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$47" TO active
+
+TRANSITION Prescription "$48" TO verified
+TRANSITION Prescription "$48" TO dispensing
+TRANSITION Prescription "$48" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$48" TO active
+
+-- Observe then discharge (SpO2 improved to 97%)
+TRANSITION EmergencyVisit "$45" TO observation
+TRANSITION EmergencyVisit "$45" TO discharged WITH { disposition: discharged, notes: "SpO2 improved to 97% on room air after 3 nebs. Asthma action plan reviewed with parents." }
+TRANSITION Doctor "$2" TO available
+
+TRANSITION Patient "$44" TO triaged WITH { assigned_nurse: "Grace Okonkwo", primary_diagnosis: "Acute severe asthma exacerbation" }
+TRANSITION Patient "$44" TO discharged WITH { notes: "Discharged from ER. Home nebs and oral steroids. Pediatrician follow-up in 2 days." }
+
+-- $49: Lily billing
+SPAWN BillingCase {
+  patient_name: "Lily Chen",
+  patient_ref: "$44",
+  insurance_provider: "Blue Cross Blue Shield",
+  insurance_id: "BCBS-LC-887234",
+  total_charges: 4200,
+  notes: "Pediatric ER visit, chest X-ray, nebulizer treatments, observation"
+}
+
+TRANSITION BillingCase "$49" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 4200 }
+TRANSITION BillingCase "$49" TO claim_submitted WITH { claim_number: "CLM-2024-89410" }
+TRANSITION BillingCase "$49" TO adjudicated WITH { insurance_paid: 3800, patient_balance: 400 }
+TRANSITION BillingCase "$49" TO patient_billed WITH { patient_balance: 400 }
+TRANSITION BillingCase "$49" TO payment_received WITH { payment_method: "Credit Card" }
+TRANSITION BillingCase "$49" TO closed
+
+
+-- ============================================================================
+-- SCENARIO 6: Acute Stroke Code — Dorothy Washington
+-- ============================================================================
+-- 72-year-old female arrives by ambulance with sudden left-sided weakness
+-- and slurred speech. CT negative for hemorrhage, tPA administered within
+-- therapeutic window. Admitted for monitoring.
+-- ============================================================================
+
+-- $50: Dorothy Washington — Patient
+SPAWN Patient {
+  name: "Dorothy Washington",
+  date_of_birth: "1954-01-20",
+  gender: female,
+  blood_type: O_neg,
+  insurance_id: "MEDICARE-DW-334891",
+  allergies: "Sulfa drugs",
+  admission_type: emergency
+}
+
+-- $51: Dorothy ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Dorothy Washington",
+  patient_ref: "$50",
+  arrival_method: ambulance,
+  chief_complaint: "Sudden onset left arm and leg weakness, facial droop, slurred speech. Onset 90 minutes ago.",
+  blood_pressure: "188/102",
+  heart_rate: 96,
+  temperature: "98.2F",
+  spo2: 96
+}
+
+TRANSITION EmergencyVisit "$51" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: immediate }
+TRANSITION EmergencyVisit "$51" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Dorothy Washington" }
+
+-- $52: CT Head STAT
+SPAWN LabOrder {
+  patient_name: "Dorothy Washington",
+  patient_ref: "$50",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: ct_scan,
+  priority: stat,
+  specimen_type: "Imaging",
+  notes: "CT Head non-contrast STAT - stroke code"
+}
+
+-- $53: CBC + Coagulation
+SPAWN LabOrder {
+  patient_name: "Dorothy Washington",
+  patient_ref: "$50",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: cbc,
+  priority: stat,
+  specimen_type: "Blood"
+}
+
+TRANSITION LabOrder "$52" TO specimen_collected
+TRANSITION LabOrder "$52" TO processing
+TRANSITION LabOrder "$52" TO resulted WITH { results: "No acute intracranial hemorrhage. No mass effect. Early ischemic changes in right MCA territory.", result_flag: abnormal }
+TRANSITION LabOrder "$52" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION LabOrder "$53" TO specimen_collected
+TRANSITION LabOrder "$53" TO processing
+TRANSITION LabOrder "$53" TO resulted WITH { results: "WBC: 8.2, Hgb: 13.1, Plt: 245, INR: 1.0, PT: 12.5, aPTT: 28", result_flag: normal }
+TRANSITION LabOrder "$53" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION EmergencyVisit "$51" TO undergoing_tests
+TRANSITION EmergencyVisit "$51" TO treatment WITH { diagnosis: "Acute ischemic stroke, right MCA territory" }
+
+-- $54: Alteplase (tPA)
+SPAWN Prescription {
+  patient_name: "Dorothy Washington",
+  patient_ref: "$50",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Alteplase (tPA)",
+  dosage: "0.9mg/kg IV, 10% bolus then remainder over 60min",
+  frequency: "One-time administration",
+  route: iv,
+  duration: "Single dose",
+  notes: "Door-to-needle: 38 min. NIHSS: 14"
+}
+
+-- $55: Aspirin (post-tPA after 24h)
+SPAWN Prescription {
+  patient_name: "Dorothy Washington",
+  patient_ref: "$50",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Aspirin",
+  dosage: "325mg",
+  frequency: "Once daily starting 24h post-tPA",
+  route: oral,
+  duration: "Indefinite"
+}
+
+TRANSITION Prescription "$54" TO verified
+TRANSITION Prescription "$54" TO dispensing
+TRANSITION Prescription "$54" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$54" TO active
+TRANSITION Prescription "$54" TO completed
+
+TRANSITION Prescription "$55" TO verified
+TRANSITION Prescription "$55" TO dispensing
+TRANSITION Prescription "$55" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$55" TO active
+
+-- Admit to stroke unit
+-- $56: General bed for stroke monitoring
+SPAWN Bed { ward: general, room_number: "405", bed_number: "A", bed_type: standard }
+TRANSITION Bed "$56" TO reserved
+TRANSITION Bed "$56" TO occupied WITH { occupant_id: "$50" }
+
+TRANSITION EmergencyVisit "$51" TO admitted WITH { assigned_bed: "GEN-405-A", disposition: admitted }
+TRANSITION Doctor "$2" TO available
+
+TRANSITION Patient "$50" TO triaged WITH { assigned_nurse: "Grace Okonkwo" }
+TRANSITION Patient "$50" TO admitted WITH { assigned_doctor: "Dr. James Rivera", assigned_bed: "GEN-405-A", primary_diagnosis: "Acute ischemic stroke right MCA territory, post-tPA" }
+TRANSITION Patient "$50" TO in_treatment
+
+-- $57: Dorothy billing
+SPAWN BillingCase {
+  patient_name: "Dorothy Washington",
+  patient_ref: "$50",
+  insurance_provider: "Medicare",
+  insurance_id: "MEDICARE-DW-334891",
+  total_charges: 45000,
+  notes: "Stroke code, CT head, tPA administration, ICU monitoring"
+}
+
+TRANSITION BillingCase "$57" TO coded WITH { coding_specialist: "Michael Park", total_charges: 45000 }
+TRANSITION BillingCase "$57" TO claim_submitted WITH { claim_number: "CLM-2024-89455" }
+
+
+-- ============================================================================
+-- SCENARIO 7: Cancelled Surgery — Thomas Wright
+-- ============================================================================
+-- 55-year-old male scheduled for elective cholecystectomy. Pre-op labs
+-- reveal dangerously elevated liver enzymes. Surgery cancelled pending
+-- further hepatic workup.
+-- ============================================================================
+
+-- $58: Thomas Wright — Patient
+SPAWN Patient {
+  name: "Thomas Wright",
+  date_of_birth: "1971-06-12",
+  gender: male,
+  blood_type: A_neg,
+  insurance_id: "CIGNA-TW-556291",
+  admission_type: elective
+}
+
+-- $59: Pre-op appointment
+SPAWN Appointment {
+  patient_name: "Thomas Wright",
+  patient_ref: "$58",
+  doctor_name: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  appointment_type: pre_op
+}
+
+TRANSITION Appointment "$59" TO confirmed
+TRANSITION Appointment "$59" TO checked_in
+TRANSITION Doctor "$18" TO in_consultation WITH { current_patient: "Thomas Wright" }
+TRANSITION Appointment "$59" TO in_consultation
+
+-- $60: Pre-op labs — critically abnormal
+SPAWN LabOrder {
+  patient_name: "Thomas Wright",
+  patient_ref: "$58",
+  ordering_doctor: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  test_type: pre_op_panel,
+  priority: routine,
+  specimen_type: "Blood"
+}
+
+TRANSITION LabOrder "$60" TO specimen_collected
+TRANSITION LabOrder "$60" TO processing
+TRANSITION LabOrder "$60" TO resulted WITH { results: "ALT: 312 U/L (CRITICAL HIGH), AST: 287 U/L (CRITICAL HIGH), Alk Phos: 198 (HIGH), Bilirubin: 3.2 (HIGH). CBC and BMP WNL.", result_flag: critical }
+TRANSITION LabOrder "$60" TO reviewed WITH { reviewed_by: "Dr. Michael Thompson" }
+
+TRANSITION Appointment "$59" TO post_visit WITH { visit_notes: "Pre-op labs show critical liver enzyme elevation. Surgery CANCELLED. Referred to GI for hepatic workup. RUQ ultrasound ordered.", follow_up: "GI consult within 1 week" }
+TRANSITION Appointment "$59" TO completed
+TRANSITION Doctor "$18" TO available
+
+-- $61: Surgery — created then cancelled
+SPAWN Surgery {
+  patient_name: "Thomas Wright",
+  patient_ref: "$58",
+  surgeon_name: "Dr. Michael Thompson",
+  surgeon_ref: "$18",
+  procedure_name: "Laparoscopic Cholecystectomy",
+  estimated_duration: "60 minutes"
+}
+
+TRANSITION Surgery "$61" TO pre_op_assessment
+TRANSITION Surgery "$61" TO surgery_cancelled
+
+TRANSITION Patient "$58" TO triaged WITH { assigned_nurse: "Front Desk RN" }
+TRANSITION Patient "$58" TO discharged WITH { notes: "Surgery cancelled due to abnormal liver function tests. GI referral placed." }
+
+-- $62: Thomas billing
+SPAWN BillingCase {
+  patient_name: "Thomas Wright",
+  patient_ref: "$58",
+  insurance_provider: "Cigna",
+  insurance_id: "CIGNA-TW-556291",
+  total_charges: 650,
+  notes: "Pre-op visit and labs only, surgery cancelled"
+}
+
+TRANSITION BillingCase "$62" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 650 }
+TRANSITION BillingCase "$62" TO claim_submitted WITH { claim_number: "CLM-2024-89501" }
+TRANSITION BillingCase "$62" TO adjudicated WITH { insurance_paid: 520, patient_balance: 130 }
+TRANSITION BillingCase "$62" TO patient_billed WITH { patient_balance: 130 }
+TRANSITION BillingCase "$62" TO payment_received WITH { payment_method: "Online" }
+TRANSITION BillingCase "$62" TO closed
+
+
+-- ============================================================================
+-- SCENARIO 8: Chronic Disease Follow-Up — Maria Santos
+-- ============================================================================
+-- 55-year-old female with Type 2 diabetes. Routine follow-up, A1C and
+-- lipid panel ordered. A1C elevated, medication adjusted. Demonstrates
+-- ongoing chronic disease management workflow.
+-- ============================================================================
+
+-- $63: Maria Santos — Patient
+SPAWN Patient {
+  name: "Maria Santos",
+  date_of_birth: "1971-03-28",
+  gender: female,
+  blood_type: B_neg,
+  insurance_id: "AETNA-MS-445912",
+  allergies: "Latex",
+  admission_type: outpatient
+}
+
+-- $64: Follow-up appointment
+SPAWN Appointment {
+  patient_name: "Maria Santos",
+  patient_ref: "$63",
+  doctor_name: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  appointment_type: follow_up
+}
+
+TRANSITION Appointment "$64" TO confirmed
+TRANSITION Appointment "$64" TO checked_in
+TRANSITION Doctor "$18" TO in_consultation WITH { current_patient: "Maria Santos" }
+TRANSITION Appointment "$64" TO in_consultation
+
+-- $65: CMP (includes glucose, used as proxy for A1C)
+SPAWN LabOrder {
+  patient_name: "Maria Santos",
+  patient_ref: "$63",
+  ordering_doctor: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  test_type: cmp,
+  priority: routine,
+  specimen_type: "Blood",
+  notes: "Fasting glucose + HbA1c"
+}
+
+-- $66: Lipid panel
+SPAWN LabOrder {
+  patient_name: "Maria Santos",
+  patient_ref: "$63",
+  ordering_doctor: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  test_type: lipid_panel,
+  priority: routine,
+  specimen_type: "Blood"
+}
+
+TRANSITION LabOrder "$65" TO specimen_collected
+TRANSITION LabOrder "$65" TO processing
+TRANSITION LabOrder "$65" TO resulted WITH { results: "Fasting Glucose: 178 mg/dL (HIGH), HbA1c: 8.4% (HIGH - target <7%), BMP otherwise WNL", result_flag: abnormal }
+TRANSITION LabOrder "$65" TO reviewed WITH { reviewed_by: "Dr. Michael Thompson" }
+
+TRANSITION LabOrder "$66" TO specimen_collected
+TRANSITION LabOrder "$66" TO processing
+TRANSITION LabOrder "$66" TO resulted WITH { results: "Total Chol: 210, LDL: 128, HDL: 48 (LOW), Triglycerides: 170 (BORDERLINE)", result_flag: abnormal }
+TRANSITION LabOrder "$66" TO reviewed WITH { reviewed_by: "Dr. Michael Thompson" }
+
+-- $67: Metformin dose increase
+SPAWN Prescription {
+  patient_name: "Maria Santos",
+  patient_ref: "$63",
+  doctor_name: "Dr. Michael Thompson",
+  doctor_ref: "$18",
+  medication: "Metformin",
+  dosage: "1000mg",
+  frequency: "Twice daily with meals",
+  route: oral,
+  duration: "Ongoing",
+  notes: "Increased from 500mg BID due to A1C 8.4%"
+}
+
+TRANSITION Prescription "$67" TO verified
+TRANSITION Prescription "$67" TO dispensing
+TRANSITION Prescription "$67" TO dispensed WITH { dispensed_by: "PharmTech Williams" }
+TRANSITION Prescription "$67" TO active
+
+TRANSITION Appointment "$64" TO post_visit WITH { visit_notes: "DM2 follow-up. A1C 8.4% (was 7.6%). Metformin increased to 1000mg BID. Diet counseling reinforced. Lipids borderline, monitoring. Recheck A1C in 3 months.", lab_orders: "CMP, Lipid Panel", follow_up: "3 months - A1C recheck" }
+TRANSITION Appointment "$64" TO completed
+TRANSITION Doctor "$18" TO available
+
+TRANSITION Patient "$63" TO triaged WITH { assigned_nurse: "Front Desk RN" }
+TRANSITION Patient "$63" TO discharged WITH { notes: "Diabetes follow-up complete. Medication adjustment. Return in 3 months." }
+
+-- $68: Maria billing
+SPAWN BillingCase {
+  patient_name: "Maria Santos",
+  patient_ref: "$63",
+  insurance_provider: "Aetna",
+  insurance_id: "AETNA-MS-445912",
+  total_charges: 480,
+  notes: "Diabetes follow-up visit, HbA1c, lipid panel"
+}
+
+TRANSITION BillingCase "$68" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 480 }
+TRANSITION BillingCase "$68" TO claim_submitted WITH { claim_number: "CLM-2024-89550" }
+TRANSITION BillingCase "$68" TO adjudicated WITH { insurance_paid: 480, patient_balance: 0 }
+TRANSITION BillingCase "$68" TO closed
+
+
+-- ============================================================================
+-- SCENARIO 9: Anaphylactic Reaction — Kevin Murphy
+-- ============================================================================
+-- 35-year-old male presents to ER with severe allergic reaction after
+-- eating shellfish. Epinephrine administered, observed for biphasic
+-- reaction, discharged with EpiPen prescription.
+-- ============================================================================
+
+-- $69: Kevin Murphy — Patient
+SPAWN Patient {
+  name: "Kevin Murphy",
+  date_of_birth: "1991-08-05",
+  gender: male,
+  blood_type: O_pos,
+  insurance_id: "UHC-KM-667823",
+  allergies: "Shellfish (SEVERE - anaphylaxis)",
+  admission_type: emergency
+}
+
+-- $70: Kevin ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Kevin Murphy",
+  patient_ref: "$69",
+  arrival_method: ambulance,
+  chief_complaint: "Severe allergic reaction: diffuse urticaria, tongue swelling, throat tightness, wheezing. Ate shrimp 30min ago.",
+  blood_pressure: "85/52",
+  heart_rate: 128,
+  temperature: "98.8F",
+  spo2: 91
+}
+
+TRANSITION EmergencyVisit "$70" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: immediate }
+TRANSITION EmergencyVisit "$70" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Kevin Murphy" }
+
+-- $71: Tryptase level
+SPAWN LabOrder {
+  patient_name: "Kevin Murphy",
+  patient_ref: "$69",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: cbc,
+  priority: stat,
+  specimen_type: "Blood",
+  notes: "CBC + Serum Tryptase for anaphylaxis confirmation"
+}
+
+TRANSITION LabOrder "$71" TO specimen_collected
+TRANSITION LabOrder "$71" TO processing
+TRANSITION LabOrder "$71" TO resulted WITH { results: "WBC: 12.1 (mild leukocytosis), Serum Tryptase: 28.5 ng/mL (ELEVATED - confirms anaphylaxis, normal <11.4)", result_flag: critical }
+TRANSITION LabOrder "$71" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION EmergencyVisit "$70" TO undergoing_tests
+TRANSITION EmergencyVisit "$70" TO treatment WITH { diagnosis: "Anaphylaxis secondary to shellfish ingestion (ICD-10: T78.2)" }
+
+-- $72: Epinephrine IM
+SPAWN Prescription {
+  patient_name: "Kevin Murphy",
+  patient_ref: "$69",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Epinephrine",
+  dosage: "0.3mg (1:1000)",
+  frequency: "IM stat, repeat in 5min if no improvement",
+  route: im,
+  duration: "ER only"
+}
+
+-- $73: Prednisone taper
+SPAWN Prescription {
+  patient_name: "Kevin Murphy",
+  patient_ref: "$69",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Prednisone",
+  dosage: "60mg then taper",
+  frequency: "60mg x3d, 40mg x3d, 20mg x3d",
+  route: oral,
+  duration: "9 days"
+}
+
+-- $74: EpiPen for home
+SPAWN Prescription {
+  patient_name: "Kevin Murphy",
+  patient_ref: "$69",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Epinephrine Auto-Injector (EpiPen)",
+  dosage: "0.3mg",
+  frequency: "Carry at all times, use for anaphylaxis",
+  route: im,
+  duration: "Indefinite",
+  notes: "Rx for 2-pack. Allergy referral for desensitization."
+}
+
+TRANSITION Prescription "$72" TO verified
+TRANSITION Prescription "$72" TO dispensing
+TRANSITION Prescription "$72" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$72" TO active
+TRANSITION Prescription "$72" TO completed
+
+TRANSITION Prescription "$73" TO verified
+TRANSITION Prescription "$73" TO dispensing
+TRANSITION Prescription "$73" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$73" TO active
+
+TRANSITION Prescription "$74" TO verified
+TRANSITION Prescription "$74" TO dispensing
+TRANSITION Prescription "$74" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$74" TO active
+
+-- Observe 4 hours for biphasic reaction, then discharge
+TRANSITION EmergencyVisit "$70" TO observation
+TRANSITION EmergencyVisit "$70" TO discharged WITH { disposition: discharged, notes: "Observed 4hr, no biphasic reaction. Vitals normalized. Educated on EpiPen use and shellfish avoidance." }
+TRANSITION Doctor "$2" TO available
+
+TRANSITION Patient "$69" TO triaged WITH { assigned_nurse: "Grace Okonkwo", primary_diagnosis: "Anaphylaxis - shellfish" }
+TRANSITION Patient "$69" TO discharged WITH { notes: "Discharged post-anaphylaxis observation. EpiPen prescribed. Allergy referral given." }
+
+-- $75: Kevin billing
+SPAWN BillingCase {
+  patient_name: "Kevin Murphy",
+  patient_ref: "$69",
+  insurance_provider: "UnitedHealthcare",
+  insurance_id: "UHC-KM-667823",
+  total_charges: 6800,
+  notes: "ER anaphylaxis, epinephrine, 4hr observation, labs, prescriptions"
+}
+
+TRANSITION BillingCase "$75" TO coded WITH { coding_specialist: "Michael Park", total_charges: 6800 }
+TRANSITION BillingCase "$75" TO claim_submitted WITH { claim_number: "CLM-2024-89580" }
+TRANSITION BillingCase "$75" TO adjudicated WITH { insurance_paid: 5500, patient_balance: 1300 }
+TRANSITION BillingCase "$75" TO patient_billed WITH { patient_balance: 1300 }
+
+
+-- ============================================================================
+-- SCENARIO 10: Multi-Trauma MVA — Carlos Mendez
+-- ============================================================================
+-- 29-year-old male, restrained driver in high-speed MVC. Splenic
+-- laceration found on CT, emergent splenectomy, ICU admission.
+-- Demonstrates complex trauma workflow with surgery + ICU.
+-- ============================================================================
+
+-- $76: Nurse Sarah Williams — ER (new staff)
+SPAWN Nurse { name: "Sarah Williams", department: emergency, certification: "CEN" }
+TRANSITION Nurse "$76" TO available
+
+-- $77: Trauma bay bed
+SPAWN Bed { ward: emergency, room_number: "T1", bed_number: "A", bed_type: standard }
+
+-- $78: Carlos Mendez — Patient
+SPAWN Patient {
+  name: "Carlos Mendez",
+  date_of_birth: "1997-04-11",
+  gender: male,
+  blood_type: O_neg,
+  insurance_id: "GEICO-CM-991823",
+  allergies: "None known",
+  admission_type: emergency
+}
+
+-- $79: Carlos ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  arrival_method: ambulance,
+  chief_complaint: "MVC restrained driver, high-speed frontal impact. GCS 14, left-sided abdominal pain, seatbelt sign.",
+  blood_pressure: "92/58",
+  heart_rate: 122,
+  temperature: "97.8F",
+  spo2: 95
+}
+
+TRANSITION Nurse "$76" TO assigned WITH { current_patient: "Carlos Mendez" }
+TRANSITION EmergencyVisit "$79" TO triage_assessment WITH { triage_nurse: "Sarah Williams", triage_level: immediate }
+TRANSITION EmergencyVisit "$79" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Carlos Mendez" }
+
+-- $80: CT Abdomen/Pelvis
+SPAWN LabOrder {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: ct_scan,
+  priority: stat,
+  specimen_type: "Imaging",
+  notes: "CT Abdomen/Pelvis with IV contrast - trauma"
+}
+
+-- $81: CBC + Type & Screen
+SPAWN LabOrder {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: cbc,
+  priority: stat,
+  specimen_type: "Blood",
+  notes: "CBC, BMP, Type and Screen, Coags, Lactate"
+}
+
+TRANSITION LabOrder "$80" TO specimen_collected
+TRANSITION LabOrder "$80" TO processing
+TRANSITION LabOrder "$80" TO resulted WITH { results: "Grade III splenic laceration with active extravasation. Small left hemothorax. No free air. L1-L2 transverse process fractures.", result_flag: critical }
+TRANSITION LabOrder "$80" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION LabOrder "$81" TO specimen_collected
+TRANSITION LabOrder "$81" TO processing
+TRANSITION LabOrder "$81" TO resulted WITH { results: "Hgb: 8.2 (LOW), Hct: 24.6 (LOW), WBC: 18.4, Plt: 198, Lactate: 4.8 (HIGH), Type O-neg", result_flag: critical }
+TRANSITION LabOrder "$81" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION EmergencyVisit "$79" TO undergoing_tests
+TRANSITION EmergencyVisit "$79" TO treatment WITH { diagnosis: "Grade III splenic laceration with active hemorrhage, left hemothorax, lumbar transverse process fractures" }
+
+-- Admit for emergent surgery
+TRANSITION Bed "$77" TO reserved
+TRANSITION Bed "$77" TO occupied WITH { occupant_id: "$78" }
+TRANSITION EmergencyVisit "$79" TO admitted WITH { assigned_bed: "ER-T1-A", disposition: admitted }
+TRANSITION Doctor "$2" TO available
+TRANSITION Nurse "$76" TO available
+
+TRANSITION Patient "$78" TO triaged WITH { assigned_nurse: "Sarah Williams" }
+TRANSITION Patient "$78" TO admitted WITH { assigned_doctor: "Dr. James Rivera", assigned_bed: "ER-T1-A", primary_diagnosis: "Polytrauma: splenic laceration, hemothorax, lumbar fractures" }
+
+-- $82: Emergent Splenectomy
+SPAWN Surgery {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  surgeon_name: "Dr. James Rivera",
+  surgeon_ref: "$2",
+  procedure_name: "Emergent Splenectomy",
+  estimated_duration: "90 minutes",
+  blood_type_needed: "O-neg"
+}
+
+TRANSITION Doctor "$2" TO in_surgery WITH { current_patient: "Carlos Mendez" }
+TRANSITION Surgery "$82" TO pre_op_assessment
+TRANSITION Surgery "$82" TO pre_op_cleared WITH { pre_op_notes: "Hemodynamically unstable despite 2L crystalloid + 2u pRBC. Consented emergently. Grade III splenic lac with active bleed on CT." }
+TRANSITION Surgery "$82" TO scheduled_for_or WITH { or_room: "OR-1 Trauma", anesthesiologist: "Dr. Linda Park" }
+TRANSITION Surgery "$82" TO in_holding
+TRANSITION Surgery "$82" TO under_anesthesia
+TRANSITION Surgery "$82" TO in_operation
+TRANSITION Patient "$78" TO in_treatment
+TRANSITION Patient "$78" TO in_surgery
+TRANSITION Surgery "$82" TO in_recovery_room WITH { op_notes: "Total splenectomy. 800mL hemoperitoneum evacuated. Hemostasis achieved. Chest tube placed for hemothorax (400mL). EBL 1200mL, 4u pRBC given." }
+TRANSITION Surgery "$82" TO post_op_ward WITH { post_op_notes: "Transferred to ICU intubated. Hemodynamically improving on vasopressors." }
+TRANSITION Surgery "$82" TO surgery_completed
+TRANSITION Doctor "$2" TO available
+
+-- ICU recovery
+-- $83: ICU bed for Carlos
+SPAWN Bed { ward: icu, room_number: "208", bed_number: "A", bed_type: icu }
+TRANSITION Bed "$83" TO reserved
+TRANSITION Bed "$83" TO occupied WITH { occupant_id: "$78" }
+TRANSITION Bed "$77" TO cleaning
+
+TRANSITION Nurse "$4" TO assigned WITH { current_patient: "Carlos Mendez" }
+TRANSITION Patient "$78" TO recovering WITH { notes: "ICU day 1: Extubated, off pressors. Chest tube to water seal. Pain controlled." }
+
+-- $84: Morphine PCA
+SPAWN Prescription {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Morphine PCA",
+  dosage: "1mg demand, 8min lockout, 30mg 4hr max",
+  frequency: "Patient-controlled",
+  route: iv,
+  duration: "3-5 days"
+}
+
+-- $85: Ceftriaxone (post-splenectomy prophylaxis)
+SPAWN Prescription {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Ceftriaxone",
+  dosage: "2g",
+  frequency: "Once daily",
+  route: iv,
+  duration: "7 days",
+  notes: "Post-splenectomy infection prophylaxis"
+}
+
+TRANSITION Prescription "$84" TO verified
+TRANSITION Prescription "$84" TO dispensing
+TRANSITION Prescription "$84" TO dispensed WITH { dispensed_by: "PharmTech Kim" }
+TRANSITION Prescription "$84" TO active
+
+TRANSITION Prescription "$85" TO verified
+TRANSITION Prescription "$85" TO dispensing
+TRANSITION Prescription "$85" TO dispensed WITH { dispensed_by: "PharmTech Kim" }
+TRANSITION Prescription "$85" TO active
+
+-- $86: Carlos billing (major trauma)
+SPAWN BillingCase {
+  patient_name: "Carlos Mendez",
+  patient_ref: "$78",
+  insurance_provider: "GEICO Auto Insurance",
+  insurance_id: "GEICO-CM-991823",
+  total_charges: 128000,
+  notes: "Trauma activation, CT, emergent splenectomy, 4u blood, ICU, chest tube"
+}
+
+TRANSITION BillingCase "$86" TO coded WITH { coding_specialist: "Michael Park", total_charges: 128000 }
+TRANSITION BillingCase "$86" TO claim_submitted WITH { claim_number: "CLM-2024-89620" }
+
+
+-- ============================================================================
+-- SCENARIO 11: Medication Adverse Reaction — Marcus Williams (revisited)
+-- ============================================================================
+-- Marcus (from Scenario 1) develops bleeding on Ticagrelor ($13).
+-- Ticagrelor discontinued, switched to Clopidogrel. Demonstrates
+-- the medication discontinuation and replacement workflow.
+-- ============================================================================
+
+-- Discontinue Ticagrelor due to adverse reaction
+TRANSITION Prescription "$13" TO discontinued
+
+-- $87: Clopidogrel (replacement antiplatelet)
+SPAWN Prescription {
+  patient_name: "Marcus Williams",
+  patient_ref: "$7",
+  doctor_name: "Dr. Sarah Chen",
+  doctor_ref: "$1",
+  medication: "Clopidogrel",
+  dosage: "75mg",
+  frequency: "Once daily",
+  route: oral,
+  duration: "12 months",
+  notes: "Replacement for Ticagrelor due to GI bleeding adverse reaction"
+}
+
+TRANSITION Doctor "$1" TO in_consultation WITH { current_patient: "Marcus Williams" }
+TRANSITION Doctor "$1" TO available
+
+TRANSITION Prescription "$87" TO verified
+TRANSITION Prescription "$87" TO dispensing
+TRANSITION Prescription "$87" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$87" TO active
+
+
+-- ============================================================================
+-- SCENARIO 12: Uninsured Self-Pay → Written Off — David Park
+-- ============================================================================
+-- 40-year-old male, uninsured, presents to ER with severe back pain.
+-- Evaluated, given muscle relaxant, discharged. Bill goes to self-pay,
+-- eventually to collections, then written off. Demonstrates full
+-- billing failure pathway.
+-- ============================================================================
+
+-- $88: David Park — Patient (uninsured)
+SPAWN Patient {
+  name: "David Park",
+  date_of_birth: "1986-12-03",
+  gender: male,
+  admission_type: emergency
+}
+
+-- $89: David ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "David Park",
+  patient_ref: "$88",
+  arrival_method: walk_in,
+  chief_complaint: "Severe lower back pain radiating to right leg, onset 3 days ago, worsening",
+  blood_pressure: "142/88",
+  heart_rate: 92,
+  temperature: "98.4F",
+  spo2: 99
+}
+
+TRANSITION EmergencyVisit "$89" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: less_urgent }
+TRANSITION EmergencyVisit "$89" TO waiting
+TRANSITION EmergencyVisit "$89" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "David Park" }
+
+-- $90: Lumbar X-ray
+SPAWN LabOrder {
+  patient_name: "David Park",
+  patient_ref: "$88",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: xray,
+  priority: routine,
+  specimen_type: "Imaging",
+  notes: "Lumbar spine AP and lateral"
+}
+
+TRANSITION LabOrder "$90" TO specimen_collected
+TRANSITION LabOrder "$90" TO processing
+TRANSITION LabOrder "$90" TO resulted WITH { results: "Mild degenerative disc disease L4-L5, L5-S1. No fracture, no listhesis. Disc spaces preserved.", result_flag: normal }
+TRANSITION LabOrder "$90" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION EmergencyVisit "$89" TO undergoing_tests
+TRANSITION EmergencyVisit "$89" TO treatment WITH { diagnosis: "Acute lumbar radiculopathy, likely L5-S1 disc herniation" }
+
+-- $91: Cyclobenzaprine (muscle relaxant)
+SPAWN Prescription {
+  patient_name: "David Park",
+  patient_ref: "$88",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Cyclobenzaprine",
+  dosage: "10mg",
+  frequency: "Three times daily as needed",
+  route: oral,
+  duration: "10 days"
+}
+
+-- $92: Naproxen (NSAID)
+SPAWN Prescription {
+  patient_name: "David Park",
+  patient_ref: "$88",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Naproxen",
+  dosage: "500mg",
+  frequency: "Twice daily with food",
+  route: oral,
+  duration: "14 days"
+}
+
+TRANSITION Prescription "$91" TO verified
+TRANSITION Prescription "$91" TO dispensing
+TRANSITION Prescription "$91" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$91" TO active
+
+TRANSITION Prescription "$92" TO verified
+TRANSITION Prescription "$92" TO dispensing
+TRANSITION Prescription "$92" TO dispensed WITH { dispensed_by: "PharmTech Rodriguez" }
+TRANSITION Prescription "$92" TO active
+
+TRANSITION EmergencyVisit "$89" TO discharged WITH { disposition: discharged, notes: "No red flag symptoms. Conservative management. PCP follow-up if not improving in 2 weeks." }
+TRANSITION Doctor "$2" TO available
+
+TRANSITION Patient "$88" TO triaged WITH { assigned_nurse: "Grace Okonkwo", primary_diagnosis: "Acute lumbar radiculopathy" }
+TRANSITION Patient "$88" TO discharged WITH { notes: "Discharged with muscle relaxant and NSAID. Follow up with PCP." }
+
+-- $93: David billing — uninsured, goes to collections then written off
+SPAWN BillingCase {
+  patient_name: "David Park",
+  patient_ref: "$88",
+  total_charges: 3200,
+  notes: "ER visit, lumbar X-ray, prescriptions. Patient is UNINSURED - self-pay."
+}
+
+TRANSITION BillingCase "$93" TO coded WITH { coding_specialist: "Jennifer Adams", total_charges: 3200 }
+TRANSITION BillingCase "$93" TO patient_billed WITH { patient_balance: 3200 }
+TRANSITION BillingCase "$93" TO in_collections WITH { notes: "No response to 3 billing statements. Sent to collections agency." }
+TRANSITION BillingCase "$93" TO written_off WITH { notes: "Unable to collect. Written off as charity care." }
+
+
+-- ============================================================================
+-- SCENARIO 13: Post-Op Follow-Up — Robert Nakamura (revisited)
+-- ============================================================================
+-- Robert (from Scenario 3) returns for 6-week post-op appointment.
+-- Wound check, post-op labs, physical therapy progress assessed.
+-- Demonstrates follow-up appointment workflow.
+-- ============================================================================
+
+-- $94: Post-op follow-up appointment
+SPAWN Appointment {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  doctor_name: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  appointment_type: post_op
+}
+
+TRANSITION Appointment "$94" TO confirmed
+TRANSITION Appointment "$94" TO checked_in
+TRANSITION Doctor "$24" TO in_consultation WITH { current_patient: "Robert Nakamura" }
+TRANSITION Appointment "$94" TO in_consultation
+
+-- $95: Post-op blood work
+SPAWN LabOrder {
+  patient_name: "Robert Nakamura",
+  patient_ref: "$27",
+  ordering_doctor: "Dr. Patricia Morrison",
+  doctor_ref: "$24",
+  test_type: cbc,
+  priority: routine,
+  specimen_type: "Blood",
+  notes: "6-week post-op CBC, CRP, ESR"
+}
+
+TRANSITION LabOrder "$95" TO specimen_collected
+TRANSITION LabOrder "$95" TO processing
+TRANSITION LabOrder "$95" TO resulted WITH { results: "WBC: 7.1, Hgb: 13.8, Plt: 256, CRP: 3.2 (mildly elevated), ESR: 18. All trending to normal.", result_flag: normal }
+TRANSITION LabOrder "$95" TO reviewed WITH { reviewed_by: "Dr. Patricia Morrison" }
+
+TRANSITION Appointment "$94" TO post_visit WITH { visit_notes: "6-week post-op: Incision healed well, no signs of infection. ROM improving (flexion 95 degrees). CRP mildly elevated but trending down. PT progress excellent. Continue home exercises. Return in 3 months.", follow_up: "3 months - final post-op check" }
+TRANSITION Appointment "$94" TO completed
+TRANSITION Doctor "$24" TO available
+
+
+-- ============================================================================
+-- SCENARIO 14: Observation → Admission — Linda Park
+-- ============================================================================
+-- 60-year-old female with atypical chest pain. ER observation protocol
+-- with serial troponins. First troponin negative, second slightly
+-- elevated — admitted for cardiac catheterization. Demonstrates the
+-- observation-to-admission pathway.
+-- ============================================================================
+
+-- $96: Linda Park — Patient
+SPAWN Patient {
+  name: "Linda Park",
+  date_of_birth: "1966-10-15",
+  gender: female,
+  blood_type: A_pos,
+  insurance_id: "HUMANA-LP-889234",
+  allergies: "Codeine",
+  admission_type: emergency
+}
+
+-- $97: Linda ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Linda Park",
+  patient_ref: "$96",
+  arrival_method: walk_in,
+  chief_complaint: "Atypical chest pressure with exertion, nausea, jaw pain. Onset during gardening 2 hours ago.",
+  blood_pressure: "155/92",
+  heart_rate: 84,
+  temperature: "98.2F",
+  spo2: 97
+}
+
+TRANSITION EmergencyVisit "$97" TO triage_assessment WITH { triage_nurse: "Grace Okonkwo", triage_level: emergent }
+TRANSITION EmergencyVisit "$97" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Linda Park" }
+
+-- $98: Serial troponin #1
+SPAWN LabOrder {
+  patient_name: "Linda Park",
+  patient_ref: "$96",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: troponin,
+  priority: stat,
+  specimen_type: "Blood",
+  notes: "Serial troponin #1 - chest pain rule-out"
+}
+
+-- $99: Cardiac panel
+SPAWN LabOrder {
+  patient_name: "Linda Park",
+  patient_ref: "$96",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: cardiac_panel,
+  priority: stat,
+  specimen_type: "Blood",
+  notes: "ECG + cardiac markers"
+}
+
+-- First troponin negative
+TRANSITION LabOrder "$98" TO specimen_collected
+TRANSITION LabOrder "$98" TO processing
+TRANSITION LabOrder "$98" TO resulted WITH { results: "Troponin I: 0.03 ng/mL (normal <0.04). Baseline troponin within normal limits.", result_flag: normal }
+TRANSITION LabOrder "$98" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION LabOrder "$99" TO specimen_collected
+TRANSITION LabOrder "$99" TO processing
+TRANSITION LabOrder "$99" TO resulted WITH { results: "BNP: 180 (BORDERLINE), ECG: NSR rate 84, non-specific ST-T changes in V4-V6", result_flag: abnormal }
+TRANSITION LabOrder "$99" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+-- Move to observation for serial troponins
+TRANSITION EmergencyVisit "$97" TO undergoing_tests
+TRANSITION EmergencyVisit "$97" TO treatment WITH { diagnosis: "Chest pain, rule out ACS. Non-specific ECG changes. Observation protocol initiated." }
+TRANSITION EmergencyVisit "$97" TO observation
+
+-- Second troponin (4h later) comes back elevated — admit
+-- $100: Observation bed
+SPAWN Bed { ward: general, room_number: "310", bed_number: "B", bed_type: standard }
+TRANSITION Bed "$100" TO reserved
+TRANSITION Bed "$100" TO occupied WITH { occupant_id: "$96" }
+
+TRANSITION EmergencyVisit "$97" TO admitted WITH { assigned_bed: "GEN-310-B", disposition: admitted, notes: "Repeat troponin 0.12 (ELEVATED). Admitting for cardiac catheterization." }
+TRANSITION Doctor "$2" TO available
+
+TRANSITION Patient "$96" TO triaged WITH { assigned_nurse: "Grace Okonkwo" }
+TRANSITION Patient "$96" TO admitted WITH { assigned_doctor: "Dr. Sarah Chen", assigned_bed: "GEN-310-B", primary_diagnosis: "NSTEMI - Non-ST Elevation Myocardial Infarction" }
+TRANSITION Patient "$96" TO in_treatment
+
+-- $101: Linda billing
+SPAWN BillingCase {
+  patient_name: "Linda Park",
+  patient_ref: "$96",
+  insurance_provider: "Humana",
+  insurance_id: "HUMANA-LP-889234",
+  total_charges: 32000,
+  notes: "ER observation, serial troponins, cardiac markers, admission for cath"
+}
+
+TRANSITION BillingCase "$101" TO coded WITH { coding_specialist: "Michael Park", total_charges: 32000 }
+TRANSITION BillingCase "$101" TO claim_submitted WITH { claim_number: "CLM-2024-89700" }
+
+
+-- ============================================================================
+-- SCENARIO 15: Inter-Facility Transfer — Samuel Okafor
+-- ============================================================================
+-- 50-year-old male transferred from rural clinic with suspected aortic
+-- dissection. Stabilized in ER, transferred to cardiac surgery center.
+-- Demonstrates the transfer disposition pathway.
+-- ============================================================================
+
+-- $102: Samuel Okafor — Patient
+SPAWN Patient {
+  name: "Samuel Okafor",
+  date_of_birth: "1976-07-19",
+  gender: male,
+  blood_type: AB_neg,
+  insurance_id: "BCBS-SO-223891",
+  allergies: "ACE inhibitors",
+  admission_type: emergency
+}
+
+-- $103: Samuel ER Visit
+SPAWN EmergencyVisit {
+  patient_name: "Samuel Okafor",
+  patient_ref: "$102",
+  arrival_method: transfer,
+  chief_complaint: "Transfer from rural clinic: tearing chest pain radiating to back, BP differential between arms, widened mediastinum on portable CXR",
+  blood_pressure: "178/95",
+  heart_rate: 108,
+  temperature: "98.0F",
+  spo2: 94
+}
+
+TRANSITION EmergencyVisit "$103" TO triage_assessment WITH { triage_nurse: "Sarah Williams", triage_level: immediate }
+TRANSITION EmergencyVisit "$103" TO in_examination WITH { attending_doctor: "Dr. James Rivera" }
+TRANSITION Doctor "$2" TO in_consultation WITH { current_patient: "Samuel Okafor" }
+
+-- $104: CT Aorta
+SPAWN LabOrder {
+  patient_name: "Samuel Okafor",
+  patient_ref: "$102",
+  ordering_doctor: "Dr. James Rivera",
+  doctor_ref: "$2",
+  test_type: ct_scan,
+  priority: stat,
+  specimen_type: "Imaging",
+  notes: "CT Angiogram Aorta - rule out dissection"
+}
+
+TRANSITION LabOrder "$104" TO specimen_collected
+TRANSITION LabOrder "$104" TO processing
+TRANSITION LabOrder "$104" TO resulted WITH { results: "Stanford Type A aortic dissection. Intimal flap from aortic root to descending aorta. Pericardial effusion present. No malperfusion syndrome currently.", result_flag: critical }
+TRANSITION LabOrder "$104" TO reviewed WITH { reviewed_by: "Dr. James Rivera" }
+
+TRANSITION EmergencyVisit "$103" TO undergoing_tests
+TRANSITION EmergencyVisit "$103" TO treatment WITH { diagnosis: "Stanford Type A Aortic Dissection - requires emergent cardiothoracic surgery" }
+
+-- $105: Esmolol drip (HR/BP control)
+SPAWN Prescription {
+  patient_name: "Samuel Okafor",
+  patient_ref: "$102",
+  doctor_name: "Dr. James Rivera",
+  doctor_ref: "$2",
+  medication: "Esmolol",
+  dosage: "50-200 mcg/kg/min",
+  frequency: "Continuous IV infusion, titrate to HR <60 and SBP <120",
+  route: iv,
+  duration: "Until transfer"
+}
+
+TRANSITION Prescription "$105" TO verified
+TRANSITION Prescription "$105" TO dispensing
+TRANSITION Prescription "$105" TO dispensed WITH { dispensed_by: "PharmTech Kim" }
+TRANSITION Prescription "$105" TO active
+
+-- Transfer to cardiac surgery center (this facility cannot do aortic surgery)
+TRANSITION EmergencyVisit "$103" TO transferred WITH { notes: "Transferred to University Medical Center for emergent Type A dissection repair. Esmolol infusion running. HR 58, BP 118/72 at time of transfer." }
+TRANSITION Doctor "$2" TO available
+
+TRANSITION Patient "$102" TO triaged WITH { assigned_nurse: "Sarah Williams", primary_diagnosis: "Stanford Type A Aortic Dissection" }
+
+-- $106: Samuel billing (ER stabilization only)
+SPAWN BillingCase {
+  patient_name: "Samuel Okafor",
+  patient_ref: "$102",
+  insurance_provider: "Blue Cross Blue Shield",
+  insurance_id: "BCBS-SO-223891",
+  total_charges: 18500,
+  notes: "ER stabilization, CT angiogram, esmolol drip, transfer to cardiac surgery center"
+}
+
+TRANSITION BillingCase "$106" TO coded WITH { coding_specialist: "Michael Park", total_charges: 18500 }
+TRANSITION BillingCase "$106" TO claim_submitted WITH { claim_number: "CLM-2024-89750" }
+TRANSITION BillingCase "$106" TO adjudicated WITH { insurance_paid: 16000, patient_balance: 2500 }
+TRANSITION BillingCase "$106" TO patient_billed WITH { patient_balance: 2500 }
+
+
+-- ============================================================================
+-- Set staff back to reasonable end-of-day states
+-- ============================================================================
+TRANSITION Doctor "$1" TO off_duty
+TRANSITION Doctor "$2" TO off_duty
+TRANSITION Doctor "$18" TO off_duty
+TRANSITION Doctor "$24" TO off_duty
+TRANSITION Nurse "$3" TO off_duty
+TRANSITION Nurse "$4" TO available
+TRANSITION Nurse "$4" TO off_duty
+TRANSITION Nurse "$25" TO off_duty
+TRANSITION Nurse "$76" TO off_duty
+
+
+-- ============================================================================
+-- ANALYTICS QUERIES
+-- ============================================================================
+
+-- === Census: Hospital-wide state distribution ===
+AGGREGATE Patient GROUP BY STATE
+AGGREGATE Bed GROUP BY STATE
+AGGREGATE Doctor GROUP BY STATE
+AGGREGATE Nurse GROUP BY STATE
+
+-- === Clinical: Active orders and procedures ===
+AGGREGATE LabOrder GROUP BY STATE
+AGGREGATE Prescription GROUP BY STATE
+AGGREGATE Surgery GROUP BY STATE
+AGGREGATE Appointment GROUP BY STATE
+AGGREGATE EmergencyVisit GROUP BY STATE
+AGGREGATE BillingCase GROUP BY STATE
+
+-- === Funnels: Lifecycle conversion tracking ===
+FUNNEL Patient THROUGH [registered, triaged, admitted, in_treatment, recovering, ready_for_discharge, discharged]
+FUNNEL EmergencyVisit THROUGH [arrived, triage_assessment, in_examination, undergoing_tests, treatment, discharged]
+FUNNEL EmergencyVisit THROUGH [arrived, triage_assessment, in_examination, undergoing_tests, treatment, observation, discharged]
+FUNNEL EmergencyVisit THROUGH [arrived, triage_assessment, in_examination, undergoing_tests, treatment, admitted]
+FUNNEL Appointment THROUGH [scheduled, confirmed, checked_in, in_consultation, post_visit, completed]
+FUNNEL Surgery THROUGH [requested, pre_op_assessment, pre_op_cleared, scheduled_for_or, in_operation, in_recovery_room, surgery_completed]
+FUNNEL LabOrder THROUGH [ordered, specimen_collected, processing, resulted, reviewed]
+FUNNEL Prescription THROUGH [prescribed, verified, dispensing, dispensed, active, completed]
+FUNNEL BillingCase THROUGH [charges_pending, coded, claim_submitted, adjudicated, patient_billed, payment_received, closed]
+
+-- === Path Analysis: Common routes through machines ===
+PATHS FROM Patient
+PATHS FROM EmergencyVisit
+PATHS FROM Surgery
+PATHS FROM Appointment
+PATHS FROM BillingCase
+PATHS FROM Prescription
+
+-- === Segmented Path Analysis ===
+COMPARE PATHS EmergencyVisit SEGMENT BY triage_level
+COMPARE PATHS EmergencyVisit SEGMENT BY arrival_method
+COMPARE PATHS Patient SEGMENT BY admission_type
+COMPARE PATHS BillingCase SEGMENT BY insurance_provider
+
+-- === Find: Specific state queries ===
+FIND Patient WHERE STATE IS discharged
+FIND Patient WHERE STATE IS admitted
+FIND Patient WHERE STATE IS in_treatment
+FIND Patient WHERE STATE IS registered
+FIND Bed WHERE STATE IS available
+FIND Bed WHERE STATE IS occupied
+FIND Bed WHERE STATE IS cleaning
+FIND LabOrder WHERE STATE IS reviewed
+FIND Prescription WHERE STATE IS active
+FIND Prescription WHERE STATE IS discontinued
+FIND BillingCase WHERE STATE IS closed
+FIND BillingCase WHERE STATE IS written_off
+FIND BillingCase WHERE STATE IS claim_submitted
+FIND BillingCase WHERE STATE IS patient_billed
+FIND Appointment WHERE STATE IS no_show
+FIND Appointment WHERE STATE IS completed
+FIND Surgery WHERE STATE IS surgery_completed
+FIND Surgery WHERE STATE IS surgery_cancelled
+FIND EmergencyVisit WHERE STATE IS admitted
+FIND EmergencyVisit WHERE STATE IS discharged
+FIND EmergencyVisit WHERE STATE IS transferred
+
+-- === Audit Trails: Key patient journeys ===
+-- Marcus Williams: Emergency cardiac event (full lifecycle)
+TRAIL OF "$7"
+-- Robert Nakamura: Elective hip replacement (full lifecycle)
+TRAIL OF "$27"
+-- Aisha Patel: Quick ER visit (fracture)
+TRAIL OF "$36"
+-- Dorothy Washington: Stroke code (admitted, still in treatment)
+TRAIL OF "$50"
+-- Carlos Mendez: Multi-trauma (ICU)
+TRAIL OF "$78"
+-- David Park: Uninsured self-pay
+TRAIL OF "$88"
+-- Thomas Wright: Cancelled surgery
+TRAIL OF "$58"
+
+-- === Schema Introspection ===
+EXPLAIN TRANSITIONS FOR Patient
+EXPLAIN TRANSITIONS FOR EmergencyVisit
+EXPLAIN TRANSITIONS FOR Surgery
+EXPLAIN TRANSITIONS FOR BillingCase
