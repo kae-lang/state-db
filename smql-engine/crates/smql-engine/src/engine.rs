@@ -333,10 +333,6 @@ impl Engine {
             data_snapshot: Some(instance.data.clone()),
         };
 
-        // Store atomically
-        self.storage.store_instance(&instance).await?;
-        self.storage.append_trail_entry(&trail_entry).await?;
-
         // --- Store durable event ---
         let spawn_event = smql_storage::instance::StoredEvent {
             id: ulid::Ulid::new().to_string(),
@@ -350,7 +346,11 @@ impl Engine {
             }),
             actor: spawn_actor_id.clone(),
         };
-        let _ = self.storage.store_event(&spawn_event).await;
+
+        // Store atomically: instance + trail + event in one write
+        self.storage
+            .spawn_instance(&instance, &trail_entry, Some(&spawn_event), None)
+            .await?;
 
         // --- Fire ON SPAWN hooks ---
         let hook_ctx = HookContext {
@@ -443,7 +443,9 @@ impl Engine {
         if let Some(ref ikey) = cmd.idempotency_key {
             if let Ok(serialized) = serde_json::to_vec(&result) {
                 let expires_at = Utc::now() + chrono::Duration::hours(24);
-                let _ = self.storage.store_idempotency(ikey, &serialized, expires_at).await;
+                if let Err(e) = self.storage.store_idempotency(ikey, &serialized, expires_at).await {
+                    tracing::warn!(key = %ikey, error = %e, "Failed to store idempotency key after spawn");
+                }
             }
         }
 
@@ -859,7 +861,9 @@ impl Engine {
                 if let Some(ref ikey) = cmd.idempotency_key {
                     if let Ok(serialized) = serde_json::to_vec(&or_stay_result) {
                         let expires_at = Utc::now() + chrono::Duration::hours(24);
-                        let _ = self.storage.store_idempotency(ikey, &serialized, expires_at).await;
+                        if let Err(e) = self.storage.store_idempotency(ikey, &serialized, expires_at).await {
+                            tracing::warn!(key = %ikey, error = %e, "Failed to store idempotency key after OR STAY");
+                        }
                     }
                 }
                 return Ok(or_stay_result);
@@ -1074,7 +1078,9 @@ impl Engine {
             }),
             actor: cmd.as_actor.clone(),
         };
-        let _ = self.storage.store_event(&transition_event).await;
+        if let Err(e) = self.storage.store_event(&transition_event).await {
+            tracing::error!(error = %e, "Failed to store transition event — event log has a gap");
+        }
 
         // --- 4b. Execute deferred SPAWN commands (after version check succeeded) ---
         let has_deferred_spawns = !deferred_spawns.is_empty();
@@ -1254,7 +1260,9 @@ impl Engine {
         if let Some(ref ikey) = cmd.idempotency_key {
             if let Ok(serialized) = serde_json::to_vec(&result) {
                 let expires_at = Utc::now() + chrono::Duration::hours(24);
-                let _ = self.storage.store_idempotency(ikey, &serialized, expires_at).await;
+                if let Err(e) = self.storage.store_idempotency(ikey, &serialized, expires_at).await {
+                    tracing::warn!(key = %ikey, error = %e, "Failed to store idempotency key after transition");
+                }
             }
         }
 
