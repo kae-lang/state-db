@@ -1084,25 +1084,41 @@ impl Engine {
 
         // --- 4b. Execute deferred SPAWN commands (after version check succeeded) ---
         let has_deferred_spawns = !deferred_spawns.is_empty();
-        for (field, child_cmd) in deferred_spawns {
-            match self.spawn(&child_cmd).await {
-                Ok(result) => {
-                    let child_id = result.instance.id.as_str();
-                    let child_machine = child_cmd.machine.clone();
-                    // Update instance data with the spawned child reference
-                    let spawn_mutations =
-                        vec![Mutation::SetField(field, Value::Ref(child_machine, child_id))];
-                    let _ = self
-                        .storage
-                        .update_instance(&id, instance.version + 1, &spawn_mutations)
-                        .await;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        instance_id = %cmd.instance_id,
-                        error = %e,
-                        "deferred MUTATE SPAWN failed (transition already committed)"
-                    );
+        if has_deferred_spawns {
+            // Use the transitioned instance's actual version, not the stale pre-transition version
+            let mut current_version = transitioned_instance.version;
+            for (field, child_cmd) in deferred_spawns {
+                match self.spawn(&child_cmd).await {
+                    Ok(result) => {
+                        let child_id = result.instance.id.as_str();
+                        let child_machine = child_cmd.machine.clone();
+                        let spawn_mutations =
+                            vec![Mutation::SetField(field.clone(), Value::Ref(child_machine, child_id))];
+                        match self
+                            .storage
+                            .update_instance(&id, current_version, &spawn_mutations)
+                            .await
+                        {
+                            Ok(()) => {
+                                current_version += 1;
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    instance_id = %cmd.instance_id,
+                                    field = %field,
+                                    error = %e,
+                                    "Failed to link deferred child to parent — child exists but parent reference is missing"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            instance_id = %cmd.instance_id,
+                            error = %e,
+                            "Deferred MUTATE SPAWN failed (transition already committed)"
+                        );
+                    }
                 }
             }
         }
@@ -1121,10 +1137,9 @@ impl Engine {
         // --- 6. Cancel old timeout, cancel old dwell timers, register new ones ---
         self.timer_manager.cancel(&cmd.instance_id, &instance.state);
         self.timer_manager.cancel_dwell_for_state(&cmd.instance_id, &instance.state);
-        let _ = self
-            .storage
-            .remove_timer(&cmd.instance_id, &instance.state)
-            .await;
+        if let Err(e) = self.storage.remove_timer(&cmd.instance_id, &instance.state).await {
+            tracing::warn!(error = %e, "Failed to remove old timer");
+        }
 
         if let Some(timeout) = &transition_def.timeout {
             self.timer_manager.register(
@@ -1147,7 +1162,9 @@ impl Engine {
                     deadline: entry.deadline,
                     registered_at: entry.registered_at,
                 };
-                let _ = self.storage.store_timer(&stored).await;
+                if let Err(e) = self.storage.store_timer(&stored).await {
+                    tracing::warn!(error = %e, "Failed to persist timeout timer");
+                }
             }
         }
 
@@ -1232,7 +1249,14 @@ impl Engine {
 
         // --- 10. CASCADE: transition all children to terminal states ---
         if cmd.cascade {
-            self.cascade_children(&id, &instance.machine).await;
+            let cascade_failures = self.cascade_children(&id, &instance.machine).await;
+            if cascade_failures > 0 {
+                tracing::warn!(
+                    instance_id = %cmd.instance_id,
+                    failures = cascade_failures,
+                    "CASCADE completed with failures — some children may still be in non-terminal states"
+                );
+            }
         }
 
         // Use the returned instance directly; only re-fetch if deferred spawns
@@ -1469,19 +1493,18 @@ impl Engine {
     const MAX_CASCADE_DEPTH: u32 = 16;
 
     /// Cascade: transition all children to their machine's first terminal state.
-    /// Errors on child cascade are logged but don't fail the parent.
-    async fn cascade_children(&self, parent_id: &smql_storage::InstanceId, _parent_machine: &str) {
-        self.cascade_children_with_depth(parent_id, _parent_machine, 0).await;
+    /// Returns the number of children that failed to cascade.
+    async fn cascade_children(&self, parent_id: &smql_storage::InstanceId, parent_machine: &str) -> usize {
+        self.cascade_children_with_depth(parent_id, parent_machine, 0).await
     }
 
     /// Inner cascade with depth tracking to prevent infinite recursion.
-    /// Uses Box::pin for recursive async.
     fn cascade_children_with_depth<'a>(
         &'a self,
         parent_id: &'a smql_storage::InstanceId,
         _parent_machine: &'a str,
         depth: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = usize> + Send + 'a>> {
         Box::pin(async move {
             if depth >= Self::MAX_CASCADE_DEPTH {
                 tracing::warn!(
@@ -1489,27 +1512,33 @@ impl Engine {
                     depth,
                     "CASCADE depth limit reached — aborting to prevent infinite recursion"
                 );
-                return;
+                return 1;
             }
 
             let children = match self.storage.find_children(parent_id, None).await {
                 Ok(c) => c,
-                Err(_) => return,
+                Err(e) => {
+                    tracing::error!(parent_id = parent_id.as_str(), error = %e, "CASCADE failed to find children");
+                    return 1;
+                }
             };
 
+            let mut failures = 0usize;
+
             for child in children {
-                // Find the child's machine definition to get terminal states
                 let child_machine_def = match self.catalog.get(&child.machine) {
                     Ok(m) => m,
-                    Err(_) => continue,
+                    Err(e) => {
+                        tracing::error!(child_machine = %child.machine, error = %e, "CASCADE: child machine not found");
+                        failures += 1;
+                        continue;
+                    }
                 };
 
-                // Skip if already in a terminal state
                 if child_machine_def.terminal_states.contains(&child.state) {
                     continue;
                 }
 
-                // Try to find a transition from current state to the first terminal state
                 if let Some(terminal) = child_machine_def.terminal_states.first() {
                     let cmd = TransitionCommand {
                         machine: child.machine.clone(),
@@ -1520,17 +1549,42 @@ impl Engine {
                         as_actor: Some("System".to_string()),
                         through: Vec::new(),
                         or_stay: false,
-                        cascade: false, // Don't let transition() call cascade_children again
+                        cascade: false,
                         idempotency_key: None,
                         tags: Vec::new(),
                     };
-                    // Use try_transition so failures don't propagate
-                    let _ = self.try_transition(&cmd).await;
-
-                    // Recursively cascade grandchildren
-                    self.cascade_children_with_depth(&child.id, &child.machine, depth + 1).await;
+                    match self.try_transition(&cmd).await {
+                        Ok(Some(_)) => {
+                            failures += self.cascade_children_with_depth(&child.id, &child.machine, depth + 1).await;
+                        }
+                        Ok(None) => {
+                            tracing::warn!(
+                                child_id = child.id.as_str(),
+                                child_machine = %child.machine,
+                                "CASCADE: child transition denied by guards"
+                            );
+                            failures += 1;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                child_id = child.id.as_str(),
+                                child_machine = %child.machine,
+                                error = %e,
+                                "CASCADE: child transition failed"
+                            );
+                            failures += 1;
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        child_machine = %child.machine,
+                        "CASCADE: child machine has no terminal states"
+                    );
+                    failures += 1;
                 }
             }
+
+            failures
         })
     }
 
@@ -1603,10 +1657,9 @@ impl Engine {
             Some(inst) => inst,
             None => {
                 // Instance deleted — clean up the orphaned persisted timer
-                let _ = self
-                    .storage
-                    .remove_timer(instance_id, expected_from_state)
-                    .await;
+                if let Err(e) = self.storage.remove_timer(instance_id, expected_from_state).await {
+                    tracing::warn!(error = %e, "Failed to remove orphaned timer for deleted instance");
+                }
                 return Ok(None);
             }
         };
@@ -1614,10 +1667,9 @@ impl Engine {
         // Race condition: instance already moved to a different state
         if instance.state != expected_from_state {
             // State changed — clean up the stale persisted timer
-            let _ = self
-                .storage
-                .remove_timer(instance_id, expected_from_state)
-                .await;
+            if let Err(e) = self.storage.remove_timer(instance_id, expected_from_state).await {
+                tracing::warn!(error = %e, "Failed to remove stale timer after state change");
+            }
             return Ok(None);
         }
 
@@ -1649,10 +1701,9 @@ impl Engine {
 
         // Always remove the fired/stale timer from storage, even on version conflict.
         // Without this, a stale StoredTimer would persist and be reloaded on restart.
-        let _ = self
-            .storage
-            .remove_timer(instance_id, expected_from_state)
-            .await;
+        if let Err(e) = self.storage.remove_timer(instance_id, expected_from_state).await {
+            tracing::warn!(error = %e, "Failed to remove fired timer");
+        }
 
         // Now propagate the transition error (if any)
         let transitioned_instance = transition_result?;
@@ -1711,7 +1762,9 @@ impl Engine {
                                 deadline: entry.deadline,
                                 registered_at: entry.registered_at,
                             };
-                            let _ = self.storage.store_timer(&stored).await;
+                            if let Err(e) = self.storage.store_timer(&stored).await {
+                                tracing::warn!(error = %e, "Failed to persist timeout timer");
+                            }
                         }
                         break; // Only one timeout per state
                     }
@@ -1771,7 +1824,9 @@ impl Engine {
                                     deadline: entry.deadline,
                                     registered_at: entry.registered_at,
                                 };
-                                let _ = self.storage.store_timer(&stored).await;
+                                if let Err(e) = self.storage.store_timer(&stored).await {
+                                    tracing::warn!(error = %e, "Failed to persist timeout timer");
+                                }
                             }
                             break;
                         }
@@ -2197,21 +2252,50 @@ impl Engine {
             match step_result {
                 Ok(sr) => results.push(sr),
                 Err(e) => {
-                    // Rollback all changes in reverse order
                     tracing::warn!(step = i, error = %e, "Transaction step failed — rolling back");
+                    let mut rollback_errors = Vec::new();
+
                     for (id, snapshot) in snapshots.into_iter().rev() {
                         match snapshot {
                             None => {
-                                // Was newly created — delete it
-                                let _ = self.storage.delete_instance(&id).await;
+                                if let Err(del_err) = self.storage.delete_instance(&id).await {
+                                    tracing::error!(
+                                        instance_id = id.as_str(),
+                                        error = %del_err,
+                                        "Transaction rollback: failed to delete spawned instance"
+                                    );
+                                    rollback_errors.push(format!("delete {}: {}", id.as_str(), del_err));
+                                }
                             }
                             Some(old_instance) => {
-                                // Was modified — restore the snapshot
-                                let _ = self.storage.delete_instance(&id).await;
-                                let _ = self.storage.store_instance(&old_instance).await;
+                                if let Err(del_err) = self.storage.delete_instance(&id).await {
+                                    tracing::error!(
+                                        instance_id = id.as_str(),
+                                        error = %del_err,
+                                        "Transaction rollback: failed to delete modified instance before restore"
+                                    );
+                                    rollback_errors.push(format!("delete {}: {}", id.as_str(), del_err));
+                                    continue;
+                                }
+                                if let Err(restore_err) = self.storage.store_instance(&old_instance).await {
+                                    tracing::error!(
+                                        instance_id = id.as_str(),
+                                        error = %restore_err,
+                                        "Transaction rollback: CRITICAL — deleted instance but failed to restore snapshot. Instance data may be lost."
+                                    );
+                                    rollback_errors.push(format!("restore {}: {}", id.as_str(), restore_err));
+                                }
                             }
                         }
                     }
+
+                    if !rollback_errors.is_empty() {
+                        tracing::error!(
+                            errors = rollback_errors.join("; "),
+                            "Transaction rollback completed with errors — manual intervention may be required"
+                        );
+                    }
+
                     return Err(SmqlError::TransactionFailed {
                         message: format!("Transaction failed at step {}: {}", i, e),
                         step: i,
@@ -2286,34 +2370,82 @@ impl Engine {
                 Err(e) => {
                     tracing::warn!(saga = saga_name, step = %step.name, error = %e, "SAGA step failed — compensating");
 
-                    // Run compensation for all completed steps in reverse order
+                    let mut compensation_failures = Vec::new();
+
                     for &ci in completed_steps.iter().rev() {
                         if let Some(comp) = &saga.steps[ci].compensate {
                             let comp_ctx = EvalContext::new(std::collections::HashMap::new(), String::new());
-                            if let Ok(comp_id_val) = eval_expr(&comp.instance_expr, &comp_ctx) {
-                                let comp_id = match comp_id_val {
-                                    Value::Text(s) => s,
-                                    other => format!("{}", other),
-                                };
-                                let comp_cmd = TransitionCommand {
-                                    machine: comp.machine.clone(),
-                                    instance_id: comp_id,
-                                    to_state: comp.to_state.clone(),
-                                    with_data: Vec::new(),
-                                    memo: Some(format!("SAGA {} compensation for step {}", saga_name, saga.steps[ci].name)),
-                                    as_actor: Some("System".to_string()),
-                                    through: Vec::new(),
-                                    or_stay: false,
-                                    cascade: false,
-                                    idempotency_key: None,
-                                    tags: Vec::new(),
-                                };
-                                let _ = self.transition_inner(&comp_cmd, None).await;
+                            match eval_expr(&comp.instance_expr, &comp_ctx) {
+                                Ok(comp_id_val) => {
+                                    let comp_id = match comp_id_val {
+                                        Value::Text(s) => s,
+                                        other => format!("{}", other),
+                                    };
+                                    let comp_cmd = TransitionCommand {
+                                        machine: comp.machine.clone(),
+                                        instance_id: comp_id,
+                                        to_state: comp.to_state.clone(),
+                                        with_data: Vec::new(),
+                                        memo: Some(format!("SAGA {} compensation for step {}", saga_name, saga.steps[ci].name)),
+                                        as_actor: Some("System".to_string()),
+                                        through: Vec::new(),
+                                        or_stay: false,
+                                        cascade: false,
+                                        idempotency_key: None,
+                                        tags: Vec::new(),
+                                    };
+                                    match self.transition_inner(&comp_cmd, None).await {
+                                        Ok(_) => {
+                                            tracing::info!(
+                                                saga = saga_name,
+                                                step = %saga.steps[ci].name,
+                                                "SAGA compensation step succeeded"
+                                            );
+                                        }
+                                        Err(comp_err) => {
+                                            tracing::error!(
+                                                saga = saga_name,
+                                                step = %saga.steps[ci].name,
+                                                error = %comp_err,
+                                                "SAGA compensation FAILED — manual intervention required"
+                                            );
+                                            compensation_failures.push(format!(
+                                                "step '{}': {}",
+                                                saga.steps[ci].name, comp_err
+                                            ));
+                                        }
+                                    }
+                                }
+                                Err(eval_err) => {
+                                    tracing::error!(
+                                        saga = saga_name,
+                                        step = %saga.steps[ci].name,
+                                        error = %eval_err,
+                                        "SAGA compensation instance_expr evaluation failed"
+                                    );
+                                    compensation_failures.push(format!(
+                                        "step '{}' (eval): {}",
+                                        saga.steps[ci].name, eval_err
+                                    ));
+                                }
                             }
                         }
                     }
 
-                    return Err(format!("SAGA '{}' failed at step '{}': {}", saga_name, step.name, e));
+                    if compensation_failures.is_empty() {
+                        return Err(format!(
+                            "SAGA '{}' failed at step '{}': {} (all compensations succeeded)",
+                            saga_name, step.name, e
+                        ));
+                    } else {
+                        return Err(format!(
+                            "SAGA '{}' failed at step '{}': {} — COMPENSATION FAILURES: {}",
+                            saga_name,
+                            step.name,
+                            e,
+                            compensation_failures.join("; ")
+                        ));
+                    }
                 }
             }
         }
