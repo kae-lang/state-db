@@ -172,6 +172,24 @@ mod eval_hardening {
     }
 
     #[test]
+    fn float_divided_by_int_zero_returns_division_by_zero_error() {
+        let c = ctx();
+        let expr = binop(
+            lit(Value::Float(5.0)),
+            BinaryOperator::Div,
+            lit(Value::Int(0)),
+        );
+        let result = eval_expr(&expr, &c);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Division by zero"),
+            "Expected 'Division by zero' error, got: {}",
+            err
+        );
+    }
+
+    #[test]
     fn int_neg_min_overflow_errors() {
         let c = ctx();
         let expr = Expression::new(ExpressionKind::UnaryOp {

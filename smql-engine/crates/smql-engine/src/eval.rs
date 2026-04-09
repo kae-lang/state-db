@@ -643,7 +643,16 @@ fn eval_arithmetic_div(left: &Value, right: &Value) -> SmqlResult<Value> {
             }
         }
         (Value::Float(a), Value::Int(b)) => {
-            check_float_result(a / *b as f64, "/", left, right)
+            if *b == 0 {
+                Err(SmqlError::GuardFailed {
+                    message: "Division by zero".to_string(),
+                    guard_expr: format!("{} / {}", left, right),
+                    actual_value: None,
+                    hint: None,
+                })
+            } else {
+                check_float_result(a / *b as f64, "/", left, right)
+            }
         }
         _ => Err(SmqlError::GuardFailed {
             message: format!("Cannot divide {} / {}", left, right),
