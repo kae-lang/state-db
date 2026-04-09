@@ -348,6 +348,71 @@ impl Storage for RocksDBStorage {
         Ok(())
     }
 
+    async fn spawn_instance(
+        &self,
+        instance: &Instance,
+        trail_entry: &TrailEntry,
+        event: Option<&crate::instance::StoredEvent>,
+        idempotency_key: Option<(&str, &[u8], chrono::DateTime<chrono::Utc>)>,
+    ) -> SmqlResult<()> {
+        let id_str = instance.id.as_str();
+
+        if self.load_instance(&id_str)?.is_some() {
+            return Err(SmqlError::Conflict {
+                message: format!("Instance '{}' already exists", id_str),
+                hint: None,
+            });
+        }
+
+        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_state = self.db.cf_handle(CF_STATE_INDEX).unwrap();
+        let cf_machine = self.db.cf_handle(CF_MACHINE_INDEX).unwrap();
+        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let cf_parent = self.db.cf_handle(CF_PARENT_INDEX).unwrap();
+        let cf_trails = self.db.cf_handle(CF_TRAILS).unwrap();
+
+        let inst_bytes = Self::serialize_instance(instance)?;
+        let trail_bytes = Self::serialize_trail_entry(trail_entry)?;
+
+        let mut batch = WriteBatchWithTransaction::<false>::default();
+
+        // Instance + indices
+        batch.put_cf(&cf_inst, Self::instance_key(&instance.machine, &id_str), &inst_bytes);
+        batch.put_cf(&cf_state, Self::state_index_key(&instance.machine, &instance.state, &id_str), b"");
+        batch.put_cf(&cf_machine, Self::machine_index_key(&instance.machine, &id_str), b"");
+        batch.put_cf(&cf_id, id_str.as_bytes(), instance.machine.as_bytes());
+
+        if let Some(parent_id) = &instance.parent_id {
+            batch.put_cf(&cf_parent, Self::parent_index_key(&parent_id.as_str(), &instance.machine, &id_str), b"");
+        }
+
+        // Trail entry
+        batch.put_cf(&cf_trails, Self::trail_key(&instance.machine, &id_str, trail_entry.sequence), &trail_bytes);
+
+        // Event
+        if let Some(evt) = event {
+            let cf_events = self.db.cf_handle(CF_EVENTS).unwrap();
+            let event_bytes = serde_json::to_vec(evt)
+                .map_err(|e| SmqlError::storage(format!("Serialize event: {}", e)))?;
+            batch.put_cf(&cf_events, evt.id.as_bytes(), &event_bytes);
+        }
+
+        // Idempotency key
+        if let Some((key, response, expires_at)) = idempotency_key {
+            let cf_idemp = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+            let entry = serde_json::json!({
+                "response": serde_json::from_slice::<serde_json::Value>(response).unwrap_or(serde_json::Value::Null),
+                "expires_at": expires_at.to_rfc3339(),
+            });
+            let entry_bytes = serde_json::to_vec(&entry)
+                .map_err(|e| SmqlError::storage(format!("Serialize idempotency: {}", e)))?;
+            batch.put_cf(&cf_idemp, key.as_bytes(), &entry_bytes);
+        }
+
+        self.db.write(batch).map_err(|e| SmqlError::storage(e.to_string()))?;
+        Ok(())
+    }
+
     async fn get_instance(&self, id: &InstanceId) -> SmqlResult<Option<Instance>> {
         self.load_instance(&id.as_str())
     }

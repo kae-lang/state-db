@@ -15,6 +15,27 @@ pub trait Storage: Send + Sync {
     /// Store a new instance. Returns error if ID already exists.
     async fn store_instance(&self, instance: &Instance) -> SmqlResult<()>;
 
+    /// Atomically store a new instance with its initial trail entry, event, and optional idempotency key.
+    /// All writes succeed or none do. This prevents orphaned instances without trail entries.
+    async fn spawn_instance(
+        &self,
+        instance: &Instance,
+        trail_entry: &TrailEntry,
+        event: Option<&crate::instance::StoredEvent>,
+        idempotency_key: Option<(&str, &[u8], chrono::DateTime<chrono::Utc>)>,
+    ) -> SmqlResult<()> {
+        // Default implementation for backwards compatibility: sequential calls
+        self.store_instance(instance).await?;
+        self.append_trail_entry(trail_entry).await?;
+        if let Some(evt) = event {
+            let _ = self.store_event(evt).await;
+        }
+        if let Some((key, response, expires_at)) = idempotency_key {
+            let _ = self.store_idempotency(key, response, expires_at).await;
+        }
+        Ok(())
+    }
+
     /// Retrieve an instance by ID.
     async fn get_instance(&self, id: &InstanceId) -> SmqlResult<Option<Instance>>;
 

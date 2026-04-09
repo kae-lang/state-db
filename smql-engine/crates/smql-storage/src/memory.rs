@@ -139,6 +139,47 @@ impl Storage for MemoryStorage {
         Ok(())
     }
 
+    async fn spawn_instance(
+        &self,
+        instance: &Instance,
+        trail_entry: &TrailEntry,
+        event: Option<&crate::instance::StoredEvent>,
+        idempotency_key: Option<(&str, &[u8], chrono::DateTime<chrono::Utc>)>,
+    ) -> SmqlResult<()> {
+        let id_str = instance.id.as_str();
+
+        if self.instances.contains_key(&id_str) {
+            return Err(SmqlError::Conflict {
+                message: format!("Instance '{}' already exists", id_str),
+                hint: None,
+            });
+        }
+
+        // Store instance + indices
+        self.instances.insert(id_str.clone(), instance.clone());
+        self.add_to_state_index(&instance.machine, &instance.state, &id_str);
+        self.add_to_machine_index(&instance.machine, &id_str);
+        self.trails.insert(id_str.clone(), RwLock::new(vec![trail_entry.clone()]));
+
+        if let Some(parent_id) = &instance.parent_id {
+            self.parent_index
+                .entry(parent_id.as_str())
+                .or_default()
+                .insert(id_str);
+        }
+
+        if let Some(evt) = event {
+            let mut events = self.events.write().unwrap();
+            events.push(evt.clone());
+        }
+
+        if let Some((key, response, expires_at)) = idempotency_key {
+            self.idempotency.insert(key.to_string(), (response.to_vec(), expires_at));
+        }
+
+        Ok(())
+    }
+
     async fn get_instance(&self, id: &InstanceId) -> SmqlResult<Option<Instance>> {
         let id_str = id.as_str();
         Ok(self.instances.get(&id_str).map(|entry| entry.clone()))
