@@ -163,7 +163,7 @@ impl RocksDBStorage {
 
     /// Load an instance by ID, using id_index to find the machine name.
     fn load_instance(&self, id: &str) -> SmqlResult<Option<Instance>> {
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let cf_id = self.cf(CF_ID_INDEX)?;
         match self
             .db
             .get_cf(&cf_id, id.as_bytes())
@@ -172,7 +172,7 @@ impl RocksDBStorage {
             Some(machine_bytes) => {
                 let machine = String::from_utf8(machine_bytes.to_vec())
                     .map_err(|e| SmqlError::storage(format!("Invalid UTF-8 in id_index: {}", e)))?;
-                let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
+                let cf_inst = self.cf(CF_INSTANCES)?;
                 let key = Self::instance_key(&machine, id);
                 match self
                     .db
@@ -190,7 +190,7 @@ impl RocksDBStorage {
     /// Scan all keys with a given prefix in a column family, returning raw key-value pairs.
     /// Uses range iteration with an upper bound to efficiently scan by prefix.
     fn scan_prefix(&self, cf_name: &str, prefix: &[u8]) -> SmqlResult<Vec<(Vec<u8>, Vec<u8>)>> {
-        let cf = self.db.cf_handle(cf_name).unwrap();
+        let cf = self.cf(cf_name)?;
 
         // Compute upper bound: increment last byte to get the exclusive end of prefix range.
         let upper_bound = Self::prefix_upper_bound(prefix);
@@ -266,6 +266,16 @@ impl RocksDBStorage {
         String::from_utf8(segment.to_vec()).ok()
     }
 
+    /// Get a column family handle, returning an error instead of panicking.
+    fn cf(&self, name: &str) -> SmqlResult<&rocksdb::ColumnFamily> {
+        self.db.cf_handle(name).ok_or_else(|| {
+            SmqlError::storage(format!(
+                "Column family '{}' not found — database may be corrupted",
+                name
+            ))
+        })
+    }
+
     fn apply_mutations(instance: &mut Instance, mutations: &[Mutation]) {
         for mutation in mutations {
             match mutation {
@@ -307,11 +317,11 @@ impl Storage for RocksDBStorage {
             });
         }
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
-        let cf_state = self.db.cf_handle(CF_STATE_INDEX).unwrap();
-        let cf_machine = self.db.cf_handle(CF_MACHINE_INDEX).unwrap();
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
-        let cf_parent = self.db.cf_handle(CF_PARENT_INDEX).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
+        let cf_state = self.cf(CF_STATE_INDEX)?;
+        let cf_machine = self.cf(CF_MACHINE_INDEX)?;
+        let cf_id = self.cf(CF_ID_INDEX)?;
+        let cf_parent = self.cf(CF_PARENT_INDEX)?;
 
         let bytes = Self::serialize_instance(instance)?;
 
@@ -364,12 +374,12 @@ impl Storage for RocksDBStorage {
             });
         }
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
-        let cf_state = self.db.cf_handle(CF_STATE_INDEX).unwrap();
-        let cf_machine = self.db.cf_handle(CF_MACHINE_INDEX).unwrap();
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
-        let cf_parent = self.db.cf_handle(CF_PARENT_INDEX).unwrap();
-        let cf_trails = self.db.cf_handle(CF_TRAILS).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
+        let cf_state = self.cf(CF_STATE_INDEX)?;
+        let cf_machine = self.cf(CF_MACHINE_INDEX)?;
+        let cf_id = self.cf(CF_ID_INDEX)?;
+        let cf_parent = self.cf(CF_PARENT_INDEX)?;
+        let cf_trails = self.cf(CF_TRAILS)?;
 
         let inst_bytes = Self::serialize_instance(instance)?;
         let trail_bytes = Self::serialize_trail_entry(trail_entry)?;
@@ -391,7 +401,7 @@ impl Storage for RocksDBStorage {
 
         // Event
         if let Some(evt) = event {
-            let cf_events = self.db.cf_handle(CF_EVENTS).unwrap();
+            let cf_events = self.cf(CF_EVENTS)?;
             let event_bytes = serde_json::to_vec(evt)
                 .map_err(|e| SmqlError::storage(format!("Serialize event: {}", e)))?;
             batch.put_cf(&cf_events, evt.id.as_bytes(), &event_bytes);
@@ -399,7 +409,7 @@ impl Storage for RocksDBStorage {
 
         // Idempotency key
         if let Some((key, response, expires_at)) = idempotency_key {
-            let cf_idemp = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+            let cf_idemp = self.cf(CF_IDEMPOTENCY)?;
             let entry = serde_json::json!({
                 "response": serde_json::from_slice::<serde_json::Value>(response).unwrap_or(serde_json::Value::Null),
                 "expires_at": expires_at.to_rfc3339(),
@@ -430,7 +440,7 @@ impl Storage for RocksDBStorage {
             self.scan_machine_index(machine)?
         };
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
         let mut results: Vec<Instance> = Vec::new();
         for id in &candidate_ids {
             let key = Self::instance_key(machine, id);
@@ -499,7 +509,7 @@ impl Storage for RocksDBStorage {
         Self::apply_mutations(&mut instance, mutations);
         instance.version += 1;
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
         let bytes = Self::serialize_instance(&instance)?;
         self.db
             .put_cf(
@@ -544,9 +554,9 @@ impl Storage for RocksDBStorage {
         instance.version += 1;
         instance.trail_length += 1;
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
-        let cf_state = self.db.cf_handle(CF_STATE_INDEX).unwrap();
-        let cf_trails = self.db.cf_handle(CF_TRAILS).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
+        let cf_state = self.cf(CF_STATE_INDEX)?;
+        let cf_trails = self.cf(CF_TRAILS)?;
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
 
@@ -586,12 +596,12 @@ impl Storage for RocksDBStorage {
             .load_instance(&id_str)?
             .ok_or_else(|| SmqlError::not_found("Instance", &id_str))?;
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
-        let cf_state = self.db.cf_handle(CF_STATE_INDEX).unwrap();
-        let cf_machine = self.db.cf_handle(CF_MACHINE_INDEX).unwrap();
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
-        let cf_parent = self.db.cf_handle(CF_PARENT_INDEX).unwrap();
-        let cf_trails = self.db.cf_handle(CF_TRAILS).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
+        let cf_state = self.cf(CF_STATE_INDEX)?;
+        let cf_machine = self.cf(CF_MACHINE_INDEX)?;
+        let cf_id = self.cf(CF_ID_INDEX)?;
+        let cf_parent = self.cf(CF_PARENT_INDEX)?;
+        let cf_trails = self.cf(CF_TRAILS)?;
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
 
@@ -622,7 +632,7 @@ impl Storage for RocksDBStorage {
         }
 
         // Delete all timers for this instance
-        let cf_timers = self.db.cf_handle(CF_TIMERS).unwrap();
+        let cf_timers = self.cf(CF_TIMERS)?;
         let timer_prefix = Self::prefix_key(&[id_str.as_bytes()]);
         let timer_pairs = self.scan_prefix(CF_TIMERS, &timer_prefix)?;
         for (key, _) in timer_pairs {
@@ -659,7 +669,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn append_trail_entry(&self, entry: &TrailEntry) -> SmqlResult<()> {
-        let cf_trails = self.db.cf_handle(CF_TRAILS).unwrap();
+        let cf_trails = self.cf(CF_TRAILS)?;
         let id_str = entry.instance_id.as_str();
         let key = Self::trail_key(&entry.machine, &id_str, entry.sequence);
         let bytes = Self::serialize_trail_entry(entry)?;
@@ -674,7 +684,7 @@ impl Storage for RocksDBStorage {
 
         // We need the machine name to build the trail prefix.
         // Look it up from id_index.
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let cf_id = self.cf(CF_ID_INDEX)?;
         let machine = match self
             .db
             .get_cf(&cf_id, id_str.as_bytes())
@@ -700,7 +710,7 @@ impl Storage for RocksDBStorage {
         &self,
         ids: &[InstanceId],
     ) -> SmqlResult<HashMap<String, Vec<TrailEntry>>> {
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let cf_id = self.cf(CF_ID_INDEX)?;
         let mut result = HashMap::with_capacity(ids.len());
 
         for id in ids {
@@ -825,8 +835,8 @@ impl Storage for RocksDBStorage {
     ) -> SmqlResult<u64> {
         let ids = self.scan_state_index(machine, from_state)?;
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
-        let cf_state = self.db.cf_handle(CF_STATE_INDEX).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
+        let cf_state = self.cf(CF_STATE_INDEX)?;
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
         let mut count = 0u64;
@@ -868,7 +878,7 @@ impl Storage for RocksDBStorage {
     ) -> SmqlResult<u64> {
         let ids = self.scan_machine_index(machine)?;
 
-        let cf_inst = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_inst = self.cf(CF_INSTANCES)?;
 
         let mut batch = WriteBatchWithTransaction::<false>::default();
         let mut count = 0u64;
@@ -899,7 +909,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn store_timer(&self, timer: &StoredTimer) -> SmqlResult<()> {
-        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let cf = self.cf(CF_TIMERS)?;
         let key = Self::make_key(&[timer.instance_id.as_bytes(), timer.from_state.as_bytes()]);
         let bytes = serde_json::to_vec(timer)
             .map_err(|e| SmqlError::storage(format!("Serialize timer: {}", e)))?;
@@ -910,7 +920,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn remove_timer(&self, instance_id: &str, state: &str) -> SmqlResult<()> {
-        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let cf = self.cf(CF_TIMERS)?;
         let key = Self::make_key(&[instance_id.as_bytes(), state.as_bytes()]);
         self.db
             .delete_cf(&cf, &key)
@@ -919,7 +929,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn remove_all_timers(&self, instance_id: &str) -> SmqlResult<()> {
-        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let cf = self.cf(CF_TIMERS)?;
         let prefix = Self::prefix_key(&[instance_id.as_bytes()]);
         let pairs = self.scan_prefix(CF_TIMERS, &prefix)?;
         let mut batch = WriteBatchWithTransaction::<false>::default();
@@ -933,7 +943,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn load_all_timers(&self) -> SmqlResult<Vec<StoredTimer>> {
-        let cf = self.db.cf_handle(CF_TIMERS).unwrap();
+        let cf = self.cf(CF_TIMERS)?;
         let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
         let mut timers = Vec::new();
         for item in iter {
@@ -951,7 +961,7 @@ impl Storage for RocksDBStorage {
         response: &[u8],
         expires_at: chrono::DateTime<Utc>,
     ) -> SmqlResult<bool> {
-        let cf = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+        let cf = self.cf(CF_IDEMPOTENCY)?;
         // Check if already exists and not expired
         if let Some(existing) = self
             .db
@@ -979,7 +989,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn get_idempotency(&self, key: &str) -> SmqlResult<Option<Vec<u8>>> {
-        let cf = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+        let cf = self.cf(CF_IDEMPOTENCY)?;
         if let Some(raw) = self
             .db
             .get_cf(&cf, key.as_bytes())
@@ -1001,7 +1011,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn cleanup_expired_idempotency(&self) -> SmqlResult<usize> {
-        let cf = self.db.cf_handle(CF_IDEMPOTENCY).unwrap();
+        let cf = self.cf(CF_IDEMPOTENCY)?;
         let now = Utc::now();
         let mut expired_keys = Vec::new();
 
@@ -1033,10 +1043,10 @@ impl Storage for RocksDBStorage {
         expires_at: chrono::DateTime<Utc>,
     ) -> SmqlResult<()> {
         let id_str = id.as_str();
-        let cf_instances = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_instances = self.cf(CF_INSTANCES)?;
 
         // Find the instance by scanning the machine index
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let cf_id = self.cf(CF_ID_INDEX)?;
         let machine_key = self
             .db
             .get_cf(&cf_id, id_str.as_bytes())
@@ -1082,9 +1092,9 @@ impl Storage for RocksDBStorage {
 
     async fn release_claim(&self, id: &InstanceId, agent_id: &str) -> SmqlResult<()> {
         let id_str = id.as_str();
-        let cf_instances = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_instances = self.cf(CF_INSTANCES)?;
 
-        let cf_id = self.db.cf_handle(CF_ID_INDEX).unwrap();
+        let cf_id = self.cf(CF_ID_INDEX)?;
         let machine_key = self
             .db
             .get_cf(&cf_id, id_str.as_bytes())
@@ -1133,7 +1143,7 @@ impl Storage for RocksDBStorage {
         let now = Utc::now();
         let candidates = self.find_instances(machine, filter).await?;
 
-        let cf_instances = self.db.cf_handle(CF_INSTANCES).unwrap();
+        let cf_instances = self.cf(CF_INSTANCES)?;
         for candidate in candidates {
             let id_str = candidate.id.as_str();
             let key = Self::instance_key(machine, &id_str);
@@ -1172,7 +1182,7 @@ impl Storage for RocksDBStorage {
     }
 
     async fn store_event(&self, event: &crate::instance::StoredEvent) -> SmqlResult<()> {
-        let cf = self.db.cf_handle(CF_EVENTS).unwrap();
+        let cf = self.cf(CF_EVENTS)?;
         let serialized =
             serde_json::to_vec(event).map_err(|e| SmqlError::storage(e.to_string()))?;
         // Key = ULID string (preserves time-ordering in byte sort)
@@ -1189,7 +1199,7 @@ impl Storage for RocksDBStorage {
         event_name: Option<&str>,
         limit: usize,
     ) -> SmqlResult<Vec<crate::instance::StoredEvent>> {
-        let cf = self.db.cf_handle(CF_EVENTS).unwrap();
+        let cf = self.cf(CF_EVENTS)?;
         let start_key_buf = after_id.map(|after| {
             let mut k = after.as_bytes().to_vec();
             k.push(0x01);
@@ -1231,7 +1241,7 @@ impl Storage for RocksDBStorage {
         &self,
         before: chrono::DateTime<Utc>,
     ) -> SmqlResult<usize> {
-        let cf = self.db.cf_handle(CF_EVENTS).unwrap();
+        let cf = self.cf(CF_EVENTS)?;
         let mut expired_keys = Vec::new();
 
         let iter = self.db.iterator_cf(&cf, IteratorMode::Start);
