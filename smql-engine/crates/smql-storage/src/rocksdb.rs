@@ -485,6 +485,14 @@ impl Storage for RocksDBStorage {
         Ok(results)
     }
 
+    /// Update an instance's data fields via mutations.
+    ///
+    /// **Concurrency note:** This implementation uses a read-check-write pattern
+    /// that is not fully atomic under concurrent access. The engine's single-writer
+    /// design (via its async task model) provides practical safety, but direct
+    /// concurrent calls to this method can experience TOCTOU races. A future
+    /// migration to RocksDB's `TransactionDB` with `get_for_update` would provide
+    /// true serializable isolation.
     async fn update_instance(
         &self,
         id: &InstanceId,
@@ -522,6 +530,13 @@ impl Storage for RocksDBStorage {
         Ok(())
     }
 
+    /// Transition an instance to a new state atomically.
+    ///
+    /// **Concurrency note:** The version check and write use a read-check-write
+    /// pattern. While the WriteBatch ensures the state+trail+index updates are
+    /// atomic, the version check is not transactionally bound to the write.
+    /// The engine serializes transitions through its async task model, but
+    /// direct concurrent access should migrate to `TransactionDB`.
     async fn transition_instance(
         &self,
         id: &InstanceId,
